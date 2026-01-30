@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+/* Stewart Red brand color */
+:root {
+  --stewart-red: #9e2339;
+  --stewart-red-hover: #7a1b2d;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: #f9fafb;
+}
+
+#root {
+  min-height: 100vh;
+}
