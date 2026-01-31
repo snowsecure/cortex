@@ -343,7 +343,7 @@ export function BatchFileUpload({
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <Files className="h-5 w-5 text-[#9e2339] shrink-0" />
             <span className="font-medium text-gray-900">
-              {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""} ready
+              {selectedFiles.length} File{selectedFiles.length !== 1 ? "s" : ""} Ready
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -370,7 +370,7 @@ export function BatchFileUpload({
           {selectedFiles.map((fileData) => (
             <div
               key={fileData.id}
-              className="flex items-center justify-between gap-2 py-2.5 px-3 bg-gray-50 rounded-lg border border-gray-100 group"
+              className="flex items-center justify-between gap-2 py-2.5 px-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700 group"
             >
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <FileText className="h-4 w-4 text-[#9e2339] shrink-0" />
@@ -462,8 +462,8 @@ export function BatchFileUpload({
           </div>
         ) : (
           <div className="flex flex-col items-center gap-4">
-            <div className="p-4 bg-gray-100 rounded-full">
-              <FolderOpen className="h-8 w-8 text-gray-600" />
+            <div className="p-4 bg-gray-100 dark:bg-gray-700 rounded-full">
+              <FolderOpen className="h-8 w-8 text-gray-600 dark:text-gray-300" />
             </div>
             
             {isDragActive ? (

@@ -24,7 +24,7 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
-import { cn, getExtractionData } from "../lib/utils";
+import { cn, getExtractionData, formatDateTimeCST } from "../lib/utils";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName, DOCUMENT_CATEGORIES } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
@@ -649,7 +649,7 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
       else if (format === "summary") {
         // Generate human-readable summary
         let summary = `STEWART INGESTION ENGINE - EXPORT SUMMARY\n`;
-        summary += `Generated: ${new Date().toLocaleString()}\n`;
+        summary += `Generated: ${formatDateTimeCST(new Date())} CST\n`;
         summary += `${"=".repeat(60)}\n\n`;
         
         summary += `OVERVIEW\n`;

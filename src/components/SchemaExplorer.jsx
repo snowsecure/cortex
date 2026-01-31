@@ -85,12 +85,12 @@ function FieldRow({ fieldName, fieldDef, isCritical }) {
   return (
     <div className={cn(
       "flex items-center gap-3 px-4 py-2.5",
-      isCritical && "bg-amber-50/50"
+      isCritical && "bg-amber-50/50 dark:bg-amber-900/20"
     )}>
       {getTypeIcon(fieldDef.type)}
-      <span className="text-sm text-gray-600 flex-1">{displayName}</span>
-      {isCritical && <span className="text-[10px] text-amber-600 font-medium">critical</span>}
-      <span className="text-[10px] text-gray-400">{fieldDef.type}</span>
+      <span className="text-sm text-gray-600 dark:text-neutral-300 flex-1">{displayName}</span>
+      {isCritical && <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">critical</span>}
+      <span className="text-[10px] text-gray-400 dark:text-neutral-500">{fieldDef.type}</span>
     </div>
   );
 }
@@ -119,39 +119,39 @@ function SchemaDetailPanel({ schemaId, onClose }) {
   };
   
   return (
-    <div className="h-full flex flex-col bg-gray-50">
+    <div className="h-full flex flex-col bg-gray-50 dark:bg-neutral-900">
       {/* Header */}
-      <div className="px-5 py-4 bg-white flex items-center justify-between">
+      <div className="px-5 py-4 bg-white dark:bg-neutral-800 flex items-center justify-between">
         <div>
-          <h2 className="font-medium text-gray-900">{schemaData.name}</h2>
-          <p className="text-xs text-gray-400 mt-1">
+          <h2 className="font-medium text-gray-900 dark:text-neutral-100">{schemaData.name}</h2>
+          <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1">
             {fields.length} fields · {criticalFields.length} critical
           </p>
         </div>
-        <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
+        <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-700 rounded-lg">
           <X className="h-3.5 w-3.5" />
           Back
         </button>
       </div>
       
       {/* View Toggle */}
-      <div className="px-5 py-3 bg-white flex gap-6 text-sm">
+      <div className="px-5 py-3 bg-white dark:bg-neutral-800 flex gap-6 text-sm">
         <button
           onClick={() => setViewMode("fields")}
-          className={cn("flex items-center gap-1.5", viewMode === "fields" ? "text-gray-900" : "text-gray-400")}
+          className={cn("flex items-center gap-1.5", viewMode === "fields" ? "text-gray-900 dark:text-neutral-100" : "text-gray-400 dark:text-neutral-500")}
         >
           <Eye className="h-3.5 w-3.5" /> Fields
         </button>
         <button
           onClick={() => setViewMode("json")}
-          className={cn("flex items-center gap-1.5", viewMode === "json" ? "text-gray-900" : "text-gray-400")}
+          className={cn("flex items-center gap-1.5", viewMode === "json" ? "text-gray-900 dark:text-neutral-100" : "text-gray-400 dark:text-neutral-500")}
         >
           <Code className="h-3.5 w-3.5" /> JSON
         </button>
       </div>
       
       {/* Content */}
-      <div className="flex-1 overflow-y-auto bg-white mt-2 rounded-t-2xl">
+      <div className="flex-1 overflow-y-auto bg-white dark:bg-neutral-800 mt-2 rounded-t-2xl">
         {viewMode === "fields" ? (
           <div className="py-2">
             {fields.map(([name, def]) => (
@@ -167,12 +167,12 @@ function SchemaDetailPanel({ schemaId, onClose }) {
           <div className="p-4">
             <button
               onClick={handleCopyJson}
-              className="mb-3 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center gap-1.5"
+              className="mb-3 px-3 py-1.5 text-xs text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-200 bg-gray-100 dark:bg-neutral-700 hover:bg-gray-200 dark:hover:bg-neutral-600 rounded-lg flex items-center gap-1.5"
             >
               {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? "Copied!" : "Copy JSON"}
             </button>
-            <pre className="p-4 bg-gray-800 text-gray-300 rounded-xl text-[11px] overflow-x-auto font-mono">
+            <pre className="p-4 bg-gray-800 dark:bg-neutral-900 text-gray-300 rounded-xl text-[11px] overflow-x-auto font-mono">
               {JSON.stringify(schema, null, 2)}
             </pre>
           </div>
@@ -197,12 +197,12 @@ function SchemaListItem({ schemaId, isSelected, onClick }) {
       onClick={onClick}
       className={cn(
         "w-full flex items-center gap-3 px-4 py-3 text-left text-sm rounded-lg transition-colors",
-        isSelected ? "bg-[#9e2339]/10 text-[#9e2339]" : "hover:bg-gray-50 text-gray-600"
+        isSelected ? "bg-[#9e2339]/10 dark:bg-[#9e2339]/20 text-[#9e2339]" : "hover:bg-gray-50 dark:hover:bg-neutral-700 text-gray-600 dark:text-neutral-300"
       )}
     >
       <span className="flex-1 truncate">{schemaData.name}</span>
-      <span className="text-[11px] text-gray-400">{fieldCount} fields</span>
-      <ChevronRight className="h-3.5 w-3.5 text-gray-300" />
+      <span className="text-[11px] text-gray-400 dark:text-neutral-500">{fieldCount} fields</span>
+      <ChevronRight className="h-3.5 w-3.5 text-gray-300 dark:text-neutral-600" />
     </button>
   );
 }
@@ -219,14 +219,14 @@ function CategorySection({ category, schemaIds, onSelectSchema, selectedSchema, 
     <div className="mb-2">
       <button
         onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
+        className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-gray-700 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-700 rounded-xl transition-colors"
       >
         <CategoryIcon className={cn("h-4 w-4", categoryInfo.color)} />
         <span className="flex-1 text-left">{category}</span>
-        <span className="text-[11px] font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+        <span className="text-[11px] font-normal text-gray-400 dark:text-neutral-500 bg-gray-100 dark:bg-neutral-700 px-2 py-0.5 rounded-full">
           {schemaIds.length}
         </span>
-        <ChevronRight className={cn("h-4 w-4 text-gray-400 transition-transform", isExpanded && "rotate-90")} />
+        <ChevronRight className={cn("h-4 w-4 text-gray-400 dark:text-neutral-500 transition-transform", isExpanded && "rotate-90")} />
       </button>
       
       {isExpanded && (
@@ -289,7 +289,7 @@ function toFriendlyName(snakeCaseName) {
 function SplitTypesView() {
   return (
     <div className="p-5">
-      <p className="text-xs text-gray-500 mb-5">
+      <p className="text-xs text-gray-500 dark:text-neutral-400 mb-5">
         Split types identify document boundaries when processing multi-page PDFs.
       </p>
       
@@ -297,21 +297,21 @@ function SplitTypesView() {
         {SUBDOCUMENT_TYPES.map((type) => {
           const mappedCategory = SPLIT_TO_CATEGORY_MAP[type.name];
           const displayName = getCategoryDisplayName(mappedCategory);
-          const style = SPLIT_TYPE_STYLES[type.name] || { icon: Tag, color: "text-gray-400", bg: "bg-gray-50" };
+          const style = SPLIT_TYPE_STYLES[type.name] || { icon: Tag, color: "text-gray-400", bg: "bg-gray-50 dark:bg-neutral-700" };
           const TypeIcon = style.icon;
           const friendlyName = toFriendlyName(type.name);
           
           return (
-            <div key={type.name} className="group p-4 bg-white rounded-xl hover:shadow-sm transition-shadow">
+            <div key={type.name} className="group p-4 bg-white dark:bg-neutral-800 rounded-xl hover:shadow-sm dark:hover:bg-neutral-750 transition-shadow">
               <div className="flex items-start gap-4">
-                <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", style.bg)}>
+                <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", style.bg, "dark:bg-opacity-20")}>
                   <TypeIcon className={cn("h-5 w-5", style.color)} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-800">{friendlyName}</p>
-                  <p className="text-xs text-gray-500 mt-1 leading-relaxed">{type.description}</p>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-neutral-100">{friendlyName}</p>
+                  <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1 leading-relaxed">{type.description}</p>
                   {mappedCategory && (
-                    <div className="mt-3 inline-flex items-center gap-1.5 text-[11px] text-gray-400 bg-gray-50 px-2.5 py-1 rounded-lg">
+                    <div className="mt-3 inline-flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-neutral-500 bg-gray-50 dark:bg-neutral-700 px-2.5 py-1 rounded-lg">
                       <ArrowRight className="h-3 w-3" />
                       <span className="text-[#9e2339] font-medium">{displayName}</span>
                     </div>
@@ -377,61 +377,61 @@ export function SchemaExplorer({ onClose }) {
   const allExpanded = expandedCategories.size === documentCategories.length;
   
   return (
-    <div className="h-full flex flex-col bg-white rounded-xl overflow-hidden">
+    <div className="h-full flex flex-col bg-white dark:bg-neutral-800 rounded-xl overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 flex items-center justify-between">
+      <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100 dark:border-neutral-700">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">Schema Explorer</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-neutral-100">Schema Explorer</h1>
+          <p className="text-xs text-gray-400 dark:text-neutral-500 mt-0.5">
             {schemaList.length} schemas · {SUBDOCUMENT_TYPES.length} split types
           </p>
         </div>
-        <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
+        <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-700 rounded-lg">
           <X className="h-3.5 w-3.5" />
           Close
         </button>
       </div>
       
       {/* Tabs */}
-      <div className="px-5 py-3 flex items-center gap-6 text-sm">
+      <div className="px-5 py-3 flex items-center gap-6 text-sm border-b border-gray-100 dark:border-neutral-700">
         <button
           onClick={() => { setActiveTab("schemas"); setSelectedSchema(null); }}
-          className={cn(activeTab === "schemas" ? "text-gray-900 font-medium" : "text-gray-400")}
+          className={cn(activeTab === "schemas" ? "text-gray-900 dark:text-neutral-100 font-medium" : "text-gray-400 dark:text-neutral-500")}
         >
           Schemas
         </button>
         <button
           onClick={() => { setActiveTab("splits"); setSelectedSchema(null); }}
-          className={cn(activeTab === "splits" ? "text-gray-900 font-medium" : "text-gray-400")}
+          className={cn(activeTab === "splits" ? "text-gray-900 dark:text-neutral-100 font-medium" : "text-gray-400 dark:text-neutral-500")}
         >
           Split Types
         </button>
       </div>
       
       {/* Content */}
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 bg-gray-50 dark:bg-neutral-900">
         {activeTab === "schemas" ? (
           <>
             {/* Schema List */}
             <div className={cn(
-              "flex flex-col transition-all",
+              "flex flex-col transition-all bg-white dark:bg-neutral-800",
               selectedSchema ? "w-72" : "w-full"
             )}>
               {/* Search + Expand/Collapse */}
               <div className="px-4 py-3 flex items-center gap-3">
                 <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-neutral-500" />
                   <input
                     type="text"
                     placeholder="Search schemas..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 text-sm bg-gray-100 rounded-xl focus:outline-none focus:bg-gray-50 focus:ring-2 focus:ring-gray-200 placeholder:text-gray-400"
+                    className="w-full pl-10 pr-4 py-2.5 text-sm bg-gray-100 dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 rounded-xl focus:outline-none focus:bg-gray-50 dark:focus:bg-neutral-600 focus:ring-2 focus:ring-gray-200 dark:focus:ring-neutral-600 placeholder:text-gray-400 dark:placeholder:text-neutral-500"
                   />
                 </div>
                 <button
                   onClick={allExpanded ? collapseAll : expandAll}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl"
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-200 bg-gray-100 dark:bg-neutral-700 hover:bg-gray-200 dark:hover:bg-neutral-600 rounded-xl"
                 >
                   <ChevronsUpDown className="h-3.5 w-3.5" />
                   {allExpanded ? "Collapse" : "Expand"}
@@ -453,7 +453,7 @@ export function SchemaExplorer({ onClose }) {
                 ))}
                 
                 {filteredCategories.length === 0 && (
-                  <p className="p-6 text-center text-sm text-gray-500">No schemas match your search.</p>
+                  <p className="p-6 text-center text-sm text-gray-500 dark:text-neutral-400">No schemas match your search.</p>
                 )}
               </div>
             </div>
@@ -469,7 +469,7 @@ export function SchemaExplorer({ onClose }) {
             )}
           </>
         ) : (
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto bg-white dark:bg-neutral-800">
             <SplitTypesView />
           </div>
         )}

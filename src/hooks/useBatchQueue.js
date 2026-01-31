@@ -36,6 +36,7 @@ const ActionTypes = {
   PAUSE_PROCESSING: "PAUSE_PROCESSING",
   RESUME_PROCESSING: "RESUME_PROCESSING",
   UPDATE_PACKET_STATUS: "UPDATE_PACKET_STATUS",
+  UPDATE_DOCUMENT: "UPDATE_DOCUMENT",
   PACKET_DOCUMENT_PROCESSED: "PACKET_DOCUMENT_PROCESSED",
   PACKET_COMPLETED: "PACKET_COMPLETED",
   PACKET_FAILED: "PACKET_FAILED",
@@ -515,6 +516,54 @@ function batchQueueReducer(state, action) {
       };
     }
     
+    case ActionTypes.UPDATE_DOCUMENT: {
+      const { packetId, documentId, updates } = action;
+      const packet = state.packets.get(packetId);
+      if (!packet) return state;
+      
+      const newPackets = new Map(state.packets);
+      const updatedDocs = packet.documents?.map(d => {
+        if (d.id !== documentId) return d;
+        return { ...d, ...updates };
+      });
+      
+      // Recalculate packet stats based on document statuses
+      const docStats = {
+        completed: 0,
+        needsReview: 0,
+        failed: 0,
+      };
+      
+      for (const doc of updatedDocs || []) {
+        if (doc.status === "reviewed" || doc.status === "completed") {
+          docStats.completed++;
+        } else if (doc.status === "needs_review" && doc.needsReview !== false) {
+          docStats.needsReview++;
+        } else if (doc.status === "failed" || doc.status === "rejected") {
+          docStats.failed++;
+        }
+      }
+      
+      newPackets.set(packetId, {
+        ...packet,
+        documents: updatedDocs,
+        completedDocuments: docStats.completed,
+        needsReviewDocuments: docStats.needsReview,
+        failedDocuments: docStats.failed,
+      });
+      
+      // Update global stats
+      const statsUpdate = { ...state.stats };
+      // Recalculate needs_review count across all packets
+      let totalNeedsReview = 0;
+      for (const [, p] of newPackets) {
+        totalNeedsReview += p.needsReviewDocuments || 0;
+      }
+      statsUpdate.needsReview = totalNeedsReview;
+      
+      return { ...state, packets: newPackets, stats: statsUpdate };
+    }
+    
     default:
       return state;
   }
@@ -801,6 +850,13 @@ export function useBatchQueue() {
     dispatch({ type: ActionTypes.SET_RETAB_CONFIG, retabConfig });
   }, []);
 
+  /**
+   * Update a document within a packet (e.g., after review)
+   */
+  const updateDocument = useCallback((packetId, documentId, updates) => {
+    dispatch({ type: ActionTypes.UPDATE_DOCUMENT, packetId, documentId, updates });
+  }, []);
+
   // Get packets as sorted array
   const packetsArray = Array.from(state.packets.values()).sort((a, b) => {
     const statusOrder = {
@@ -840,6 +896,7 @@ export function useBatchQueue() {
     clearAll,
     setConfig,
     setRetabConfig,
+    updateDocument,
     isProcessing: state.batchStatus === BatchStatus.PROCESSING,
     isPaused: state.batchStatus === BatchStatus.PAUSED,
     isComplete: state.batchStatus === BatchStatus.COMPLETED,

@@ -10,13 +10,15 @@ import { HistoryLog, HistoryButton } from "./components/HistoryLog";
 import { DocumentDetailModal } from "./components/DocumentDetailModal";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { HelpDocumentation } from "./components/HelpDocumentation";
-import { RetabSettingsPanel, ProcessingConfigOverride, QuickSettingsBadge } from "./components/RetabSettings";
+import { ProcessingConfigOverride } from "./components/RetabSettings";
 import { SchemaExplorer } from "./components/SchemaExplorer";
-import { saveSettings, RETAB_MODELS } from "./lib/retabConfig";
+import { RETAB_MODELS } from "./lib/retabConfig";
 import { useBatchQueue, BatchStatus } from "./hooks/useBatchQueue";
 import { useProcessingHistory } from "./hooks/useProcessingHistory";
 import { getApiKey, setApiKey, hasApiKey } from "./lib/retab";
 import { requestPermission, showProcessingComplete, showNeedsReview, isSupported as notificationsSupported } from "./lib/notifications";
+import * as api from "./lib/api";
+import { formatTimeCST } from "./lib/utils";
 import {
   Card,
   CardHeader,
@@ -32,8 +34,6 @@ import {
   AlertCircle, 
   Key, 
   FileText, 
-  Settings, 
-  Settings2,
   Play, 
   Pause, 
   RotateCcw,
@@ -55,11 +55,13 @@ import {
   CheckCircle,
   Menu,
   BarChart3,
-  Sliders,
   Zap,
   BookOpen,
   Mail,
+  Moon,
+  Sun,
 } from "lucide-react";
+import { useDarkMode } from "./hooks/useDarkMode";
 
 /**
  * View modes for the application
@@ -152,148 +154,87 @@ function WelcomeDashboard({
 
   return (
     <div
-      className={`flex-1 flex flex-col items-center justify-center p-8 min-h-0 bg-[#fafafa] relative overflow-hidden transition-colors ${isDragOver ? "bg-[#9e2339]/5 ring-2 ring-[#9e2339]/30 ring-inset" : ""}`}
+      className={`flex-1 flex flex-col items-center justify-center p-8 min-h-0 bg-[#fafafa] dark:bg-neutral-900 relative overflow-hidden transition-colors ${isDragOver ? "bg-[#9e2339]/5 dark:bg-[#9e2339]/10 ring-2 ring-[#9e2339]/30 ring-inset" : ""}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {isDragOver && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/80 backdrop-blur-sm pointer-events-none">
-          <div className="flex flex-col items-center gap-2 px-6 py-4 rounded-xl border-2 border-dashed border-[#9e2339]/50 bg-[#9e2339]/5">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/80 dark:bg-neutral-900/80 backdrop-blur-sm pointer-events-none">
+          <div className="flex flex-col items-center gap-2 px-6 py-4 rounded-xl border-2 border-dashed border-[#9e2339]/50 bg-[#9e2339]/5 dark:bg-[#9e2339]/10">
             <Upload className="h-10 w-10 text-[#9e2339]" />
             <span className="text-sm font-medium text-[#9e2339]">Drop PDFs here</span>
-            <span className="text-xs text-slate-500">Files will be added to the upload queue</span>
+            <span className="text-xs text-slate-500 dark:text-neutral-400">Files will be added to the upload queue</span>
           </div>
         </div>
       )}
       {/* Subtle whoosh of color */}
-      <div className="absolute -top-24 -right-24 w-[28rem] h-[28rem] rounded-full bg-[#9e2339]/[0.08] blur-[100px] pointer-events-none" aria-hidden />
-      <div className="absolute -bottom-32 left-1/4 w-80 h-80 rounded-full bg-sky-300/15 blur-[80px] pointer-events-none" aria-hidden />
+      <div className="absolute -top-24 -right-24 w-[28rem] h-[28rem] rounded-full bg-[#9e2339]/[0.08] dark:bg-[#9e2339]/[0.15] blur-[100px] pointer-events-none" aria-hidden />
+      <div className="absolute -bottom-32 left-1/4 w-80 h-80 rounded-full bg-sky-300/15 dark:bg-sky-500/10 blur-[80px] pointer-events-none" aria-hidden />
       <div className="relative z-10 max-w-3xl w-full">
         {/* Hero */}
         <div className="text-center mb-6">
-          <p className="text-xs tracking-[0.25em] uppercase text-slate-400 mb-1" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+          <p className="text-xs tracking-[0.25em] uppercase text-slate-400 dark:text-neutral-500 mb-1" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
             Stewart
           </p>
-          <h1 className="text-5xl sm:text-6xl tracking-tight text-slate-900 mb-2" style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}>
+          <h1 className="text-5xl sm:text-6xl tracking-tight text-slate-900 dark:text-neutral-100 mb-2" style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}>
             CORTEX
           </h1>
-          <p className="text-xs tracking-[0.25em] uppercase text-slate-400" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+          <p className="text-xs tracking-[0.25em] uppercase text-slate-400 dark:text-neutral-500" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
             Structured Data, On Demand
           </p>
         </div>
 
-        {/* Alerts: review needed or new results */}
-        {(hasNeedsReview || (hasPackets && ((currentStats?.completed ?? 0) + (currentStats?.needsReview ?? 0) + (currentStats?.failed ?? 0)) > 0)) && (
-          <div className="space-y-3 mb-6">
-            {hasNeedsReview && (
-              <Alert variant="warning" className="rounded-xl border-amber-200/80 bg-amber-50/90">
-                <AlertTriangle className="h-4 w-4 text-amber-600" />
-                <AlertTitle className="text-amber-900">
-                  {(currentStats?.needsReview ?? 0)} document{(currentStats?.needsReview ?? 0) !== 1 ? "s" : ""} need review
-                </AlertTitle>
-                <AlertDescription className="flex flex-wrap items-center gap-2 mt-1">
-                  <span className="text-amber-800 text-sm">Review and approve or reject extracted data.</span>
-                  <button
-                    onClick={onViewReview}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-amber-700 hover:text-amber-900 underline underline-offset-2"
-                  >
-                    Go to Review →
-                  </button>
-                </AlertDescription>
-              </Alert>
-            )}
-            {hasPackets && ((currentStats?.completed ?? 0) + (currentStats?.needsReview ?? 0) + (currentStats?.failed ?? 0)) > 0 && (
-              <Alert className="rounded-xl border-slate-200 bg-white/90">
-                <ListChecks className="h-4 w-4 text-slate-600" />
-                <AlertTitle className="text-slate-900">Results ready</AlertTitle>
-                <AlertDescription className="flex flex-wrap items-center gap-2 mt-1">
-                  <span className="text-slate-600 text-sm">
-                    {(currentStats?.completed ?? 0) + (currentStats?.needsReview ?? 0)} document{((currentStats?.completed ?? 0) + (currentStats?.needsReview ?? 0)) !== 1 ? "s" : ""} from your last run.
-                  </span>
-                  <button
-                    onClick={onViewResults}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-[#9e2339] hover:text-[#9e2339]/80 underline underline-offset-2"
-                  >
-                    View Results →
-                  </button>
-                </AlertDescription>
-              </Alert>
-            )}
-          </div>
-        )}
-
-        {/* Outstanding tasks — large block */}
+        {/* Outstanding tasks — compact inline list */}
         {hasOutstanding && (
-          <div className="mb-6 py-4 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm shadow-slate-200/50">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider text-center mb-4">Outstanding tasks</p>
-            <div className="space-y-3">
+          <div className="mb-6 max-w-md mx-auto">
+            <div className="space-y-2">
               {isProcessing && (
                 <button
                   onClick={onViewResults}
-                  className="w-full flex items-center justify-between p-4 rounded-xl bg-amber-50 border border-amber-200/80 text-left hover:bg-amber-100/80 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-700/40 text-left hover:bg-amber-100/80 dark:hover:bg-amber-900/30 transition-colors"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-amber-200/60 flex items-center justify-center">
-                      <Clock className="h-5 w-5 text-amber-700" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-amber-900">Processing in progress</p>
-                      <p className="text-sm text-amber-700">View status and results</p>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                    <span className="text-sm font-medium text-amber-900 dark:text-amber-200">Processing in progress</span>
                   </div>
-                  <span className="text-amber-600 text-sm font-medium">View →</span>
+                  <span className="text-amber-600 dark:text-amber-400 text-xs">View →</span>
                 </button>
               )}
               {!isProcessing && hasPackets && queuedCount > 0 && (
                 <button
                   onClick={onViewResults}
-                  className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200 text-left hover:bg-slate-100 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 dark:bg-neutral-700/50 border border-slate-200/60 dark:border-neutral-600 text-left hover:bg-slate-100 dark:hover:bg-neutral-700 transition-colors"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-slate-200/80 flex items-center justify-center">
-                      <FileText className="h-5 w-5 text-slate-600" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-slate-900">{packets.length} packet{packets.length !== 1 ? "s" : ""} ready</p>
-                      <p className="text-sm text-slate-500">Pending — start processing or add more</p>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-slate-500 dark:text-neutral-400" />
+                    <span className="text-sm font-medium text-slate-900 dark:text-neutral-100">{packets.length} packet{packets.length !== 1 ? "s" : ""} queued</span>
                   </div>
-                  <span className="text-slate-500 text-sm font-medium">View →</span>
+                  <span className="text-slate-500 dark:text-neutral-400 text-xs">View →</span>
                 </button>
               )}
               {hasNeedsReview && (
                 <button
                   onClick={onViewReview}
-                  className="w-full flex items-center justify-between p-4 rounded-xl bg-amber-50 border border-amber-200/80 text-left hover:bg-amber-100/80 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200/60 dark:border-amber-700/40 text-left hover:bg-amber-100/80 dark:hover:bg-amber-900/30 transition-colors"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-amber-200/60 flex items-center justify-center">
-                      <ListChecks className="h-5 w-5 text-amber-700" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-amber-900">{currentStats?.needsReview ?? 0} document{(currentStats?.needsReview ?? 0) !== 1 ? "s" : ""} need review</p>
-                      <p className="text-sm text-amber-700">Review queue awaiting your action</p>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                    <span className="text-sm font-medium text-amber-900 dark:text-amber-200">{currentStats?.needsReview ?? 0} document{(currentStats?.needsReview ?? 0) !== 1 ? "s" : ""} need review</span>
                   </div>
-                  <span className="text-amber-600 text-sm font-medium">Review →</span>
+                  <span className="text-amber-600 dark:text-amber-400 text-xs">Review →</span>
                 </button>
               )}
               {hasFailed && (
                 <button
                   onClick={onViewResults}
-                  className="w-full flex items-center justify-between p-4 rounded-xl bg-red-50 border border-red-200/80 text-left hover:bg-red-100/80 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200/60 dark:border-red-700/40 text-left hover:bg-red-100/80 dark:hover:bg-red-900/30 transition-colors"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-red-200/60 flex items-center justify-center">
-                      <AlertCircle className="h-5 w-5 text-red-700" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-red-900">{currentStats?.failed ?? 0} failed</p>
-                      <p className="text-sm text-red-700">View errors and retry</p>
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                    <span className="text-sm font-medium text-red-900 dark:text-red-200">{currentStats?.failed ?? 0} failed</span>
                   </div>
-                  <span className="text-red-600 text-sm font-medium">View →</span>
+                  <span className="text-red-600 dark:text-red-400 text-xs">View →</span>
                 </button>
               )}
             </div>
@@ -304,15 +245,15 @@ function WelcomeDashboard({
         <div className="flex justify-center mb-5">
           <button
             onClick={onUpload}
-            className="w-full max-w-md group flex items-center gap-3 p-3.5 rounded-xl bg-white border border-slate-200/60 shadow-sm hover:shadow-md hover:border-[#9e2339]/20 hover:bg-[#9e2339]/5 transition-all text-left"
+            className="w-full max-w-md group flex items-center gap-3 p-3.5 rounded-xl bg-white dark:bg-neutral-800 border border-slate-200/60 dark:border-neutral-700 shadow-sm hover:shadow-md dark:shadow-none hover:border-[#9e2339]/20 dark:hover:border-[#9e2339]/40 hover:bg-[#9e2339]/5 dark:hover:bg-[#9e2339]/10 transition-all text-left"
           >
-          <div className="w-9 h-9 rounded-lg bg-[#9e2339]/10 flex items-center justify-center shrink-0 group-hover:bg-[#9e2339]/20 transition-colors">
+          <div className="w-9 h-9 rounded-lg bg-[#9e2339]/10 dark:bg-[#9e2339]/20 flex items-center justify-center shrink-0 group-hover:bg-[#9e2339]/20 dark:group-hover:bg-[#9e2339]/30 transition-colors">
             <Upload className="h-4 w-4 text-[#9e2339]" />
           </div>
           <div className="min-w-0 flex-1">
-            <span className="font-semibold text-slate-900 text-sm">Upload PDFs</span>
+            <span className="font-semibold text-slate-900 dark:text-neutral-100 text-sm">Upload PDFs</span>
           </div>
-          <span className="text-slate-400 group-hover:text-[#9e2339] text-xs shrink-0">Get started</span>
+          <span className="text-slate-400 dark:text-neutral-500 group-hover:text-[#9e2339] text-xs shrink-0">Get started</span>
           </button>
         </div>
 
@@ -320,25 +261,25 @@ function WelcomeDashboard({
         <div className="flex flex-wrap items-center justify-center gap-3 mb-8">
           <button
             onClick={onViewHelp}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-white/80 border border-slate-200/60 hover:bg-white hover:border-slate-300 hover:text-slate-900 transition-all"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 dark:text-neutral-300 bg-white/80 dark:bg-neutral-800/80 border border-slate-200/60 dark:border-neutral-700 hover:bg-white dark:hover:bg-neutral-800 hover:border-slate-300 dark:hover:border-neutral-600 hover:text-slate-900 dark:hover:text-neutral-100 transition-all"
           >
-            <HelpCircle className="h-4 w-4 text-slate-400" />
+            <HelpCircle className="h-4 w-4 text-slate-400 dark:text-neutral-500" />
             Help & Docs
           </button>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-center gap-3 mt-10 pt-6 border-t border-slate-200/50">
+        <div className="flex items-center justify-center gap-3 mt-10 pt-6 border-t border-slate-200/50 dark:border-neutral-700/50">
           <button
             onClick={onViewAdmin}
-            className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+            className="text-xs text-slate-400 dark:text-neutral-500 hover:text-slate-600 dark:hover:text-neutral-300 transition-colors"
           >
             Admin
           </button>
-          <span className="text-slate-300 text-xs">·</span>
+          <span className="text-slate-300 dark:text-neutral-600 text-xs">·</span>
           <a
             href="mailto:philip.snowden@stewart.com?subject=SAIL%20Inquiry%20from%20CORTEX"
-            className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+            className="text-xs text-slate-400 dark:text-neutral-500 hover:text-slate-600 dark:hover:text-neutral-300 transition-colors"
           >
             Contact
           </a>
@@ -349,6 +290,9 @@ function WelcomeDashboard({
 }
 
 function App() {
+  // Dark mode state
+  const [isDark, setIsDark, toggleDarkMode] = useDarkMode();
+
   // API Key state
   const [apiKeyInput, setApiKeyInput] = useState(getApiKey());
   const [apiKeyConfigured, setApiKeyConfigured] = useState(hasApiKey());
@@ -403,7 +347,6 @@ function App() {
   
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
-  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
   const [showSessionRestoredBanner, setShowSessionRestoredBanner] = useState(false);
   const [runConfig, setRunConfig] = useState(null); // Per-run config override
@@ -438,6 +381,7 @@ function App() {
     removePacket,
     clearAll,
     setRetabConfig,
+    updateDocument,
     isProcessing,
     isPaused,
     isComplete,
@@ -652,30 +596,59 @@ function App() {
   }, []);
 
   // Handle approve review item - apply edits and mark as reviewed
-  const handleApproveReview = useCallback((document, packet, reviewData) => {
-    console.log("Approved:", document.id, {
-      editedFields: reviewData.editedFields,
-      notes: reviewData.reviewerNotes,
-    });
-    
-    // TODO: In production, update the document state:
-    // - Apply editedFields to extraction data
-    // - Clear needsReview flag
-    // - Save reviewerNotes
-    // - Sync to database
-  }, []);
+  const handleApproveReview = useCallback(async (document, packet, reviewData) => {
+    try {
+      // Save to database
+      await api.reviewDocument(document.id, {
+        status: "reviewed",
+        editedFields: reviewData.editedFields || {},
+        reviewerNotes: reviewData.reviewerNotes || null,
+        reviewedBy: "reviewer", // TODO: Add user identification
+      });
+      
+      // Update local state using UPDATE_DOCUMENT action
+      updateDocument(packet.id, document.id, {
+        status: "reviewed",
+        needsReview: false,
+        editedFields: reviewData.editedFields || {},
+        reviewerNotes: reviewData.reviewerNotes || null,
+        reviewedAt: new Date().toISOString(),
+      });
+      
+      console.log("Review saved:", document.id, {
+        editedFields: reviewData.editedFields,
+        status: "reviewed",
+      });
+    } catch (error) {
+      console.error("Failed to save review:", error);
+      // TODO: Show error toast to user
+    }
+  }, [updateDocument]);
 
   // Handle reject review item - mark for re-processing or removal
-  const handleRejectReview = useCallback((document, packet, reviewData) => {
-    console.log("Rejected:", document.id, {
-      notes: reviewData.reviewerNotes,
-    });
-    
-    // TODO: In production:
-    // - Flag document as rejected
-    // - Save rejection reason/notes
-    // - Optionally remove from results or mark for re-processing
-  }, []);
+  const handleRejectReview = useCallback(async (document, packet, reviewData) => {
+    try {
+      // Save rejection to database
+      await api.reviewDocument(document.id, {
+        status: "rejected",
+        editedFields: {},
+        reviewerNotes: reviewData.reviewerNotes || "Rejected by reviewer",
+        reviewedBy: "reviewer", // TODO: Add user identification
+      });
+      
+      // Update local state
+      updateDocument(packet.id, document.id, {
+        status: "rejected",
+        needsReview: false,
+        reviewerNotes: reviewData.reviewerNotes || "Rejected by reviewer",
+        reviewedAt: new Date().toISOString(),
+      });
+      
+      console.log("Document rejected:", document.id);
+    } catch (error) {
+      console.error("Failed to save rejection:", error);
+    }
+  }, [updateDocument]);
 
   // Handle new upload - go back to upload without clearing results
   const handleNewUpload = useCallback(() => {
@@ -705,9 +678,9 @@ function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex flex-col transition-colors">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 shrink-0">
+      <header className="bg-white dark:bg-neutral-800 border-b border-gray-200 dark:border-neutral-700 shrink-0">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-between h-14">
             {/* Left: Logo */}
@@ -727,10 +700,10 @@ function App() {
               {/* Brand text */}
               <div className="flex flex-col -space-y-0.5">
                 <div className="flex items-baseline gap-1.5">
-                  <span className="text-xl tracking-wide text-gray-900" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
-                  <span className="text-[10px] text-gray-400">v0.2</span>
+                  <span className="text-xl tracking-wide text-gray-900 dark:text-white" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
+                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.2</span>
                 </div>
-                <span className="text-[9px] tracking-wider text-gray-400" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
+                <span className="text-[9px] tracking-wider text-gray-400 dark:text-neutral-500" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
               </div>
               
               {!apiKeyConfigured && (
@@ -742,13 +715,13 @@ function App() {
             
             {/* Center: Navigation */}
             {apiKeyConfigured && (
-              <nav className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+              <nav className="flex items-center gap-1 bg-gray-100 dark:bg-neutral-700 rounded-lg p-1">
                   <button
                     onClick={() => setViewMode(ViewMode.DASHBOARD)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
                       viewMode === ViewMode.DASHBOARD
-                        ? "bg-white text-gray-900 shadow-sm"
-                        : "text-gray-600 hover:text-gray-900"
+                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
+                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
                     }`}
                   >
                     Home
@@ -758,8 +731,8 @@ function App() {
                     onClick={() => setViewMode(ViewMode.UPLOAD)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
                       viewMode === ViewMode.UPLOAD
-                        ? "bg-white text-gray-900 shadow-sm"
-                        : "text-gray-600 hover:text-gray-900"
+                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
+                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
                     }`}
                   >
                     Upload
@@ -770,8 +743,8 @@ function App() {
                     title={hasPackets ? "View processing results" : "Results (no items yet)"}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
                       viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS
-                        ? "bg-white text-gray-900 shadow-sm"
-                        : "text-gray-600 hover:text-gray-900"
+                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
+                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
                     }`}
                   >
                     Results
@@ -782,8 +755,8 @@ function App() {
                     title={hasNeedsReview ? `${stats.needsReview} document(s) need review` : "Review queue (empty if none need review)"}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5 ${
                       viewMode === ViewMode.REVIEW
-                        ? "bg-white text-gray-900 shadow-sm"
-                        : "text-gray-600 hover:text-gray-900"
+                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
+                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
                     }`}
                   >
                     Review
@@ -796,8 +769,8 @@ function App() {
                     onClick={() => setViewMode(ViewMode.HISTORY)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
                       viewMode === ViewMode.HISTORY
-                        ? "bg-white text-gray-900 shadow-sm"
-                        : "text-gray-600 hover:text-gray-900"
+                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
+                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
                     }`}
                   >
                     History
@@ -808,55 +781,50 @@ function App() {
             {/* Right: Actions */}
             {apiKeyConfigured && (
               <div className="flex items-center gap-3">
-                <QuickSettingsBadge 
-                  config={retabConfig} 
-                  onClick={() => setShowSettingsPanel(true)} 
-                />
-                
                 <div className="relative group">
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500">
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500 dark:text-neutral-400">
                     <Menu className="h-4 w-4" />
                   </Button>
-                  <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                    <button
-                      onClick={() => setShowSettingsPanel(true)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                    >
-                      <Sliders className="h-4 w-4" />
-                      Settings
-                    </button>
+                  <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-neutral-800 rounded-lg shadow-lg border border-gray-200 dark:border-neutral-700 py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                     <button
                       onClick={() => setShowSchemaExplorer(true)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
                     >
                       <BookOpen className="h-4 w-4" />
                       Schemas
                     </button>
                     <button
                       onClick={() => setViewMode(ViewMode.ADMIN)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
                     >
                       <BarChart3 className="h-4 w-4" />
                       Admin
                     </button>
                     <button
                       onClick={() => setViewMode(ViewMode.HELP)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
                     >
                       <HelpCircle className="h-4 w-4" />
                       Help & Docs
                     </button>
                     <a
                       href="mailto:philip.snowden@stewart.com?subject=SAIL%20Inquiry%20from%20CORTEX"
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#9e2339] hover:bg-red-50"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#9e2339] hover:bg-red-50 dark:hover:bg-red-900/20"
                     >
                       <Mail className="h-4 w-4" />
                       Contact SAIL
                     </a>
-                    <div className="border-t border-gray-100 my-1" />
+                    <button
+                      onClick={toggleDarkMode}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                    >
+                      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                      {isDark ? "Light Mode" : "Dark Mode"}
+                    </button>
+                    <div className="border-t border-gray-100 dark:border-neutral-700 my-1" />
                     <button
                       onClick={handleClearApiKey}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
                     >
                       <Key className="h-4 w-4" />
                       API Key
@@ -871,7 +839,7 @@ function App() {
                           setViewMode(ViewMode.DASHBOARD);
                         }
                       })}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
                     >
                       <Trash2 className="h-4 w-4" />
                       Clear Data
@@ -886,17 +854,17 @@ function App() {
 
       {/* Session Restored Banner */}
       {showSessionRestoredBanner && (
-        <div className="bg-blue-50 border-b border-blue-200 px-4 py-3">
+        <div className="bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800/50 px-4 py-3">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                <History className="h-4 w-4 text-blue-600" />
+              <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-800/40 flex items-center justify-center">
+                <History className="h-4 w-4 text-blue-600 dark:text-blue-400" />
               </div>
               <div>
-                <p className="text-sm font-medium text-blue-900">
+                <p className="text-sm font-medium text-blue-900 dark:text-blue-200">
                   Previous session restored
                 </p>
-                <p className="text-xs text-blue-700">
+                <p className="text-xs text-blue-700 dark:text-blue-400">
                   {stats.completed + stats.needsReview} document{stats.completed + stats.needsReview !== 1 ? 's' : ''} from your last session. 
                   PDFs available for 1 hour; extraction results retained until cleared.
                 </p>
@@ -911,7 +879,7 @@ function App() {
                   setShowSessionRestoredBanner(false);
                   setViewMode(ViewMode.DASHBOARD);
                 }}
-                className="text-blue-700 border-blue-300 hover:bg-blue-100"
+                className="text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700 hover:bg-blue-100 dark:hover:bg-blue-800/40"
               >
                 Start Fresh
               </Button>
@@ -919,7 +887,7 @@ function App() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setShowSessionRestoredBanner(false)}
-                className="text-blue-500 hover:text-blue-700"
+                className="text-blue-500 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -1026,8 +994,7 @@ function App() {
               <CardHeader>
                 <CardTitle>Upload Document Packets</CardTitle>
                 <CardDescription>
-                  Upload PDF packets containing title documents. Each PDF can contain
-                  multiple documents from a single real estate transaction.
+                  Each PDF can contain multiple documents from a single real estate transaction.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -1119,24 +1086,24 @@ function App() {
 
             {/* Completion message */}
             {isComplete && !isProcessing && (
-              <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg shrink-0">
+              <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg shrink-0">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-100 rounded-full">
-                      <FileText className="h-5 w-5 text-green-600" />
+                    <div className="p-2 bg-green-100 dark:bg-green-800/50 rounded-full">
+                      <FileText className="h-5 w-5 text-green-600 dark:text-green-400" />
                     </div>
                     <div>
-                      <p className="font-medium text-green-900">
+                      <p className="font-medium text-green-900 dark:text-green-100">
                         Processing complete
                       </p>
-                      <p className="text-sm text-green-700">
+                      <p className="text-sm text-green-700 dark:text-green-300">
                         {stats.completed} completed
                         {stats.needsReview > 0 && `, ${stats.needsReview} need review`}
                         {stats.failed > 0 && `, ${stats.failed} failed`}
                         {currentRunSaved && " • Saved to history"}
                       </p>
                       {stats.needsReview > 0 && (
-                        <p className="text-sm text-amber-800 mt-0.5 font-medium">
+                        <p className="text-sm text-amber-800 dark:text-amber-300 mt-0.5 font-medium">
                           Review results to approve or fix extractions.
                         </p>
                       )}
@@ -1230,7 +1197,7 @@ function App() {
       </main>
 
       {/* Footer — full width across base of page */}
-      <footer className="border-t border-gray-100 bg-gradient-to-r from-gray-50 via-white to-gray-50 shrink-0 w-full">
+      <footer className="border-t border-gray-100 dark:border-neutral-700 bg-gradient-to-r from-gray-50 via-white to-gray-50 dark:from-neutral-800 dark:via-neutral-800 dark:to-neutral-800 shrink-0 w-full">
         <div className="w-full px-4 py-2.5">
           <div className="flex items-center justify-between">
             {/* Left: Health + Processing Stats */}
@@ -1240,7 +1207,7 @@ function App() {
                 className="flex items-center gap-1.5 text-[10px] cursor-help"
                 title={
                   healthStatus.server === 'online' && healthStatus.database === 'online'
-                    ? `Server: Online\nDatabase: Connected\nRetab API: ${apiKeyConfigured ? 'Configured' : 'Not configured'}\nLast check: ${healthStatus.lastCheck ? new Date(healthStatus.lastCheck).toLocaleTimeString() : 'Never'}`
+                    ? `Server: Online\nDatabase: Connected\nRetab API: ${apiKeyConfigured ? 'Configured' : 'Not configured'}\nLast check: ${healthStatus.lastCheck ? formatTimeCST(healthStatus.lastCheck) + ' CST' : 'Never'}`
                     : healthStatus.server === 'checking'
                     ? 'Checking connection to Retab extraction engine...'
                     : `Server: ${healthStatus.server === 'offline' ? 'Offline' : 'Error'}\nDatabase: ${healthStatus.database === 'online' ? 'Connected' : healthStatus.database}\n${healthStatus.error ? `Error: ${healthStatus.error}` : ''}`
@@ -1252,7 +1219,7 @@ function App() {
                       <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping absolute" />
                       <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
                     </div>
-                    <span className="text-gray-400">Retab Online</span>
+                    <span className="text-gray-400 dark:text-neutral-500">Retab Online</span>
                   </>
                 ) : healthStatus.server === 'checking' ? (
                   <>
@@ -1271,34 +1238,33 @@ function App() {
               </div>
               
               {/* Separator */}
-              {hasPackets && <div className="w-px h-3 bg-gray-200" />}
+              {hasPackets && <div className="w-px h-3 bg-gray-200 dark:bg-neutral-600" />}
               
               {/* Processing Stats */}
               {hasPackets && (
-                <>
+                <div className="flex items-center gap-1.5">
                   {stats.processing > 0 ? (
-                    <div className="flex items-center gap-1.5 cursor-help" title="Processing in progress">
+                    <div className="flex items-center gap-1 cursor-help" title="Processing in progress">
                       <div className="relative">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping absolute" />
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                       </div>
-                      <span className="text-[11px] font-medium text-blue-600">processing</span>
+                      <span className="text-[11px] font-medium text-blue-600">Processing</span>
                     </div>
                   ) : isComplete ? (
                     <div className="flex items-center gap-1 cursor-help" title="All documents have been processed">
                       <CheckCircle className="w-3 h-3 text-green-500" />
-                      <span className="text-[11px] font-medium text-green-600">Complete</span>
+                      <span className="text-[11px] font-medium text-green-600">Complete:</span>
                     </div>
                   ) : null}
-                  
                   {stats.completed > 0 && (
-                    <span className="text-[11px] text-gray-500 cursor-help" title={`${stats.completed} document${stats.completed > 1 ? 's' : ''} successfully extracted`}>
+                    <span className="text-[11px] text-gray-500 dark:text-neutral-400 cursor-help" title={`${stats.completed} document${stats.completed > 1 ? 's' : ''} successfully extracted`}>
                       {stats.completed} <span className="text-green-500">✓</span>
                     </span>
                   )}
                   {stats.needsReview > 0 && (
                     <span className="text-[11px] text-amber-600 cursor-help" title={`${stats.needsReview} document${stats.needsReview > 1 ? 's' : ''} flagged for human review due to low confidence`}>
-                      {stats.needsReview} review
+                      {stats.needsReview} Review
                     </span>
                   )}
                   {stats.failed > 0 && (
@@ -1306,13 +1272,13 @@ function App() {
                       {stats.failed} failed
                     </span>
                   )}
-                </>
+                </div>
               )}
             </div>
             
             {/* Center: Branding */}
             <div className="flex items-center gap-1.5 text-[11px] cursor-help" title="Stewart AI Lab - Intelligent Document Processing">
-              <span className="text-gray-400">POWERED BY</span>
+              <span className="text-gray-400 dark:text-neutral-500">POWERED BY</span>
               <span className="font-semibold text-[#9e2339]">SAIL</span>
             </div>
             
@@ -1325,7 +1291,7 @@ function App() {
                 >
                   <span className="text-emerald-600 font-semibold">${usage.totalCost.toFixed(3)}</span>
                   {usage.totalCredits > 0 && (
-                    <span className="text-gray-400">({usage.totalCredits} cr)</span>
+                    <span className="text-gray-400 dark:text-neutral-500">({usage.totalCredits.toFixed(2)} cr)</span>
                   )}
                 </div>
               )}
@@ -1350,22 +1316,6 @@ function App() {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
       />
-      
-      {/* Retab Settings Panel */}
-      {showSettingsPanel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
-            <RetabSettingsPanel
-              onClose={() => setShowSettingsPanel(false)}
-              onSave={(newSettings) => {
-                setRetabConfig(newSettings);
-                saveSettings(newSettings);
-                setShowSettingsPanel(false);
-              }}
-            />
-          </div>
-        </div>
-      )}
       
       {/* Schema Explorer */}
       {showSchemaExplorer && (

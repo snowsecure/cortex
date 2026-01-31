@@ -43,7 +43,9 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
     
     // Create object URL from base64
     try {
-      const binaryString = atob(base64Data);
+      // Strip data URL prefix if present (e.g., "data:application/pdf;base64,")
+      const base64String = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+      const binaryString = atob(base64String);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
@@ -69,7 +71,7 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
   
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full bg-gray-100 text-gray-500">
+      <div className="flex items-center justify-center h-full bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400">
         <div className="text-center">
           <Loader2 className="h-12 w-12 mx-auto mb-2 animate-spin opacity-60" />
           <p>Loading PDF from server…</p>
@@ -80,7 +82,7 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
   
   if (!base64Data) {
     return (
-      <div className="flex items-center justify-center h-full bg-gray-100 text-gray-500">
+      <div className="flex items-center justify-center h-full bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400">
         <div className="text-center">
           <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
           <p>PDF preview not available</p>
@@ -90,28 +92,28 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
   }
   
   return (
-    <div className="flex flex-col h-full bg-gray-900">
+    <div className="flex flex-col h-full bg-gray-100 dark:bg-gray-900">
       {/* PDF Controls */}
-      <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
+      <div className="flex items-center justify-between px-3 py-2 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-2">
           {pageNumbers.length > 1 && (
             <>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-gray-300 hover:text-white hover:bg-gray-700"
+                className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
                 onClick={() => setCurrentPageIndex(Math.max(0, currentPageIndex - 1))}
                 disabled={currentPageIndex === 0}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <span className="text-xs text-gray-300 min-w-[80px] text-center">
+              <span className="text-xs text-gray-600 min-w-[80px] text-center">
                 Page {pageNumbers[currentPageIndex]} of {pageNumbers.length} pages
               </span>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-gray-300 hover:text-white hover:bg-gray-700"
+                className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
                 onClick={() => setCurrentPageIndex(Math.min(pageNumbers.length - 1, currentPageIndex + 1))}
                 disabled={currentPageIndex === pageNumbers.length - 1}
               >
@@ -120,7 +122,7 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
             </>
           )}
           {pageNumbers.length === 1 && (
-            <span className="text-xs text-gray-300">
+            <span className="text-xs text-gray-600">
               Page {pageNumbers[0]}
             </span>
           )}
@@ -130,16 +132,16 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-gray-300 hover:text-white hover:bg-gray-700"
+            className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
             onClick={() => setZoom(Math.max(50, zoom - 25))}
           >
             <ZoomOut className="h-4 w-4" />
           </Button>
-          <span className="text-xs text-gray-300 w-12 text-center">{zoom}%</span>
+          <span className="text-xs text-gray-600 dark:text-gray-400 w-12 text-center">{zoom}%</span>
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-gray-300 hover:text-white hover:bg-gray-700"
+            className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
             onClick={() => setZoom(Math.min(200, zoom + 25))}
           >
             <ZoomIn className="h-4 w-4" />
@@ -147,7 +149,7 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-gray-300 hover:text-white hover:bg-gray-700"
+            className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
             onClick={() => setZoom(100)}
           >
             <Maximize2 className="h-4 w-4" />
@@ -156,7 +158,7 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
       </div>
       
       {/* PDF Viewer */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-800">
         <iframe
           src={pdfUrl}
           title={filename || "Document Preview"}
@@ -267,17 +269,17 @@ export function DocumentDetailModal({ document, packet, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-lg shadow-xl w-[95vw] max-w-7xl h-[90vh] flex flex-col mx-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-[95vw] max-w-7xl h-[90vh] flex flex-col mx-4">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b shrink-0">
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 shrink-0">
           <div className="flex items-center gap-3">
-            <FileText className="h-5 w-5 text-gray-500" />
+            <FileText className="h-5 w-5 text-gray-500 dark:text-gray-400" />
             <div>
-              <h2 className="font-semibold text-lg">{displayName}</h2>
-              <p className="text-sm text-gray-500">
+              <h2 className="font-semibold text-lg text-gray-900 dark:text-gray-100">{displayName}</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 Pages: {formatPages()}
                 {packet?.filename && (
-                  <span className="ml-2 text-gray-400">• {packet.filename}</span>
+                  <span className="ml-2 text-gray-400 dark:text-gray-500">• {packet.filename}</span>
                 )}
               </p>
             </div>
@@ -302,9 +304,9 @@ export function DocumentDetailModal({ document, packet, onClose }) {
         
         {/* Review reasons */}
         {document.reviewReasons?.length > 0 && (
-          <div className="px-4 py-2 bg-amber-50 border-b border-amber-100 shrink-0">
-            <p className="text-sm font-medium text-amber-800">Review Reasons:</p>
-            <ul className="text-sm text-amber-700 list-disc list-inside">
+          <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-800 shrink-0">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">Review Reasons:</p>
+            <ul className="text-sm text-amber-700 dark:text-amber-300 list-disc list-inside">
               {document.reviewReasons.map((reason, i) => (
                 <li key={i}>{reason}</li>
               ))}
@@ -315,7 +317,7 @@ export function DocumentDetailModal({ document, packet, onClose }) {
         {/* Split view: PDF left, Data right */}
         <div className="flex-1 flex min-h-0">
           {/* PDF Preview - Left Side */}
-          <div className="w-1/2 border-r border-gray-200">
+          <div className="w-1/2 border-r border-gray-200 dark:border-gray-700">
             <PDFPreview 
               base64Data={pdfBase64} 
               pages={document.pages}
@@ -323,7 +325,7 @@ export function DocumentDetailModal({ document, packet, onClose }) {
               loading={pdfLoading}
             />
             {pdfFetchError && !pdfBase64 && (
-              <p className="text-xs text-amber-600 px-3 py-2 bg-amber-50 border-t border-amber-100">
+              <p className="text-xs text-amber-600 dark:text-amber-400 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-100 dark:border-amber-800">
                 Could not load PDF from server. Extracted data above is still from the original file.
               </p>
             )}
@@ -332,8 +334,8 @@ export function DocumentDetailModal({ document, packet, onClose }) {
           {/* Extracted Data - Right Side */}
           <div className="w-1/2 flex flex-col">
             {/* Data header */}
-            <div className="flex items-center justify-between p-3 border-b bg-gray-50 shrink-0">
-              <h3 className="font-medium text-gray-700">Extracted Data</h3>
+            <div className="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 shrink-0">
+              <h3 className="font-medium text-gray-700 dark:text-gray-300">Extracted Data</h3>
               <Button variant="outline" size="sm" onClick={copyToClipboard}>
                 {copied ? (
                   <>
@@ -352,7 +354,7 @@ export function DocumentDetailModal({ document, packet, onClose }) {
             {/* Fields list */}
             <div className="flex-1 overflow-y-auto p-4">
               {sortedFields.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">No data extracted</p>
+                <p className="text-gray-500 dark:text-gray-400 text-center py-8">No data extracted</p>
               ) : (
                 <div className="space-y-2">
                   {sortedFields.map(([key, value]) => {
@@ -362,13 +364,13 @@ export function DocumentDetailModal({ document, packet, onClose }) {
                     return (
                       <div 
                         key={key} 
-                        className="flex items-start justify-between py-2 px-3 rounded-lg bg-gray-50 hover:bg-gray-100"
+                        className="flex items-start justify-between py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600"
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-gray-700">
+                          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
                             {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
                           </p>
-                          <p className="text-sm text-gray-900 break-words whitespace-pre-wrap">
+                          <p className="text-sm text-gray-900 dark:text-gray-100 break-words whitespace-pre-wrap">
                             {formatValue(value)}
                           </p>
                         </div>
@@ -387,7 +389,7 @@ export function DocumentDetailModal({ document, packet, onClose }) {
         </div>
         
         {/* Footer */}
-        <div className="flex justify-end gap-2 p-4 border-t bg-gray-50 shrink-0">
+        <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 shrink-0">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>

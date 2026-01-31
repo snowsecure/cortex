@@ -191,9 +191,9 @@ function AnimatedWorkflowDiagram() {
   return (
     <div className="py-4">
       {/* Main visualization */}
-      <div className="relative bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl p-6 mb-4">
+      <div className="relative bg-gradient-to-br from-gray-50 to-gray-100 dark:from-neutral-800 dark:to-neutral-900 rounded-2xl p-6 mb-4 dark:border dark:border-neutral-700">
         {/* Progress bar */}
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gray-200 rounded-t-2xl overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gray-200 dark:bg-neutral-700 rounded-t-2xl overflow-hidden">
           <div 
             className={cn("h-full transition-all duration-300 bg-gradient-to-r", activeStepData.color)}
             style={{ width: `${((activeStep + 1) / steps.length) * 100}%` }}
@@ -220,13 +220,13 @@ function AnimatedWorkflowDiagram() {
                   <div className={cn(
                     "w-12 h-12 rounded-xl flex items-center justify-center transition-all",
                     isActive ? `bg-gradient-to-br ${step.color} text-white shadow-lg` : 
-                    isPast ? "bg-green-100 text-green-600" : "bg-gray-200 text-gray-500"
+                    isPast ? "bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400" : "bg-gray-200 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"
                   )}>
                     {isPast && !isActive ? <Check className="h-5 w-5" /> : <StepIcon className="h-5 w-5" />}
                   </div>
                   <span className={cn(
                     "text-xs font-medium",
-                    isActive ? "text-gray-900" : "text-gray-500"
+                    isActive ? "text-gray-900 dark:text-neutral-100" : "text-gray-500 dark:text-neutral-400"
                   )}>
                     {step.title}
                   </span>
@@ -235,7 +235,7 @@ function AnimatedWorkflowDiagram() {
                 {index < steps.length - 1 && (
                   <div className={cn(
                     "flex-1 h-0.5 mx-1 rounded transition-colors",
-                    index < activeStep ? "bg-green-400" : "bg-gray-200"
+                    index < activeStep ? "bg-green-400" : "bg-gray-200 dark:bg-neutral-700"
                   )} />
                 )}
               </React.Fragment>
@@ -244,7 +244,7 @@ function AnimatedWorkflowDiagram() {
         </div>
         
         {/* Active step detail */}
-        <div className={cn("rounded-xl p-5 transition-colors", activeStepData.lightBg)}>
+        <div className={cn("rounded-xl p-5 transition-colors", activeStepData.lightBg, "dark:bg-neutral-800/80")}>
           <div className="flex items-start gap-4">
             <div className={cn(
               "w-14 h-14 rounded-xl flex items-center justify-center text-white shrink-0 bg-gradient-to-br",
@@ -254,29 +254,29 @@ function AnimatedWorkflowDiagram() {
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold text-gray-900">{activeStepData.title}</h3>
-                <span className="text-sm text-gray-500">— {activeStepData.subtitle}</span>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-neutral-100">{activeStepData.title}</h3>
+                <span className="text-sm text-gray-500 dark:text-neutral-400">— {activeStepData.subtitle}</span>
               </div>
-              <p className="text-gray-600">{activeStepData.description}</p>
+              <p className="text-gray-600 dark:text-neutral-300">{activeStepData.description}</p>
               
             </div>
           </div>
           
           {/* Always show details - compact */}
-          <div className="mt-3 pt-3 border-t border-gray-200/50 grid md:grid-cols-2 gap-3 text-xs">
+          <div className="mt-3 pt-3 border-t border-gray-200/50 dark:border-neutral-600/50 grid md:grid-cols-2 gap-3 text-xs">
             <div className="space-y-2">
               <div>
-                <span className="font-semibold text-gray-500 uppercase">What: </span>
-                <span className="text-gray-600">{activeStepData.details.what}</span>
+                <span className="font-semibold text-gray-500 dark:text-neutral-500 uppercase">What: </span>
+                <span className="text-gray-600 dark:text-neutral-300">{activeStepData.details.what}</span>
               </div>
               <div>
-                <span className="font-semibold text-gray-500 uppercase">How: </span>
-                <span className="text-gray-600">{activeStepData.details.how}</span>
+                <span className="font-semibold text-gray-500 dark:text-neutral-500 uppercase">How: </span>
+                <span className="text-gray-600 dark:text-neutral-300">{activeStepData.details.how}</span>
               </div>
             </div>
             <div>
-              <span className="font-semibold text-gray-500 uppercase">Tips: </span>
-              <span className="text-gray-600">{activeStepData.details.tips.join(" · ")}</span>
+              <span className="font-semibold text-gray-500 dark:text-neutral-500 uppercase">Tips: </span>
+              <span className="text-gray-600 dark:text-neutral-300">{activeStepData.details.tips.join(" · ")}</span>
             </div>
           </div>
         </div>
@@ -287,12 +287,12 @@ function AnimatedWorkflowDiagram() {
             onClick={() => setIsPlaying(!isPlaying)}
             className={cn(
               "p-2 rounded-lg transition-colors",
-              isPlaying ? "bg-gray-200 text-gray-700" : "bg-gray-900 text-white"
+              isPlaying ? "bg-gray-200 dark:bg-neutral-700 text-gray-700 dark:text-neutral-300" : "bg-gray-900 dark:bg-neutral-100 text-white dark:text-neutral-900"
             )}
           >
             {isPlaying ? <Timer className="h-4 w-4" /> : <Play className="h-4 w-4" />}
           </button>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-gray-500 dark:text-neutral-400">
             {isPlaying ? "Auto-playing" : "Paused"} · Click any step to explore
           </span>
         </div>
@@ -343,23 +343,23 @@ function ConsensusExplainer() {
   
   return (
     <div className="space-y-4">
-      <div className="p-4 bg-blue-50 rounded-xl">
-        <p className="text-sm text-blue-800">
+      <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+        <p className="text-sm text-blue-800 dark:text-blue-300">
           <strong>Consensus</strong> is Retab's approach to extraction validation. It runs multiple parallel 
           AI requests using the same schema and compares results. When responses disagree, it reveals 
           ambiguities in the extraction.
         </p>
-        <p className="text-xs text-blue-600 mt-2">
+        <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
           Retab docs:{" "}
-          <a href="https://docs.retab.com/overview/Build-your-Schema" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-800">Build your Schema</a>
+          <a href="https://docs.retab.com/overview/Build-your-Schema" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-800 dark:hover:text-blue-300">Build your Schema</a>
           {" · "}
-          <a href="https://docs.retab.com/overview/Best-practices" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-800">Best practices</a>
+          <a href="https://docs.retab.com/overview/Best-practices" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-800 dark:hover:text-blue-300">Best practices</a>
         </p>
       </div>
       
       {/* Level selector */}
-      <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl">
-        <span className="text-sm font-medium text-gray-700">n_consensus =</span>
+      <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-neutral-800 rounded-xl">
+        <span className="text-sm font-medium text-gray-700 dark:text-neutral-300">n_consensus =</span>
         <div className="flex gap-2">
           {[1, 3, 5].map(level => (
             <button
@@ -368,15 +368,15 @@ function ConsensusExplainer() {
               className={cn(
                 "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
                 consensusLevel === level 
-                  ? "bg-gray-900 text-white" 
-                  : "bg-white text-gray-600 hover:bg-gray-100"
+                  ? "bg-gray-900 dark:bg-neutral-100 text-white dark:text-neutral-900" 
+                  : "bg-white dark:bg-neutral-700 text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-600"
               )}
             >
               {level}
             </button>
           ))}
         </div>
-        <span className="text-sm text-gray-500">
+        <span className="text-sm text-gray-500 dark:text-neutral-400">
           Cost: <strong>{current.cost}</strong> · {current.recommendation}
         </span>
       </div>
@@ -384,14 +384,14 @@ function ConsensusExplainer() {
       {/* Visual comparison */}
       <div className="grid md:grid-cols-2 gap-4">
         <div>
-          <h4 className="text-sm font-medium text-gray-700 mb-2">
+          <h4 className="text-sm font-medium text-gray-700 dark:text-neutral-300 mb-2">
             {consensusLevel} Parallel Extraction{consensusLevel > 1 ? 's' : ''}
           </h4>
           <div className="space-y-2">
             {current.responses.slice(0, 3).map((response, i) => (
-              <div key={i} className="p-3 bg-white rounded-lg border border-gray-200 text-xs font-mono">
-                <span className="text-gray-400">Response #{i + 1}:</span>
-                <div className="mt-1 text-gray-700">
+              <div key={i} className="p-3 bg-white dark:bg-neutral-800 rounded-lg border border-gray-200 dark:border-neutral-700 text-xs font-mono">
+                <span className="text-gray-400 dark:text-neutral-500">Response #{i + 1}:</span>
+                <div className="mt-1 text-gray-700 dark:text-neutral-300">
                   grantor: "{response.grantor}"<br/>
                   recording_date: "{response.recording_date}"<br/>
                   loan_amount: "{response.loan_amount}"
@@ -400,7 +400,7 @@ function ConsensusExplainer() {
             ))}
             {current.responses.length > 3 && (
               <div className="flex justify-center">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white text-xs font-medium rounded-full">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 dark:bg-neutral-700 text-white text-xs font-medium rounded-full">
                   <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
                   +{current.responses.length - 3} more identical responses
                 </span>
@@ -410,11 +410,11 @@ function ConsensusExplainer() {
         </div>
         
         <div>
-          <h4 className="text-sm font-medium text-gray-700 mb-2">Likelihood Scores</h4>
-          <div className="p-4 bg-white rounded-lg border border-gray-200">
+          <h4 className="text-sm font-medium text-gray-700 dark:text-neutral-300 mb-2">Likelihood Scores</h4>
+          <div className="p-4 bg-white dark:bg-neutral-800 rounded-lg border border-gray-200 dark:border-neutral-700">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-gray-500">
+                <tr className="text-left text-gray-500 dark:text-neutral-400">
                   <th className="pb-2">Field</th>
                   <th className="pb-2">Likelihood</th>
                   <th className="pb-2">Status</th>
@@ -422,14 +422,14 @@ function ConsensusExplainer() {
               </thead>
               <tbody>
                 {Object.entries(current.likelihoods).map(([field, score]) => (
-                  <tr key={field} className="border-t border-gray-100">
-                    <td className="py-2 font-mono text-gray-700">{field}</td>
-                    <td className="py-2 font-medium">{score}</td>
+                  <tr key={field} className="border-t border-gray-100 dark:border-neutral-700">
+                    <td className="py-2 font-mono text-gray-700 dark:text-neutral-300">{field}</td>
+                    <td className="py-2 font-medium text-gray-900 dark:text-neutral-100">{score}</td>
                     <td className="py-2">
-                      {score.includes("✓") && <span className="text-green-600">Good</span>}
-                      {score.includes("⚠") && <span className="text-amber-600">Needs work</span>}
-                      {score.includes("✗") && <span className="text-red-600">Poor</span>}
-                      {score === "N/A" && <span className="text-gray-400">No comparison</span>}
+                      {score.includes("✓") && <span className="text-green-600 dark:text-green-400">Good</span>}
+                      {score.includes("⚠") && <span className="text-amber-600 dark:text-amber-400">Needs work</span>}
+                      {score.includes("✗") && <span className="text-red-600 dark:text-red-400">Poor</span>}
+                      {score === "N/A" && <span className="text-gray-400 dark:text-neutral-500">No comparison</span>}
                     </td>
                   </tr>
                 ))}
@@ -437,8 +437,8 @@ function ConsensusExplainer() {
             </table>
           </div>
           
-          <div className="mt-3 p-3 bg-amber-50 rounded-lg">
-            <p className="text-xs text-amber-800">
+          <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
+            <p className="text-xs text-amber-800 dark:text-amber-300">
               <strong>Production threshold:</strong> Likelihood ≥0.75 is recommended for deployment.
               Lower scores indicate schema needs improvement.
             </p>
@@ -495,33 +495,33 @@ function SchemaBuildingProcess() {
   
   return (
     <div className="space-y-4">
-      <div className="p-4 bg-violet-50 rounded-xl">
-        <h4 className="font-medium text-violet-900 mb-2">The Schema Building Process</h4>
-        <div className="flex items-center gap-2 text-sm text-violet-700 flex-wrap">
-          <span className="px-2 py-1 bg-violet-100 rounded">1. Define Schema</span>
+      <div className="p-4 bg-violet-50 dark:bg-violet-900/20 rounded-xl">
+        <h4 className="font-medium text-violet-900 dark:text-violet-300 mb-2">The Schema Building Process</h4>
+        <div className="flex items-center gap-2 text-sm text-violet-700 dark:text-violet-400 flex-wrap">
+          <span className="px-2 py-1 bg-violet-100 dark:bg-violet-800/30 rounded">1. Define Schema</span>
           <ArrowRight className="h-4 w-4" />
-          <span className="px-2 py-1 bg-violet-100 rounded">2. Execute n_consensus=4</span>
+          <span className="px-2 py-1 bg-violet-100 dark:bg-violet-800/30 rounded">2. Execute n_consensus=4</span>
           <ArrowRight className="h-4 w-4" />
-          <span className="px-2 py-1 bg-violet-100 rounded">3. Review Likelihoods</span>
+          <span className="px-2 py-1 bg-violet-100 dark:bg-violet-800/30 rounded">3. Review Likelihoods</span>
           <ArrowRight className="h-4 w-4" />
-          <span className="px-2 py-1 bg-violet-100 rounded">4. Adjust & Repeat</span>
+          <span className="px-2 py-1 bg-violet-100 dark:bg-violet-800/30 rounded">4. Adjust & Repeat</span>
         </div>
       </div>
       
-      <h4 className="text-sm font-medium text-gray-700">Schema Improvement Levers</h4>
+      <h4 className="text-sm font-medium text-gray-700 dark:text-neutral-300">Schema Improvement Levers</h4>
       <div className="grid md:grid-cols-2 gap-3">
         {levers.map((item, i) => {
           const Icon = item.icon;
           return (
-            <div key={i} className="p-3 bg-gray-50 rounded-xl">
+            <div key={i} className="p-3 bg-gray-50 dark:bg-neutral-800 rounded-xl">
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shrink-0">
-                  <Icon className="h-4 w-4 text-gray-600" />
+                <div className="w-8 h-8 rounded-lg bg-white dark:bg-neutral-700 flex items-center justify-center shrink-0">
+                  <Icon className="h-4 w-4 text-gray-600 dark:text-neutral-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-gray-800">{item.lever}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">When: {item.when}</p>
-                  <p className="text-xs text-gray-600 mt-1 font-mono bg-white px-2 py-1 rounded">
+                  <p className="text-sm font-medium text-gray-800 dark:text-neutral-100">{item.lever}</p>
+                  <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">When: {item.when}</p>
+                  <p className="text-xs text-gray-600 dark:text-neutral-300 mt-1 font-mono bg-white dark:bg-neutral-700 px-2 py-1 rounded">
                     {item.fix}
                   </p>
                 </div>
@@ -571,15 +571,15 @@ function BestPractices() {
       {practices.map((practice, i) => {
         const Icon = practice.icon;
         return (
-          <div key={i} className="p-4 bg-gray-50 rounded-xl">
+          <div key={i} className="p-4 bg-gray-50 dark:bg-neutral-800 rounded-xl">
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
-                <Icon className="h-5 w-5 text-emerald-600" />
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0">
+                <Icon className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
               </div>
               <div>
-                <h4 className="font-medium text-gray-800">{practice.title}</h4>
-                <p className="text-sm text-gray-600 mt-1">{practice.description}</p>
-                <p className="text-xs text-emerald-700 mt-2 flex items-start gap-1">
+                <h4 className="font-medium text-gray-800 dark:text-neutral-100">{practice.title}</h4>
+                <p className="text-sm text-gray-600 dark:text-neutral-300 mt-1">{practice.description}</p>
+                <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-2 flex items-start gap-1">
                   <Sparkles className="h-3 w-3 mt-0.5 shrink-0" />
                   {practice.tip}
                 </p>
@@ -606,35 +606,35 @@ function ConfidenceThresholdGuide() {
   
   return (
     <div className="space-y-4">
-      <div className="p-4 bg-blue-50 rounded-xl">
-        <p className="text-sm text-blue-800">
+      <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+        <p className="text-sm text-blue-800 dark:text-blue-300">
           <strong>Likelihood scores</strong> indicate how reliably a field was extracted. With consensus mode,
           scores reflect agreement between multiple extraction runs. Higher = more consistent = more reliable.
         </p>
       </div>
       
-      <div className="overflow-hidden rounded-xl border border-gray-200">
+      <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-neutral-700">
         <table className="w-full">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 dark:bg-neutral-800">
             <tr className="text-left text-sm">
-              <th className="px-4 py-3 font-medium text-gray-700">Score</th>
-              <th className="px-4 py-3 font-medium text-gray-700">Status</th>
-              <th className="px-4 py-3 font-medium text-gray-700">Recommended Action</th>
-              <th className="px-4 py-3 font-medium text-gray-700">What it means</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Score</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Status</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Recommended Action</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">What it means</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-gray-100 dark:divide-neutral-700 bg-white dark:bg-neutral-900">
             {thresholds.map((t, i) => (
               <tr key={i}>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <div className={cn("w-3 h-3 rounded-full", t.color)} />
-                    <span className="font-mono text-sm">{t.range}</span>
+                    <span className="font-mono text-sm text-gray-900 dark:text-neutral-100">{t.range}</span>
                   </div>
                 </td>
-                <td className="px-4 py-3 text-sm font-medium text-gray-800">{t.status}</td>
-                <td className="px-4 py-3 text-sm text-gray-600">{t.action}</td>
-                <td className="px-4 py-3 text-sm text-gray-500">{t.description}</td>
+                <td className="px-4 py-3 text-sm font-medium text-gray-800 dark:text-neutral-100">{t.status}</td>
+                <td className="px-4 py-3 text-sm text-gray-600 dark:text-neutral-300">{t.action}</td>
+                <td className="px-4 py-3 text-sm text-gray-500 dark:text-neutral-400">{t.description}</td>
               </tr>
             ))}
           </tbody>
@@ -663,35 +663,35 @@ function ModelComparison() {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-gray-500">
-        <strong>1 credit = $0.01.</strong> Extract/Split/Parse/Schema: <code className="bg-gray-100 px-1 rounded">total_credits = model_credits × page_count</code>; with consensus: <code className="bg-gray-100 px-1 rounded">× n_consensus</code>. Source:{" "}
-        <a href="https://docs.retab.com/core-concepts/Pricing" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Retab Pricing</a>.
+      <p className="text-xs text-gray-500 dark:text-neutral-400">
+        <strong>1 credit = $0.01.</strong> Extract/Split/Parse/Schema: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded">total_credits = model_credits × page_count</code>; with consensus: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded">× n_consensus</code>. Source:{" "}
+        <a href="https://docs.retab.com/core-concepts/Pricing" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">Retab Pricing</a>.
       </p>
-      <div className="overflow-x-auto rounded-xl border border-gray-200">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-neutral-700">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 dark:bg-neutral-800">
             <tr className="text-left">
-              <th className="px-4 py-3 font-medium text-gray-700">Model</th>
-              <th className="px-4 py-3 font-medium text-gray-700">Speed</th>
-              <th className="px-4 py-3 font-medium text-gray-700">Accuracy</th>
-              <th className="px-4 py-3 font-medium text-gray-700">Credits/page</th>
-              <th className="px-4 py-3 font-medium text-gray-700">USD/page</th>
-              <th className="px-4 py-3 font-medium text-gray-700">Best For</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Model</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Speed</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Accuracy</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Credits/page</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">USD/page</th>
+              <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Best For</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-gray-100 dark:divide-neutral-700 bg-white dark:bg-neutral-900">
             {models.map((m, i) => {
               const p = RETAB_PRICING[m.name];
               return (
-                <tr key={m.name} className={i === 1 ? "bg-emerald-50" : ""}>
-                  <td className="px-4 py-3 font-mono">{m.name}</td>
-                  <td className="px-4 py-3">{m.speed}</td>
-                  <td className="px-4 py-3">{m.accuracy}</td>
-                  <td className="px-4 py-3 font-mono">{p.creditsPerPage}</td>
-                  <td className="px-4 py-3 font-mono">${p.usdPerPage.toFixed(3)}</td>
-                  <td className="px-4 py-3 text-gray-600">
+                <tr key={m.name} className={i === 1 ? "bg-emerald-50 dark:bg-emerald-900/20" : ""}>
+                  <td className="px-4 py-3 font-mono text-gray-900 dark:text-neutral-100">{m.name}</td>
+                  <td className="px-4 py-3 text-gray-700 dark:text-neutral-300">{m.speed}</td>
+                  <td className="px-4 py-3 text-gray-700 dark:text-neutral-300">{m.accuracy}</td>
+                  <td className="px-4 py-3 font-mono text-gray-700 dark:text-neutral-300">{p.creditsPerPage}</td>
+                  <td className="px-4 py-3 font-mono text-gray-700 dark:text-neutral-300">${p.usdPerPage.toFixed(3)}</td>
+                  <td className="px-4 py-3 text-gray-600 dark:text-neutral-400">
                     {m.useCase}
-                    {i === 1 && <span className="ml-2 text-xs text-emerald-600 font-medium">← Recommended</span>}
+                    {i === 1 && <span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400 font-medium">← Recommended</span>}
                   </td>
                 </tr>
               );
@@ -748,20 +748,20 @@ function FAQSection() {
   return (
     <div className="space-y-2">
       {faqs.map((faq, index) => (
-        <div key={index} className="bg-gray-50 rounded-xl overflow-hidden">
+        <div key={index} className="bg-gray-50 dark:bg-neutral-800 rounded-xl overflow-hidden">
           <button
             onClick={() => setOpenItem(openItem === index ? null : index)}
-            className="w-full flex items-center justify-between p-4 text-left"
+            className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-100 dark:hover:bg-neutral-700 transition-colors"
           >
-            <span className="text-sm font-medium text-gray-700">{faq.q}</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-neutral-200">{faq.q}</span>
             <ChevronRight className={cn(
-              "h-4 w-4 text-gray-400 transition-transform shrink-0 ml-2",
+              "h-4 w-4 text-gray-400 dark:text-neutral-500 transition-transform shrink-0 ml-2",
               openItem === index && "rotate-90"
             )} />
           </button>
           {openItem === index && (
             <div className="px-4 pb-4">
-              <p className="text-sm text-gray-600 leading-relaxed">{faq.a}</p>
+              <p className="text-sm text-gray-600 dark:text-neutral-300 leading-relaxed">{faq.a}</p>
             </div>
           )}
         </div>
@@ -775,14 +775,65 @@ function FAQSection() {
 // ============================================================================
 
 const PROXY_ENDPOINTS = [
-  { method: "POST", path: "/documents/split", description: "Split PDF packet into subdocuments with page ranges", retab: "POST /v1/documents/split" },
-  { method: "POST", path: "/documents/classify", description: "Classify document into categories (e.g. deed, mortgage)", retab: "POST /v1/documents/classify" },
-  { method: "POST", path: "/documents/extract", description: "Extract structured data from document using JSON schema", retab: "POST /v1/documents/extract" },
-  { method: "POST", path: "/documents/parse", description: "Parse document to text/markdown", retab: "POST /v1/documents/parse" },
-  { method: "POST", path: "/schemas/generate", description: "Generate JSON schema from sample document", retab: "POST /v1/schemas/generate" },
-  { method: "POST", path: "/jobs", description: "Create async job (extract, etc.)", retab: "POST /v1/jobs" },
-  { method: "GET", path: "/jobs/:jobId", description: "Get job status and result", retab: "GET /v1/jobs/:id" },
+  { method: "POST", path: "/api/documents/split", description: "Split PDF packet into subdocuments with page ranges", retab: "POST /v1/documents/split" },
+  { method: "POST", path: "/api/documents/classify", description: "Classify document into categories (e.g. deed, mortgage)", retab: "POST /v1/documents/classify" },
+  { method: "POST", path: "/api/documents/extract", description: "Extract structured data from document using JSON schema", retab: "POST /v1/documents/extract" },
+  { method: "POST", path: "/api/documents/parse", description: "Parse document to text/markdown", retab: "POST /v1/documents/parse" },
+  { method: "POST", path: "/api/schemas/generate", description: "Generate JSON schema from sample document", retab: "POST /v1/schemas/generate" },
+  { method: "POST", path: "/api/jobs", description: "Create async job (extract, etc.)", retab: "POST /v1/jobs" },
+  { method: "GET", path: "/api/jobs/:jobId", description: "Get job status and result", retab: "GET /v1/jobs/:id" },
 ];
+
+const INTERNAL_ENDPOINTS = {
+  health: [
+    { method: "GET", path: "/health", description: "Health check endpoint" },
+    { method: "GET", path: "/api/status", description: "System status with database stats" },
+  ],
+  sessions: [
+    { method: "GET", path: "/api/sessions/active", description: "Get or create active session" },
+    { method: "POST", path: "/api/sessions", description: "Create new session" },
+    { method: "GET", path: "/api/sessions/:id", description: "Get session by ID" },
+    { method: "PATCH", path: "/api/sessions/:id", description: "Update session" },
+    { method: "POST", path: "/api/sessions/:id/close", description: "Close session (set status to completed)" },
+    { method: "GET", path: "/api/sessions/:id/full", description: "Get full session with packets and documents" },
+  ],
+  packets: [
+    { method: "POST", path: "/api/packets", description: "Create packet(s)" },
+    { method: "GET", path: "/api/packets/:id", description: "Get packet by ID" },
+    { method: "GET", path: "/api/sessions/:sessionId/packets", description: "Get all packets for a session" },
+    { method: "PATCH", path: "/api/packets/:id", description: "Update packet" },
+    { method: "POST", path: "/api/packets/:id/complete", description: "Mark packet as complete with results" },
+    { method: "DELETE", path: "/api/packets/:id", description: "Delete packet" },
+    { method: "POST", path: "/api/upload", description: "Upload PDF file (multipart/form-data)" },
+    { method: "GET", path: "/api/packets/:id/file", description: "Get stored PDF file for packet" },
+  ],
+  documents: [
+    { method: "POST", path: "/api/documents", description: "Create document(s)" },
+    { method: "GET", path: "/api/documents/:id", description: "Get document by ID" },
+    { method: "GET", path: "/api/packets/:packetId/documents", description: "Get all documents for a packet" },
+    { method: "GET", path: "/api/sessions/:sessionId/review-queue", description: "Get documents needing review" },
+    { method: "POST", path: "/api/documents/:id/review", description: "Submit document review" },
+  ],
+  history: [
+    { method: "GET", path: "/api/history", description: "Get processing history" },
+    { method: "POST", path: "/api/history", description: "Create history entry" },
+    { method: "DELETE", path: "/api/history/:id", description: "Delete history entry" },
+    { method: "DELETE", path: "/api/history", description: "Clear all history" },
+  ],
+  admin: [
+    { method: "GET", path: "/api/admin/metrics", description: "Get admin dashboard metrics" },
+    { method: "POST", path: "/api/admin/clear-database", description: "Reset application (password required)" },
+  ],
+  exportTemplates: [
+    { method: "GET", path: "/api/export-templates", description: "Get all export templates" },
+    { method: "POST", path: "/api/export-templates", description: "Save export template" },
+    { method: "DELETE", path: "/api/export-templates/:name", description: "Delete export template" },
+  ],
+  usage: [
+    { method: "GET", path: "/api/usage", description: "Get usage statistics" },
+    { method: "GET", path: "/api/stats/30d", description: "Get 30-day aggregated statistics" },
+  ],
+};
 
 const ERROR_REMEDIATION = [
   { pattern: "API key not configured", cause: "Missing or invalid Api-Key", fix: "Set API key in Admin → API Key, or localStorage key retab_api_key." },
@@ -841,45 +892,93 @@ function MermaidDiagram({ chart, className = "" }) {
 }
 
 const ARCHITECTURE_MERMAID = `flowchart LR
-  A[CORTEX] -->|request| B[Proxy]
-  B -->|forward| D[Retab API]
-  D -->|response| B
-  B -->|response| A
-  B <-->|persist| C[(SQLite)]`;
+  subgraph Browser
+    A[React SPA]
+    B[Custom Hooks]
+    C[(localStorage)]
+  end
+  subgraph Server
+    D[Express API]
+    E[Retab Proxy]
+  end
+  subgraph Storage
+    F[(SQLite)]
+    G[Temp PDFs]
+  end
+  A --> B
+  B --> C
+  B --> D
+  D --> F
+  D --> G
+  E --> H[Retab API]`;
 
 function ArchitectureOverview() {
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-600">
-        CORTEX runs as a client-side React app that talks to a local Node proxy. The proxy forwards requests to the Retab API and persists session/packet/document state in SQLite.
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
+        CORTEX is a document processing application for Stewart Title. It runs as a React SPA that communicates with a Node.js Express server. The server acts as both a REST API for persistence and a proxy to the Retab extraction API.
       </p>
-      <div className="rounded-xl border border-gray-200 bg-slate-50/80 p-6 overflow-x-auto min-h-[140px] flex items-center justify-center">
-        <MermaidDiagram chart={ARCHITECTURE_MERMAID} className="flex justify-center py-2 [&_svg]:max-w-full [&_svg]:h-auto [&_.node]:outline-none [&_.edgePath]:stroke-slate-400" />
+      
+      {/* Architecture Diagram */}
+      <div className="rounded-xl border border-gray-200 dark:border-neutral-700 bg-slate-50/80 dark:bg-neutral-800 p-6 overflow-x-auto min-h-[180px] flex items-center justify-center">
+        <MermaidDiagram chart={ARCHITECTURE_MERMAID} className="flex justify-center py-2 [&_svg]:max-w-full [&_svg]:h-auto [&_.node]:outline-none [&_.edgePath]:stroke-slate-400 dark:[&_.edgePath]:stroke-neutral-500" />
       </div>
-      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 font-mono text-xs overflow-x-auto">
-        <div className="flex items-center gap-2 text-gray-700">
+      
+      {/* Technology Stack */}
+      <div className="rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 p-4">
+        <h4 className="text-sm font-medium text-gray-700 dark:text-neutral-300 mb-3">Technology Stack</h4>
+        <div className="grid grid-cols-2 gap-4 text-xs">
+          <div>
+            <span className="font-medium text-gray-600 dark:text-neutral-400">Frontend:</span>
+            <span className="text-gray-500 dark:text-neutral-500 ml-2">React 18, Vite 5, Tailwind CSS 4</span>
+          </div>
+          <div>
+            <span className="font-medium text-gray-600 dark:text-neutral-400">Backend:</span>
+            <span className="text-gray-500 dark:text-neutral-500 ml-2">Node.js, Express 4, better-sqlite3</span>
+          </div>
+          <div>
+            <span className="font-medium text-gray-600 dark:text-neutral-400">External API:</span>
+            <span className="text-gray-500 dark:text-neutral-500 ml-2">Retab (api.retab.com/v1)</span>
+          </div>
+          <div>
+            <span className="font-medium text-gray-600 dark:text-neutral-400">Security:</span>
+            <span className="text-gray-500 dark:text-neutral-500 ml-2">Helmet, CORS, Rate Limiting</span>
+          </div>
+        </div>
+      </div>
+      
+      {/* Data Flow */}
+      <div className="rounded-xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800 p-4 font-mono text-xs overflow-x-auto">
+        <h4 className="text-sm font-medium text-gray-700 dark:text-neutral-300 mb-2 font-sans">Request Flow</h4>
+        <div className="flex items-center gap-2 text-gray-700 dark:text-neutral-300">
           <span className="font-semibold">Browser</span>
-          <ArrowRight className="h-4 w-4 text-gray-400" />
-          <span className="font-semibold">Node proxy (Express)</span>
-          <ArrowRight className="h-4 w-4 text-gray-400" />
-          <span className="font-semibold">Retab API (api.retab.com)</span>
+          <ArrowRight className="h-4 w-4 text-gray-400 dark:text-neutral-500" />
+          <span className="font-semibold">Express Server (:3001)</span>
+          <ArrowRight className="h-4 w-4 text-gray-400 dark:text-neutral-500" />
+          <span className="font-semibold">Retab API</span>
         </div>
-        <div className="mt-2 text-gray-500">
-          API key is sent in <code className="bg-white px-1 rounded">Api-Key</code> header from client to proxy; proxy forwards it to Retab. No document data is stored on Retab beyond the request/response.
+        <div className="mt-2 text-gray-500 dark:text-neutral-400 font-sans">
+          API key is sent in <code className="bg-white dark:bg-neutral-700 px-1 rounded font-mono">Api-Key</code> header from client to proxy; proxy forwards it to Retab. No document data is stored on Retab beyond the request/response.
         </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-        <div className="p-3 rounded-lg border border-gray-200 bg-white">
-          <div className="flex items-center gap-2 text-gray-700 font-medium mb-1"><Database className="h-4 w-4" /> SQLite</div>
-          <p className="text-gray-500 text-xs">Sessions, packets, documents, history, usage. Path: <code className="bg-gray-100 px-1 rounded">DB_PATH/sail-idp.db</code> (default <code className="bg-gray-100 px-1 rounded">./data</code>).</p>
+      
+      {/* Component Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+        <div className="p-3 rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800">
+          <div className="flex items-center gap-2 text-gray-700 dark:text-neutral-300 font-medium mb-1"><Database className="h-4 w-4" /> SQLite</div>
+          <p className="text-gray-500 dark:text-neutral-400 text-xs">6 tables: sessions, packets, documents, history, usage_daily, export_templates. WAL mode enabled.</p>
         </div>
-        <div className="p-3 rounded-lg border border-gray-200 bg-white">
-          <div className="flex items-center gap-2 text-gray-700 font-medium mb-1"><Server className="h-4 w-4" /> Proxy</div>
-          <p className="text-gray-500 text-xs">CORS, request logging, 100MB JSON limit. Port: <code className="bg-gray-100 px-1 rounded">PORT</code> (default 3001).</p>
+        <div className="p-3 rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800">
+          <div className="flex items-center gap-2 text-gray-700 dark:text-neutral-300 font-medium mb-1"><Server className="h-4 w-4" /> Express</div>
+          <p className="text-gray-500 dark:text-neutral-400 text-xs">35+ REST endpoints. Rate limited: 120 req/min (prod). 100MB body limit for base64 PDFs.</p>
         </div>
-        <div className="p-3 rounded-lg border border-gray-200 bg-white">
-          <div className="flex items-center gap-2 text-gray-700 font-medium mb-1"><Zap className="h-4 w-4" /> Retab</div>
-          <p className="text-gray-500 text-xs">Split, classify, extract, parse, jobs. Base: <code className="bg-gray-100 px-1 rounded">https://api.retab.com/v1</code>.</p>
+        <div className="p-3 rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800">
+          <div className="flex items-center gap-2 text-gray-700 dark:text-neutral-300 font-medium mb-1"><Zap className="h-4 w-4" /> Retab API</div>
+          <p className="text-gray-500 dark:text-neutral-400 text-xs">Split, classify, extract, parse, jobs. Models: micro, small, large. Consensus: 1-5x.</p>
+        </div>
+        <div className="p-3 rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800">
+          <div className="flex items-center gap-2 text-gray-700 dark:text-neutral-300 font-medium mb-1"><FileText className="h-4 w-4" /> Temp Storage</div>
+          <p className="text-gray-500 dark:text-neutral-400 text-xs">PDFs stored in ./data/temp-pdfs/. Auto-cleanup after 1 hour. Max 100MB per file.</p>
         </div>
       </div>
     </div>
@@ -887,36 +986,495 @@ function ArchitectureOverview() {
 }
 
 function APIReferenceTable() {
+  const [activeSection, setActiveSection] = React.useState("internal");
+  
+  const methodColors = {
+    GET: "text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30",
+    POST: "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30",
+    PATCH: "text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30",
+    DELETE: "text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/30",
+  };
+  
+  const sectionLabels = {
+    health: { label: "Health", count: INTERNAL_ENDPOINTS.health.length },
+    sessions: { label: "Sessions", count: INTERNAL_ENDPOINTS.sessions.length },
+    packets: { label: "Packets", count: INTERNAL_ENDPOINTS.packets.length },
+    documents: { label: "Documents", count: INTERNAL_ENDPOINTS.documents.length },
+    history: { label: "History", count: INTERNAL_ENDPOINTS.history.length },
+    admin: { label: "Admin", count: INTERNAL_ENDPOINTS.admin.length },
+    exportTemplates: { label: "Export Templates", count: INTERNAL_ENDPOINTS.exportTemplates.length },
+    usage: { label: "Usage/Stats", count: INTERNAL_ENDPOINTS.usage.length },
+  };
+  
+  const totalInternal = Object.values(INTERNAL_ENDPOINTS).reduce((acc, arr) => acc + arr.length, 0);
+  
   return (
-    <div className="space-y-3">
-      <p className="text-sm text-gray-600">
-        All proxy endpoints are relative to the app origin (e.g. <code className="bg-gray-100 px-1 rounded font-mono text-xs">http://localhost:3001</code>). Authentication: <code className="bg-gray-100 px-1 rounded font-mono text-xs">Api-Key: &lt;your-key&gt;</code> in request headers.
+    <div className="space-y-4">
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
+        Base URL: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">http://localhost:3001</code>. Internal endpoints require no authentication. Retab proxy endpoints require <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">Api-Key</code> header.
       </p>
-      <div className="overflow-x-auto rounded-xl border border-gray-200">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50">
-            <tr className="text-left">
-              <th className="px-4 py-2 font-medium text-gray-700">Method</th>
-              <th className="px-4 py-2 font-medium text-gray-700">Proxy path</th>
-              <th className="px-4 py-2 font-medium text-gray-700">Description</th>
-              <th className="px-4 py-2 font-medium text-gray-700">Retab equivalent</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {PROXY_ENDPOINTS.map((ep, i) => (
-              <tr key={i} className="hover:bg-gray-50/50">
-                <td className="px-4 py-2 font-mono text-xs font-medium text-emerald-700">{ep.method}</td>
-                <td className="px-4 py-2 font-mono text-xs">{ep.path}</td>
-                <td className="px-4 py-2 text-gray-600">{ep.description}</td>
-                <td className="px-4 py-2 font-mono text-xs text-gray-500">{ep.retab}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      
+      {/* Section Toggle */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setActiveSection("internal")}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
+            activeSection === "internal"
+              ? "bg-[#9e2339] text-white border-[#9e2339]"
+              : "bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300 border-gray-200 dark:border-neutral-700 hover:bg-gray-50 dark:hover:bg-neutral-700"
+          )}
+        >
+          Internal REST API ({totalInternal})
+        </button>
+        <button
+          onClick={() => setActiveSection("proxy")}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors",
+            activeSection === "proxy"
+              ? "bg-[#9e2339] text-white border-[#9e2339]"
+              : "bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300 border-gray-200 dark:border-neutral-700 hover:bg-gray-50 dark:hover:bg-neutral-700"
+          )}
+        >
+          Retab Proxy ({PROXY_ENDPOINTS.length})
+        </button>
       </div>
-      <p className="text-xs text-gray-500">
-        Request/response bodies follow Retab’s API spec. For extract: <code className="bg-gray-100 px-1 rounded">document.url</code> is a base64 data URL; <code className="bg-gray-100 px-1 rounded">json_schema</code> is required; <code className="bg-gray-100 px-1 rounded">n_consensus</code> optional (default 1).
+      
+      {activeSection === "internal" ? (
+        <div className="space-y-4">
+          {/* Resource Navigation */}
+          <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-gray-50 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700">
+            {Object.entries(sectionLabels).map(([key, { label, count }]) => (
+              <a
+                key={key}
+                href={`#api-${key}`}
+                className="px-2 py-1 text-xs font-medium text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-100 hover:bg-white dark:hover:bg-neutral-700 rounded transition-colors"
+              >
+                {label} <span className="text-gray-400 dark:text-neutral-500">({count})</span>
+              </a>
+            ))}
+          </div>
+          
+          {/* Endpoint Tables by Resource */}
+          {Object.entries(INTERNAL_ENDPOINTS).map(([key, endpoints]) => (
+            <div key={key} id={`api-${key}`} className="space-y-2">
+              <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
+                {sectionLabels[key].label}
+                <span className="text-xs font-normal text-gray-400 dark:text-neutral-500">({endpoints.length} endpoints)</span>
+              </h4>
+              <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-neutral-700">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 dark:bg-neutral-800">
+                    <tr className="text-left">
+                      <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300 w-20">Method</th>
+                      <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Path</th>
+                      <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
+                    {endpoints.map((ep, i) => (
+                      <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                        <td className="px-3 py-2">
+                          <span className={cn("px-1.5 py-0.5 rounded text-xs font-mono font-medium", methodColors[ep.method])}>
+                            {ep.method}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs text-gray-700 dark:text-neutral-300">{ep.path}</td>
+                        <td className="px-3 py-2 text-gray-600 dark:text-neutral-400 text-xs">{ep.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500 dark:text-neutral-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 rounded-lg p-3">
+            <strong>Authentication required:</strong> All proxy endpoints require <code className="bg-white dark:bg-neutral-700 px-1 rounded">Api-Key</code> header with your Retab API key.
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-neutral-700">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 dark:bg-neutral-800">
+                <tr className="text-left">
+                  <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300 w-20">Method</th>
+                  <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Proxy Path</th>
+                  <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Description</th>
+                  <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Retab Equivalent</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
+                {PROXY_ENDPOINTS.map((ep, i) => (
+                  <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                    <td className="px-3 py-2">
+                      <span className={cn("px-1.5 py-0.5 rounded text-xs font-mono font-medium", methodColors[ep.method])}>
+                        {ep.method}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-gray-700 dark:text-neutral-300">{ep.path}</td>
+                    <td className="px-3 py-2 text-gray-600 dark:text-neutral-400 text-xs">{ep.description}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-neutral-500">{ep.retab}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-neutral-400">
+            Request/response bodies follow Retab's API spec. For extract: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded">document.url</code> is a base64 data URL; <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded">json_schema</code> is required; <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded">n_consensus</code> optional (default 1).
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// DATABASE SCHEMA DOCUMENTATION
+// ============================================================================
+
+const DATABASE_SCHEMA = {
+  sessions: {
+    description: "Processing session tracking",
+    columns: [
+      { name: "id", type: "TEXT", pk: true, description: "Unique session ID" },
+      { name: "created_at", type: "DATETIME", default: "CURRENT_TIMESTAMP", description: "Creation time" },
+      { name: "updated_at", type: "DATETIME", default: "CURRENT_TIMESTAMP", description: "Last update time" },
+      { name: "status", type: "TEXT", default: "'active'", description: "Session status (active/completed)" },
+      { name: "total_packets", type: "INTEGER", default: "0", description: "Number of packets" },
+      { name: "completed_packets", type: "INTEGER", default: "0", description: "Packets completed" },
+      { name: "failed_packets", type: "INTEGER", default: "0", description: "Packets failed" },
+      { name: "needs_review_packets", type: "INTEGER", default: "0", description: "Packets needing review" },
+      { name: "total_credits", type: "REAL", default: "0", description: "Credits used" },
+      { name: "total_cost", type: "REAL", default: "0", description: "Cost in USD" },
+      { name: "total_pages", type: "INTEGER", default: "0", description: "Pages processed" },
+      { name: "api_calls", type: "INTEGER", default: "0", description: "API calls made" },
+    ],
+  },
+  packets: {
+    description: "Document packets being processed",
+    columns: [
+      { name: "id", type: "TEXT", pk: true, description: "Unique packet ID" },
+      { name: "session_id", type: "TEXT", fk: "sessions.id", description: "FK → sessions.id (CASCADE)" },
+      { name: "filename", type: "TEXT", description: "Original filename" },
+      { name: "status", type: "TEXT", default: "'queued'", description: "Processing status" },
+      { name: "created_at", type: "DATETIME", default: "CURRENT_TIMESTAMP", description: "Creation time" },
+      { name: "started_at", type: "DATETIME", nullable: true, description: "Processing start" },
+      { name: "completed_at", type: "DATETIME", nullable: true, description: "Processing end" },
+      { name: "retry_count", type: "INTEGER", default: "0", description: "Retry attempts" },
+      { name: "error", type: "TEXT", nullable: true, description: "Error message" },
+      { name: "total_documents", type: "INTEGER", default: "0", description: "Documents in packet" },
+      { name: "completed_documents", type: "INTEGER", default: "0", description: "Documents completed" },
+      { name: "needs_review_documents", type: "INTEGER", default: "0", description: "Documents needing review" },
+      { name: "failed_documents", type: "INTEGER", default: "0", description: "Documents failed" },
+      { name: "total_credits", type: "REAL", default: "0", description: "Credits used" },
+      { name: "total_cost", type: "REAL", default: "0", description: "Cost in USD" },
+      { name: "temp_file_path", type: "TEXT", nullable: true, description: "Path to temp PDF" },
+    ],
+    indexes: ["idx_packets_session (session_id)", "idx_packets_status (status)"],
+  },
+  documents: {
+    description: "Individual documents extracted from packets",
+    columns: [
+      { name: "id", type: "TEXT", pk: true, description: "Unique document ID" },
+      { name: "packet_id", type: "TEXT", fk: "packets.id", description: "FK → packets.id (CASCADE)" },
+      { name: "session_id", type: "TEXT", fk: "sessions.id", description: "FK → sessions.id (CASCADE)" },
+      { name: "document_type", type: "TEXT", nullable: true, description: "Document category" },
+      { name: "display_name", type: "TEXT", nullable: true, description: "Human-readable name" },
+      { name: "status", type: "TEXT", default: "'pending'", description: "Processing status" },
+      { name: "pages", type: "TEXT", nullable: true, description: "JSON array of page numbers" },
+      { name: "extraction_data", type: "TEXT", nullable: true, description: "JSON extraction result" },
+      { name: "likelihoods", type: "TEXT", nullable: true, description: "JSON field likelihoods" },
+      { name: "extraction_confidence", type: "REAL", nullable: true, description: "Average confidence (0-1)" },
+      { name: "needs_review", type: "INTEGER", default: "0", description: "Review flag (0/1)" },
+      { name: "review_reasons", type: "TEXT", nullable: true, description: "JSON array of reasons" },
+      { name: "reviewed_at", type: "DATETIME", nullable: true, description: "Review timestamp" },
+      { name: "reviewed_by", type: "TEXT", nullable: true, description: "Reviewer identifier" },
+      { name: "reviewer_notes", type: "TEXT", nullable: true, description: "Review notes" },
+      { name: "edited_fields", type: "TEXT", nullable: true, description: "JSON of edited values" },
+      { name: "credits_used", type: "REAL", default: "0", description: "Credits for this doc" },
+      { name: "created_at", type: "DATETIME", default: "CURRENT_TIMESTAMP", description: "Creation time" },
+    ],
+    indexes: ["idx_documents_packet (packet_id)", "idx_documents_session (session_id)", "idx_documents_needs_review (needs_review)"],
+  },
+  history: {
+    description: "Processing history entries",
+    columns: [
+      { name: "id", type: "TEXT", pk: true, description: "Unique history ID" },
+      { name: "session_id", type: "TEXT", fk: "sessions.id", nullable: true, description: "FK → sessions.id (SET NULL)" },
+      { name: "completed_at", type: "DATETIME", default: "CURRENT_TIMESTAMP", description: "Completion time" },
+      { name: "total_packets", type: "INTEGER", nullable: true, description: "Packets processed" },
+      { name: "total_documents", type: "INTEGER", nullable: true, description: "Documents processed" },
+      { name: "completed", type: "INTEGER", nullable: true, description: "Successful documents" },
+      { name: "needs_review", type: "INTEGER", nullable: true, description: "Documents needing review" },
+      { name: "failed", type: "INTEGER", nullable: true, description: "Failed documents" },
+      { name: "total_credits", type: "REAL", nullable: true, description: "Credits used" },
+      { name: "total_cost", type: "REAL", nullable: true, description: "Cost in USD" },
+      { name: "summary", type: "TEXT", nullable: true, description: "JSON summary data" },
+    ],
+    indexes: ["idx_history_completed (completed_at)"],
+  },
+  usage_daily: {
+    description: "Daily usage aggregates",
+    columns: [
+      { name: "date", type: "TEXT", pk: true, description: "Date (YYYY-MM-DD)" },
+      { name: "total_credits", type: "REAL", default: "0", description: "Credits used" },
+      { name: "total_cost", type: "REAL", default: "0", description: "Cost in USD" },
+      { name: "total_pages", type: "INTEGER", default: "0", description: "Pages processed" },
+      { name: "api_calls", type: "INTEGER", default: "0", description: "API calls made" },
+      { name: "packets_processed", type: "INTEGER", default: "0", description: "Packets completed" },
+      { name: "documents_processed", type: "INTEGER", default: "0", description: "Documents completed" },
+    ],
+  },
+  export_templates: {
+    description: "Saved export configurations",
+    columns: [
+      { name: "id", type: "TEXT", pk: true, description: "Unique template ID" },
+      { name: "name", type: "TEXT", description: "Template name (UNIQUE)" },
+      { name: "config", type: "TEXT", description: "JSON configuration" },
+      { name: "created_at", type: "DATETIME", default: "CURRENT_TIMESTAMP", description: "Creation time" },
+      { name: "updated_at", type: "DATETIME", default: "CURRENT_TIMESTAMP", description: "Last update" },
+    ],
+  },
+};
+
+function DatabaseSchema() {
+  const [activeTable, setActiveTable] = React.useState("sessions");
+  const tables = Object.keys(DATABASE_SCHEMA);
+  const current = DATABASE_SCHEMA[activeTable];
+  
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
+        SQLite database at <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">DB_PATH/sail-idp.db</code>. WAL mode enabled. All queries use parameterized statements.
       </p>
+      
+      {/* Table selector */}
+      <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-gray-50 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700">
+        {tables.map((table) => (
+          <button
+            key={table}
+            onClick={() => setActiveTable(table)}
+            className={cn(
+              "px-2 py-1 text-xs font-medium rounded transition-colors",
+              activeTable === table
+                ? "bg-[#9e2339] text-white"
+                : "text-gray-600 dark:text-neutral-400 hover:text-gray-900 dark:hover:text-neutral-100 hover:bg-white dark:hover:bg-neutral-700"
+            )}
+          >
+            {table}
+          </button>
+        ))}
+      </div>
+      
+      {/* Table details */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
+            {activeTable}
+            <span className="ml-2 text-xs font-normal text-gray-400 dark:text-neutral-500">
+              ({current.columns.length} columns)
+            </span>
+          </h4>
+          <span className="text-xs text-gray-500 dark:text-neutral-400">{current.description}</span>
+        </div>
+        
+        <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-neutral-700">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Column</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Type</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Default</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Description</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
+              {current.columns.map((col, i) => (
+                <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                  <td className="px-3 py-2">
+                    <span className="font-mono text-xs text-gray-700 dark:text-neutral-300">
+                      {col.name}
+                      {col.pk && <span className="ml-1 text-amber-600 dark:text-amber-400" title="Primary Key">🔑</span>}
+                      {col.fk && <span className="ml-1 text-blue-600 dark:text-blue-400" title={`Foreign Key: ${col.fk}`}>🔗</span>}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-neutral-400">{col.type}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-neutral-400">
+                    {col.default || (col.nullable ? <span className="text-gray-400 dark:text-neutral-500">NULL</span> : "—")}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-600 dark:text-neutral-400">{col.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        
+        {current.indexes && (
+          <div className="text-xs text-gray-500 dark:text-neutral-400">
+            <strong>Indexes:</strong> {current.indexes.join(", ")}
+          </div>
+        )}
+      </div>
+      
+      {/* Entity Relationship Summary */}
+      <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700/50">
+        <h5 className="text-xs font-medium text-blue-800 dark:text-blue-300 mb-2">Entity Relationships</h5>
+        <div className="text-xs text-blue-700 dark:text-blue-400 font-mono space-y-1">
+          <div>sessions ← packets (1:N, ON DELETE CASCADE)</div>
+          <div>sessions ← documents (1:N, ON DELETE CASCADE)</div>
+          <div>packets ← documents (1:N, ON DELETE CASCADE)</div>
+          <div>sessions ← history (1:N, ON DELETE SET NULL)</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// DOCUMENT LIFECYCLE STATE DIAGRAMS
+// ============================================================================
+
+const PACKET_STATES = [
+  { state: "queued", color: "bg-gray-400", description: "Packet uploaded, waiting to process" },
+  { state: "splitting", color: "bg-blue-500", description: "Detecting subdocuments and page ranges" },
+  { state: "extracting", color: "bg-amber-500", description: "Running extraction on each document" },
+  { state: "completed", color: "bg-green-500", description: "All documents processed successfully" },
+  { state: "needs_review", color: "bg-orange-500", description: "Some documents require human review" },
+  { state: "failed", color: "bg-red-500", description: "Processing error occurred" },
+];
+
+const DOCUMENT_STATES = [
+  { state: "processing", color: "bg-blue-500", description: "Extraction in progress" },
+  { state: "completed", color: "bg-green-500", description: "Extraction successful, high confidence" },
+  { state: "needs_review", color: "bg-orange-500", description: "Flagged for human verification" },
+  { state: "failed", color: "bg-red-500", description: "Extraction failed" },
+  { state: "reviewed", color: "bg-emerald-500", description: "Human reviewed and approved" },
+  { state: "rejected", color: "bg-red-400", description: "Human reviewed and rejected" },
+];
+
+const REVIEW_CRITERIA = [
+  { criterion: "Average confidence", threshold: "< 75%", action: "Flag entire document" },
+  { criterion: "Individual field", threshold: "< 50%", action: "Highlight specific field" },
+  { criterion: "Critical field missing", threshold: "Empty/null", action: "Flag with field name" },
+  { criterion: "Document type", threshold: "'other'", action: "Flag as unrecognized" },
+  { criterion: "OCR issues", threshold: "API flag", action: "Flag for verification" },
+];
+
+function DocumentLifecycle() {
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
+        Documents flow through a series of states during processing. Understanding these states helps with debugging and monitoring.
+      </p>
+      
+      {/* Packet States */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Packet Status Flow</h4>
+        <div className="p-4 rounded-lg bg-gray-50 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700">
+          {/* Visual flow */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            {["queued", "splitting", "extracting"].map((state, i) => (
+              <React.Fragment key={state}>
+                <div className="flex items-center gap-1.5">
+                  <div className={cn("w-2.5 h-2.5 rounded-full", PACKET_STATES.find(s => s.state === state)?.color)} />
+                  <span className="text-xs font-mono text-gray-700 dark:text-neutral-300">{state}</span>
+                </div>
+                {i < 2 && <ArrowRight className="h-3 w-3 text-gray-400" />}
+              </React.Fragment>
+            ))}
+            <ArrowRight className="h-3 w-3 text-gray-400" />
+            <div className="flex flex-col gap-1">
+              {["completed", "needs_review", "failed"].map((state) => (
+                <div key={state} className="flex items-center gap-1.5">
+                  <div className={cn("w-2.5 h-2.5 rounded-full", PACKET_STATES.find(s => s.state === state)?.color)} />
+                  <span className="text-xs font-mono text-gray-700 dark:text-neutral-300">{state}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          {/* State descriptions */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {PACKET_STATES.map((s) => (
+              <div key={s.state} className="flex items-start gap-2 text-xs">
+                <div className={cn("w-2 h-2 rounded-full mt-1 shrink-0", s.color)} />
+                <div>
+                  <span className="font-mono font-medium text-gray-700 dark:text-neutral-300">{s.state}</span>
+                  <p className="text-gray-500 dark:text-neutral-400">{s.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      
+      {/* Document States */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Document Status Flow</h4>
+        <div className="p-4 rounded-lg bg-gray-50 dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700">
+          {/* Visual flow */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+              <span className="text-xs font-mono text-gray-700 dark:text-neutral-300">processing</span>
+            </div>
+            <ArrowRight className="h-3 w-3 text-gray-400" />
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                <span className="text-xs font-mono text-gray-700 dark:text-neutral-300">completed</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+                  <span className="text-xs font-mono text-gray-700 dark:text-neutral-300">needs_review</span>
+                </div>
+                <ArrowRight className="h-3 w-3 text-gray-400" />
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                    <span className="text-xs font-mono text-gray-700 dark:text-neutral-300">reviewed ✓</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                    <span className="text-xs font-mono text-gray-700 dark:text-neutral-300">rejected ✗</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                <span className="text-xs font-mono text-gray-700 dark:text-neutral-300">failed</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      {/* Review Criteria */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Review Flagging Criteria</h4>
+        <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-neutral-700">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Criterion</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Threshold</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
+              {REVIEW_CRITERIA.map((r, i) => (
+                <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                  <td className="px-3 py-2 text-gray-700 dark:text-neutral-300">{r.criterion}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-amber-600 dark:text-amber-400">{r.threshold}</td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-neutral-400 text-xs">{r.action}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -927,31 +1485,180 @@ function EnvAndConfig() {
     { name: "NODE_ENV", default: "development", description: "development | production" },
     { name: "DB_PATH", default: "./data", description: "Directory for SQLite DB file" },
     { name: "CORS_ORIGIN", default: "*", description: "Allowed origin for CORS (set in production)" },
+    { name: "VITE_API_URL", default: "http://localhost:3001", description: "API base URL for frontend" },
   ];
+  
+  const localStorageKeys = [
+    { name: "retab_api_key", preserved: true, description: "Retab API key (never logged, preserved on reset)" },
+    { name: "cortex_dark_mode", preserved: true, description: "Dark mode preference (true/false)" },
+    { name: "stewart_ingestion_session", preserved: false, description: "Batch queue state (packets, documents, processing state)" },
+    { name: "stewart_processing_history", preserved: false, description: "Processing history for History tab" },
+    { name: "export_templates", preserved: false, description: "Custom export template configurations" },
+    { name: "sail_retab_settings", preserved: false, description: "Retab configuration (model, consensus, DPI, temperature)" },
+  ];
+  
+  const retabDefaults = [
+    { setting: "model", default: "retab-small", options: "retab-micro, retab-small, retab-large" },
+    { setting: "nConsensus", default: "1", options: "1-5 (multiplies cost)" },
+    { setting: "imageDpi", default: "192", options: "96, 150, 192, 300" },
+    { setting: "temperature", default: "0", options: "0.0-1.0" },
+    { setting: "confidenceThreshold", default: "0.7", options: "0-1 (review threshold)" },
+  ];
+  
   return (
-    <div className="space-y-3">
-      <p className="text-sm text-gray-600">
-        Server reads these at startup. API key is not an env var; it is set in the client (Admin or <code className="bg-gray-100 px-1 rounded font-mono text-xs">localStorage.retab_api_key</code>).
+    <div className="space-y-6">
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
+        Server reads environment variables at startup. Client-side settings are stored in localStorage.
       </p>
-      <div className="rounded-xl border border-gray-200 overflow-hidden">
+      
+      {/* Environment Variables */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Environment Variables</h4>
+        <div className="rounded-lg border border-gray-200 dark:border-neutral-700 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Variable</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Default</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Description</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
+              {envVars.map((v, i) => (
+                <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                  <td className="px-3 py-2 font-mono text-xs text-gray-700 dark:text-neutral-300">{v.name}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-neutral-400">{v.default}</td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-neutral-400 text-xs">{v.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      {/* localStorage Keys */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">localStorage Keys</h4>
+        <div className="rounded-lg border border-gray-200 dark:border-neutral-700 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Key</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Reset</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Description</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
+              {localStorageKeys.map((k, i) => (
+                <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                  <td className="px-3 py-2 font-mono text-xs text-gray-700 dark:text-neutral-300">{k.name}</td>
+                  <td className="px-3 py-2 text-xs">
+                    {k.preserved ? (
+                      <span className="text-green-600 dark:text-green-400">Preserved</span>
+                    ) : (
+                      <span className="text-amber-600 dark:text-amber-400">Cleared</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-neutral-400 text-xs">{k.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      {/* Retab Configuration Defaults */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Retab Configuration Defaults</h4>
+        <div className="rounded-lg border border-gray-200 dark:border-neutral-700 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Setting</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Default</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Options</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
+              {retabDefaults.map((r, i) => (
+                <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                  <td className="px-3 py-2 font-mono text-xs text-gray-700 dark:text-neutral-300">{r.setting}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-neutral-400">{r.default}</td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-neutral-400 text-xs">{r.options}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// RATE LIMITING
+// ============================================================================
+
+function RateLimiting() {
+  const limits = [
+    { 
+      endpoint: "General API (/api/*)", 
+      development: "300 req/min", 
+      production: "120 req/min",
+      description: "All internal REST endpoints"
+    },
+    { 
+      endpoint: "Retab Proxy (/api/documents/*, /api/schemas/*, /api/jobs/*)", 
+      development: "120 req/min", 
+      production: "60 req/min",
+      description: "Proxied requests to Retab API"
+    },
+    { 
+      endpoint: "Debug (/api/debug/*)", 
+      development: "120 req/min", 
+      production: "Disabled (404)",
+      description: "Debug and diagnostics endpoints"
+    },
+  ];
+  
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
+        Rate limits protect the server and upstream APIs from abuse. Limits are per-IP and reset every minute.
+      </p>
+      
+      <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-neutral-700">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 dark:bg-neutral-800">
             <tr className="text-left">
-              <th className="px-4 py-2 font-medium text-gray-700">Variable</th>
-              <th className="px-4 py-2 font-medium text-gray-700">Default</th>
-              <th className="px-4 py-2 font-medium text-gray-700">Description</th>
+              <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Endpoint Group</th>
+              <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Development</th>
+              <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Production</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {envVars.map((v, i) => (
-              <tr key={i}>
-                <td className="px-4 py-2 font-mono text-xs">{v.name}</td>
-                <td className="px-4 py-2 font-mono text-xs text-gray-500">{v.default}</td>
-                <td className="px-4 py-2 text-gray-600">{v.description}</td>
+          <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
+            {limits.map((l, i) => (
+              <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                <td className="px-3 py-2">
+                  <span className="font-mono text-xs text-gray-700 dark:text-neutral-300">{l.endpoint}</span>
+                  <p className="text-xs text-gray-500 dark:text-neutral-400 mt-0.5">{l.description}</p>
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-gray-600 dark:text-neutral-400">{l.development}</td>
+                <td className="px-3 py-2 font-mono text-xs text-gray-600 dark:text-neutral-400">{l.production}</td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+      
+      <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50">
+        <h5 className="text-xs font-medium text-amber-800 dark:text-amber-300 mb-1">When rate limited (429 Too Many Requests)</h5>
+        <ul className="text-xs text-amber-700 dark:text-amber-400 list-disc list-inside space-y-0.5">
+          <li>Wait for the <code className="bg-white dark:bg-neutral-700 px-1 rounded">Retry-After</code> header (seconds until reset)</li>
+          <li>Implement exponential backoff with jitter</li>
+          <li>Consider reducing batch size or concurrent requests</li>
+          <li>For high-volume workloads, use smaller models (retab-micro) or async jobs</li>
+        </ul>
       </div>
     </div>
   );
@@ -960,24 +1667,24 @@ function EnvAndConfig() {
 function ErrorCodesTable() {
   return (
     <div className="space-y-3">
-      <p className="text-sm text-gray-600">
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
         Use these patterns to identify and remediate failures. Prefer idempotent operations and exponential backoff for retriable errors.
       </p>
-      <div className="overflow-x-auto rounded-xl border border-gray-200">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-neutral-700">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 dark:bg-neutral-800">
             <tr className="text-left">
-              <th className="px-4 py-2 font-medium text-gray-700">Pattern / Code</th>
-              <th className="px-4 py-2 font-medium text-gray-700">Likely cause</th>
-              <th className="px-4 py-2 font-medium text-gray-700">Remediation</th>
+              <th className="px-4 py-2 font-medium text-gray-700 dark:text-neutral-300">Pattern / Code</th>
+              <th className="px-4 py-2 font-medium text-gray-700 dark:text-neutral-300">Likely cause</th>
+              <th className="px-4 py-2 font-medium text-gray-700 dark:text-neutral-300">Remediation</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
             {ERROR_REMEDIATION.map((row, i) => (
-              <tr key={i} className="hover:bg-gray-50/50">
-                <td className="px-4 py-2 font-mono text-xs text-gray-700">{row.pattern}</td>
-                <td className="px-4 py-2 text-gray-600">{row.cause}</td>
-                <td className="px-4 py-2 text-gray-600">{row.fix}</td>
+              <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
+                <td className="px-4 py-2 font-mono text-xs text-gray-700 dark:text-neutral-300">{row.pattern}</td>
+                <td className="px-4 py-2 text-gray-600 dark:text-neutral-400">{row.cause}</td>
+                <td className="px-4 py-2 text-gray-600 dark:text-neutral-400">{row.fix}</td>
               </tr>
             ))}
           </tbody>
@@ -1129,30 +1836,30 @@ function ErrorLogViewer() {
           {fetchError}
         </p>
       )}
-      <div className="rounded-xl border border-gray-200 overflow-hidden">
+      <div className="rounded-xl border border-gray-200 dark:border-neutral-700 overflow-hidden">
         <div className="max-h-64 overflow-y-auto">
           {filtered.length === 0 && !loading && (
-            <p className="p-4 text-sm text-gray-500 text-center">
+            <p className="p-4 text-sm text-gray-500 dark:text-neutral-400 text-center">
               {errors.length === 0 ? "No persisted errors. Run a job that fails to see entries here." : "No entries match the filter."}
             </p>
           )}
           {filtered.map((entry) => (
             <div
               key={entry.id}
-              className="flex items-start gap-2 p-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50"
+              className="flex items-start gap-2 p-3 border-b border-gray-100 dark:border-neutral-700 last:border-b-0 hover:bg-gray-50/50 dark:hover:bg-neutral-700/50"
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-xs font-medium text-gray-800 truncate">{entry.filename}</span>
-                  <span className="text-xs text-gray-500">{entry.completed_at || entry.created_at}</span>
+                  <span className="font-mono text-xs font-medium text-gray-800 dark:text-neutral-200 truncate">{entry.filename}</span>
+                  <span className="text-xs text-gray-500 dark:text-neutral-400">{entry.completed_at || entry.created_at}</span>
                 </div>
-                <p className="mt-1 text-sm text-red-700 break-all">{entry.error}</p>
-                <p className="text-xs text-gray-400 mt-0.5">Session: {entry.session_id} · Packet: {entry.id}</p>
+                <p className="mt-1 text-sm text-red-700 dark:text-red-400 break-all">{entry.error}</p>
+                <p className="text-xs text-gray-400 dark:text-neutral-500 mt-0.5">Session: {entry.session_id} · Packet: {entry.id}</p>
               </div>
               <button
                 type="button"
                 onClick={() => copyToClipboard(entry.error, entry.id)}
-                className="p-1.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700 dark:text-neutral-300"
                 title="Copy error message"
               >
                 {copiedId === entry.id ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
@@ -1161,7 +1868,7 @@ function ErrorLogViewer() {
           ))}
         </div>
       </div>
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-gray-500 dark:text-neutral-400">
         Errors are persisted when a packet fails (e.g. split/extract error). Admin → Logs shows recent activity; this view shows only failed packets with messages.
       </p>
     </div>
@@ -1171,13 +1878,13 @@ function ErrorLogViewer() {
 function LogsObservability() {
   return (
     <div className="space-y-3">
-      <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
+      <ul className="list-disc list-inside text-sm text-gray-600 dark:text-neutral-400 space-y-1">
         <li><strong>Browser:</strong> Open DevTools → Console. All API calls and client errors log here. Network tab shows request/response for each proxy call.</li>
-        <li><strong>Server:</strong> Stdout logs each request (method, path, status, duration). Run with <code className="bg-gray-100 px-1 rounded font-mono text-xs">node server.js</code> or your process manager to capture logs.</li>
+        <li><strong>Server:</strong> Stdout logs each request (method, path, status, duration). Run with <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">node server.js</code> or your process manager to capture logs.</li>
         <li><strong>Admin → Logs:</strong> In-app activity log (recent packet completions and status). Use for quick triage without leaving the app.</li>
         <li><strong>Help → Technical Reference → Error log viewer:</strong> Persisted failed packets (filename, error message, session). Use for debugging recurring failures.</li>
       </ul>
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-neutral-400">
         For production, consider shipping server logs to your logging backend (e.g. JSON to stdout and a log aggregator). API key is never logged.
       </p>
     </div>
@@ -1211,25 +1918,25 @@ function SecurityOverview() {
   ];
   return (
     <div className="space-y-6">
-      <p className="text-sm text-gray-600">
-        Hardening and security practices for CORTEX. See also <code className="bg-gray-100 px-1 rounded font-mono text-xs">SECURITY.md</code> in the repo.
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
+        Hardening and security practices for CORTEX. See also <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">SECURITY.md</code> in the repo.
       </p>
 
       <div>
         <h4 className="text-sm font-medium text-gray-800 mb-2">Server hardening (implemented)</h4>
-        <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-neutral-700">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
               <tr className="text-left">
-                <th className="px-4 py-2 font-medium text-gray-700">Area</th>
-                <th className="px-4 py-2 font-medium text-gray-700">Detail</th>
+                <th className="px-4 py-2 font-medium text-gray-700 dark:text-neutral-300">Area</th>
+                <th className="px-4 py-2 font-medium text-gray-700 dark:text-neutral-300">Detail</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
               {hardening.map((row, i) => (
-                <tr key={i} className="hover:bg-gray-50/50">
+                <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
                   <td className="px-4 py-2 font-medium text-gray-700 w-36">{row.area}</td>
-                  <td className="px-4 py-2 text-gray-600">{row.detail}</td>
+                  <td className="px-4 py-2 text-gray-600 dark:text-neutral-400">{row.detail}</td>
                 </tr>
               ))}
             </tbody>
@@ -1239,19 +1946,19 @@ function SecurityOverview() {
 
       <div>
         <h4 className="text-sm font-medium text-gray-800 mb-2">API key handling</h4>
-        <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-neutral-700">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
               <tr className="text-left">
-                <th className="px-4 py-2 font-medium text-gray-700">Where</th>
-                <th className="px-4 py-2 font-medium text-gray-700">Detail</th>
+                <th className="px-4 py-2 font-medium text-gray-700 dark:text-neutral-300">Where</th>
+                <th className="px-4 py-2 font-medium text-gray-700 dark:text-neutral-300">Detail</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700">
               {apiKey.map((row, i) => (
-                <tr key={i} className="hover:bg-gray-50/50">
+                <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-neutral-700/50">
                   <td className="px-4 py-2 font-medium text-gray-700 w-28">{row.where}</td>
-                  <td className="px-4 py-2 text-gray-600">{row.detail}</td>
+                  <td className="px-4 py-2 text-gray-600 dark:text-neutral-400">{row.detail}</td>
                 </tr>
               ))}
             </tbody>
@@ -1262,20 +1969,20 @@ function SecurityOverview() {
       <div>
         <h4 className="text-sm font-medium text-gray-800 mb-2">Database</h4>
         <p className="text-sm text-gray-600 mb-2">
-          SQLite at <code className="bg-gray-100 px-1 rounded font-mono text-xs">DB_PATH/sail-idp.db</code> (default <code className="bg-gray-100 px-1 rounded font-mono text-xs">./data</code>). All queries use parameterized statements. Restrict filesystem access so only the app can read/write <code className="bg-gray-100 px-1 rounded font-mono text-xs">DB_PATH</code>.
+          SQLite at <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">DB_PATH/sail-idp.db</code> (default <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">./data</code>). All queries use parameterized statements. Restrict filesystem access so only the app can read/write <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">DB_PATH</code>.
         </p>
       </div>
 
       <div>
         <h4 className="text-sm font-medium text-gray-800 mb-2">Production checklist</h4>
-        <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
+        <ul className="list-disc list-inside text-sm text-gray-600 dark:text-neutral-400 space-y-1">
           {prodChecklist.map((item, i) => (
             <li key={i}>{item}</li>
           ))}
         </ul>
       </div>
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-gray-500 dark:text-neutral-400">
         Report security-sensitive bugs to your internal security or SAIL team, not in public issue trackers.
       </p>
     </div>
@@ -1286,42 +1993,50 @@ function TechnicalReferenceContent() {
   const [activeSub, setActiveSub] = useState("architecture");
   const subs = [
     { id: "architecture", label: "Architecture", icon: Database },
-    { id: "api", label: "API reference", icon: FileCode },
-    { id: "env", label: "Environment", icon: Settings },
-    { id: "errors", label: "Error codes", icon: AlertTriangle },
-    { id: "debug", label: "Debug tools", icon: Bug },
-    { id: "logs", label: "Logs & observability", icon: Terminal },
+    { id: "api", label: "API", icon: FileCode },
+    { id: "database", label: "Database", icon: Database },
+    { id: "lifecycle", label: "Lifecycle", icon: RefreshCw },
+    { id: "env", label: "Config", icon: Settings },
+    { id: "rate-limit", label: "Rates", icon: Gauge },
+    { id: "errors", label: "Errors", icon: AlertTriangle },
+    { id: "debug", label: "Debug", icon: Bug },
+    { id: "logs", label: "Logs", icon: Terminal },
     { id: "security", label: "Security", icon: Shield },
   ];
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {subs.map((s) => (
           <button
             key={s.id}
             onClick={() => setActiveSub(s.id)}
             className={cn(
-              "inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors",
-              activeSub === s.id ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+              "inline-flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium rounded-lg border transition-colors",
+              activeSub === s.id 
+                ? "bg-[#9e2339] text-white border-[#9e2339]" 
+                : "bg-white dark:bg-neutral-800 text-gray-700 dark:text-neutral-300 border-gray-200 dark:border-neutral-700 hover:bg-gray-50 dark:hover:bg-neutral-700"
             )}
           >
-            <s.icon className="h-4 w-4" />
+            <s.icon className="h-3.5 w-3.5" />
             {s.label}
           </button>
         ))}
       </div>
       {activeSub === "architecture" && <ArchitectureOverview />}
       {activeSub === "api" && <APIReferenceTable />}
+      {activeSub === "database" && <DatabaseSchema />}
+      {activeSub === "lifecycle" && <DocumentLifecycle />}
       {activeSub === "env" && <EnvAndConfig />}
+      {activeSub === "rate-limit" && <RateLimiting />}
       {activeSub === "errors" && <ErrorCodesTable />}
       {activeSub === "debug" && (
         <div className="space-y-6">
           <div>
-            <h4 className="text-sm font-medium text-gray-800 mb-2">Connectivity check</h4>
+            <h4 className="text-sm font-medium text-gray-800 dark:text-neutral-200 mb-2">Connectivity check</h4>
             <ConnectivityCheck />
           </div>
           <div>
-            <h4 className="text-sm font-medium text-gray-800 mb-2">Error log viewer</h4>
+            <h4 className="text-sm font-medium text-gray-800 dark:text-neutral-200 mb-2">Error log viewer</h4>
             <ErrorLogViewer />
           </div>
         </div>
@@ -1340,22 +2055,22 @@ function Section({ icon: Icon, title, children, defaultOpen = false, badge = nul
   const [open, setOpen] = useState(defaultOpen);
   
   return (
-    <div className="bg-white rounded-2xl overflow-hidden shadow-sm">
+    <div className="bg-white dark:bg-neutral-800 rounded-2xl overflow-hidden shadow-sm dark:shadow-none dark:border dark:border-neutral-700">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-3 p-5 text-left hover:bg-gray-50 transition-colors"
+        className="w-full flex items-center gap-3 p-5 text-left hover:bg-gray-50 dark:hover:bg-neutral-700 transition-colors"
       >
-        <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center">
-          <Icon className="h-5 w-5 text-gray-600" />
+        <div className="w-10 h-10 rounded-xl bg-gray-100 dark:bg-neutral-700 flex items-center justify-center">
+          <Icon className="h-5 w-5 text-gray-600 dark:text-neutral-400" />
         </div>
-        <span className="flex-1 font-medium text-gray-800">{title}</span>
+        <span className="flex-1 font-medium text-gray-800 dark:text-neutral-100">{title}</span>
         {badge && (
-          <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">
+          <span className="px-2 py-0.5 text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded-full">
             {badge}
           </span>
         )}
         <ChevronDown className={cn(
-          "h-5 w-5 text-gray-400 transition-transform",
+          "h-5 w-5 text-gray-400 dark:text-neutral-500 transition-transform",
           !open && "-rotate-90"
         )} />
       </button>
@@ -1374,18 +2089,18 @@ function Section({ icon: Icon, title, children, defaultOpen = false, badge = nul
 
 export function HelpDocumentation({ onClose }) {
   return (
-    <div className="h-full flex flex-col bg-gray-100">
+    <div className="h-full flex flex-col bg-gray-100 dark:bg-neutral-900">
       {/* Header */}
-      <div className="px-6 py-5 bg-white flex items-center justify-between">
+      <div className="px-6 py-5 bg-white dark:bg-neutral-800 border-b border-gray-200 dark:border-neutral-700 flex items-center justify-between shrink-0">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Help & Documentation</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-neutral-100">Help & Documentation</h1>
+          <p className="text-sm text-gray-500 dark:text-neutral-400 mt-0.5">
             Complete guide to document processing with Cortex
           </p>
         </div>
         <button
           onClick={onClose}
-          className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+          className="px-4 py-2 text-sm text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:hover:text-neutral-200 hover:bg-gray-100 dark:hover:bg-neutral-700 rounded-lg"
         >
           Close
         </button>
@@ -1415,7 +2130,7 @@ export function HelpDocumentation({ onClose }) {
         
         {/* Model Selection */}
         <Section icon={Cpu} title="Model Selection">
-          <p className="text-sm text-gray-600 mb-4">
+          <p className="text-sm text-gray-600 dark:text-neutral-300 mb-4">
             Choose the right model based on your speed, accuracy, and cost requirements.
           </p>
           <ModelComparison />

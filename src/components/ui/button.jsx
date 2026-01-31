@@ -3,7 +3,7 @@ import { cva } from "class-variance-authority";
 import { cn } from "../../lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 dark:focus-visible:ring-neutral-300 disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
@@ -14,11 +14,11 @@ const buttonVariants = cva(
         success:
           "bg-emerald-600 text-white shadow-sm hover:bg-emerald-700",
         outline:
-          "border border-gray-200 bg-white shadow-sm hover:bg-gray-100 hover:text-gray-900",
+          "border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 shadow-sm hover:bg-gray-100 dark:hover:bg-neutral-600 text-gray-900 dark:text-neutral-100",
         secondary:
-          "bg-gray-100 text-gray-900 shadow-sm hover:bg-gray-100/80",
-        ghost: "hover:bg-gray-100 hover:text-gray-900",
-        link: "text-gray-900 underline-offset-4 hover:underline",
+          "bg-gray-100 dark:bg-neutral-700 text-gray-900 dark:text-neutral-100 shadow-sm hover:bg-gray-200 dark:hover:bg-neutral-600",
+        ghost: "hover:bg-gray-100 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-200 hover:text-gray-900 dark:hover:text-neutral-100",
+        link: "text-gray-900 dark:text-neutral-100 underline-offset-4 hover:underline",
       },
       size: {
         default: "h-9 px-4 py-2",

@@ -1,15 +1,22 @@
 # CORTEX — Docker Compose
-# Run: docker-compose up -d
-# App: http://localhost:3001
-
-version: "3.8"
+# 
+# Quick start:
+#   docker-compose up -d --build
+#
+# View logs:
+#   docker-compose logs -f
+#
+# Stop:
+#   docker-compose down
+#
+# App URL: http://localhost:3001
 
 services:
   cortex:
     build:
       context: .
       dockerfile: Dockerfile
-    image: sail-idp:latest
+    image: cortex:latest
     container_name: cortex
     restart: unless-stopped
     ports:
@@ -19,6 +26,9 @@ services:
       PORT: 3001
       DB_PATH: /app/data
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    env_file:
+      - path: .env.docker
+        required: false
     volumes:
       - cortex-data:/app/data
     healthcheck:
@@ -26,7 +36,13 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
     logging:
       driver: json-file
       options:

@@ -1,17 +1,56 @@
 @import "tailwindcss";
 
+/* Enable class-based dark mode for Tailwind v4 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Stewart Red brand color */
 :root {
   --stewart-red: #9e2339;
   --stewart-red-hover: #7a1b2d;
 }
 
+/* Dark mode support */
+.dark {
+  color-scheme: dark;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
   background-color: #f9fafb;
+  transition: background-color 0.2s ease;
+}
+
+.dark body {
+  background-color: #171717; /* neutral-900 - true dark gray, no blue tint */
 }
 
 #root {
   min-height: 100vh;
 }
+
+/* Dark mode color overrides for proper contrast */
+.dark {
+  --tw-text-opacity: 1;
+}
+
+/* Ensure readable text in dark mode */
+.dark .text-gray-900 { color: #f5f5f5; }
+.dark .text-gray-800 { color: #e5e5e5; }
+.dark .text-gray-700 { color: #d4d4d4; }
+.dark .text-gray-600 { color: #a3a3a3; }
+.dark .text-gray-500 { color: #a3a3a3; }
+.dark .text-gray-400 { color: #737373; }
+
+/* Dark mode backgrounds - neutral grays instead of blue-tinted */
+.dark .bg-gray-900 { background-color: #171717; }
+.dark .bg-gray-800 { background-color: #262626; }
+.dark .bg-gray-700 { background-color: #404040; }
+.dark .bg-gray-100 { background-color: #262626; }
+.dark .bg-gray-50 { background-color: #1f1f1f; }
+.dark .bg-white { background-color: #262626; }
+
+/* Dark mode borders */
+.dark .border-gray-200 { border-color: #404040; }
+.dark .border-gray-100 { border-color: #333333; }
+.dark .border-gray-700 { border-color: #404040; }

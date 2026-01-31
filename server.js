@@ -224,9 +224,10 @@ app.get("/api/sessions/:id/full", (req, res) => {
     const packets = db.getPacketsBySession(req.params.id);
     const documents = db.getDocumentsBySession(req.params.id);
     
-    // Attach documents to packets
+    // Attach documents to packets and set hasServerFile flag
     const packetsWithDocs = packets.map(p => ({
       ...p,
+      hasServerFile: !!p.temp_file_path, // Set flag for frontend to know file is on server
       documents: documents.filter(d => d.packet_id === p.id),
     }));
     
@@ -268,7 +269,11 @@ app.get("/api/packets/:id", (req, res) => {
     if (!packet) {
       return res.status(404).json({ error: "Packet not found" });
     }
-    res.json(packet);
+    // Include hasServerFile flag
+    res.json({
+      ...packet,
+      hasServerFile: !!packet.temp_file_path,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -278,7 +283,12 @@ app.get("/api/packets/:id", (req, res) => {
 app.get("/api/sessions/:sessionId/packets", (req, res) => {
   try {
     const packets = db.getPacketsBySession(req.params.sessionId);
-    res.json(packets);
+    // Include hasServerFile flag for each packet
+    const packetsWithFlag = packets.map(p => ({
+      ...p,
+      hasServerFile: !!p.temp_file_path,
+    }));
+    res.json(packetsWithFlag);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -359,13 +369,15 @@ app.get("/api/packets/:id/file", (req, res) => {
     if (!packet || !packet.temp_file_path) {
       return res.status(404).json({ error: "File not found" });
     }
-    if (!fs.existsSync(packet.temp_file_path)) {
+    // Resolve to absolute path for res.sendFile
+    const absolutePath = path.resolve(packet.temp_file_path);
+    if (!fs.existsSync(absolutePath)) {
       db.updatePacket(packet.id, { temp_file_path: null });
       return res.status(404).json({ error: "File expired or removed" });
     }
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(packet.filename || "document.pdf")}"`);
-    res.sendFile(packet.temp_file_path);
+    res.sendFile(absolutePath);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

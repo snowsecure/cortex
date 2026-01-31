@@ -663,9 +663,9 @@ export function getStats30Days(days = 30) {
   const docStats = db.prepare(`
     SELECT 
       COUNT(*) as total_documents,
-      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-      SUM(CASE WHEN needs_review = 1 OR status = 'needs_review' THEN 1 ELSE 0 END) as needs_review,
-      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+      SUM(CASE WHEN d.status = 'completed' THEN 1 ELSE 0 END) as completed,
+      SUM(CASE WHEN d.needs_review = 1 OR d.status = 'needs_review' THEN 1 ELSE 0 END) as needs_review,
+      SUM(CASE WHEN d.status = 'failed' THEN 1 ELSE 0 END) as failed
     FROM documents d
     INNER JOIN packets p ON d.packet_id = p.id
     WHERE p.completed_at IS NOT NULL

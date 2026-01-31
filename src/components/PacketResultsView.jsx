@@ -253,45 +253,45 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
   const lowConfCount = extractedFields.filter(f => f.likelihood !== undefined && f.likelihood < 0.7).length;
 
   return (
-    <div className="border-l-2 border-gray-200 ml-4">
+    <div className="border-l-2 border-gray-200 dark:border-neutral-700 ml-4">
       {/* Document header row */}
       <div 
         className={cn(
-          "flex items-center justify-between py-2 px-4 hover:bg-gray-100 cursor-pointer",
-          expanded && "bg-gray-100"
+          "flex items-center justify-between py-2 px-4 hover:bg-gray-100 dark:hover:bg-neutral-700 cursor-pointer",
+          expanded && "bg-gray-100 dark:bg-neutral-700"
         )}
         onClick={onToggle}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <button className="shrink-0">
             {expanded ? (
-              <ChevronDown className="h-4 w-4 text-gray-400" />
+              <ChevronDown className="h-4 w-4 text-gray-400 dark:text-neutral-500" />
             ) : (
-              <ChevronRight className="h-4 w-4 text-gray-400" />
+              <ChevronRight className="h-4 w-4 text-gray-400 dark:text-neutral-500" />
             )}
           </button>
           <StatusIcon status={document.status} className="h-4 w-4 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap w-fit max-w-full">
-              <span className="text-sm font-medium text-gray-900">
+              <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">
                 {displayName}
               </span>
               {pagesDisplay && (
-                <span className="text-xs text-gray-500 shrink-0">
+                <span className="text-xs text-gray-500 dark:text-neutral-400 shrink-0">
                   (pages {pagesDisplay})
                 </span>
               )}
               {fieldCount > 0 && (
-                <span className="text-xs text-gray-400 shrink-0">
+                <span className="text-xs text-gray-400 dark:text-neutral-500 shrink-0">
                   • {fieldCount} fields
                 </span>
               )}
             </div>
             {keyInfo && (
-              <p className="text-xs text-gray-500 truncate">{keyInfo}</p>
+              <p className="text-xs text-gray-500 dark:text-neutral-400 truncate">{keyInfo}</p>
             )}
             {document.needsReview && document.reviewReasons?.length > 0 && (
-              <p className="text-xs text-amber-600 mt-0.5">
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
                 {document.reviewReasons[0]}
               </p>
             )}
@@ -308,7 +308,7 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
             if (!extractionKnown) {
               return (
                 <span
-                  className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500"
+                  className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"
                   title="Extraction confidence not available (no per-field scores from API)"
                 >
                   —
@@ -322,9 +322,9 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
               <span
                 className={cn(
                   "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium",
-                  tier.variant === "success" && "bg-green-100 text-green-800",
-                  tier.variant === "warning" && "bg-amber-100 text-amber-800",
-                  tier.variant === "destructive" && "bg-red-100 text-red-800"
+                  tier.variant === "success" && "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400",
+                  tier.variant === "warning" && "bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400",
+                  tier.variant === "destructive" && "bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400"
                 )}
                 title={`${tier.label} — ${pct}% extraction confidence for this document`}
               >
@@ -350,12 +350,12 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
 
       {/* Expanded data view */}
       {expanded && (
-        <div className="bg-white border-t border-gray-100 px-4 py-3 ml-7">
+        <div className="bg-white dark:bg-neutral-800 border-t border-gray-100 dark:border-neutral-700 px-4 py-3 ml-7">
           {/* Show error if document failed */}
           {document.error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-md mb-3">
-              <p className="text-sm font-medium text-red-800">Extraction Error</p>
-              <p className="text-xs text-red-600 mt-1">{document.error}</p>
+            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md mb-3">
+              <p className="text-sm font-medium text-red-800 dark:text-red-300">Extraction Error</p>
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1">{document.error}</p>
             </div>
           )}
           
@@ -363,13 +363,13 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
               {extractedFields.slice(0, 12).map(({ key, value, likelihood }) => (
                 <div key={key} className="flex flex-col">
-                  <span className="text-xs text-gray-500 flex items-center gap-1">
+                  <span className="text-xs text-gray-500 dark:text-neutral-400 flex items-center gap-1">
                     {formatFieldName(key)}
                     {likelihood !== undefined && (
                       <span className={cn(
                         "text-[10px]",
-                        likelihood >= 0.7 ? "text-green-600" : 
-                        likelihood >= 0.5 ? "text-amber-600" : "text-red-600"
+                        likelihood >= 0.7 ? "text-green-600 dark:text-green-400" : 
+                        likelihood >= 0.5 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
                       )}>
                         ({Math.round(likelihood * 100)}%)
                       </span>
@@ -377,7 +377,7 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
                   </span>
                   <span className={cn(
                     "text-sm truncate",
-                    likelihood !== undefined && likelihood < 0.5 ? "text-red-700 font-medium" : "text-gray-900"
+                    likelihood !== undefined && likelihood < 0.5 ? "text-red-700 dark:text-red-400 font-medium" : "text-gray-900 dark:text-neutral-100"
                   )} title={String(value)}>
                     {formatValue(value)}
                   </span>
@@ -385,11 +385,11 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
               ))}
             </div>
           ) : !document.error ? (
-            <p className="text-sm text-gray-500 italic">No extracted data available</p>
+            <p className="text-sm text-gray-500 dark:text-neutral-400 italic">No extracted data available</p>
           ) : null}
           
           {extractedFields.length > 12 && (
-            <div className="mt-2 pt-2 border-t border-gray-100">
+            <div className="mt-2 pt-2 border-t border-gray-100 dark:border-neutral-700">
               <Button
                 variant="ghost"
                 size="sm"
@@ -465,31 +465,31 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
   };
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
+    <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-white dark:bg-gray-800">
       {/* Packet header */}
       <div 
         className={cn(
-          "flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50",
-          expanded && "border-b border-gray-200"
+          "flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700",
+          expanded && "border-b border-gray-200 dark:border-gray-700"
         )}
         onClick={onToggle}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <button className="shrink-0">
             {expanded ? (
-              <ChevronDown className="h-5 w-5 text-gray-400" />
+              <ChevronDown className="h-5 w-5 text-gray-400 dark:text-gray-500" />
             ) : (
-              <ChevronRight className="h-5 w-5 text-gray-400" />
+              <ChevronRight className="h-5 w-5 text-gray-400 dark:text-gray-500" />
             )}
           </button>
           
           <StatusIcon status={packet.status} className="h-5 w-5 shrink-0" />
           
           <div className="min-w-0 flex-1">
-            <p className="font-medium text-gray-900 truncate">
+            <p className="font-medium text-gray-900 dark:text-gray-100 truncate">
               {packet.filename}
             </p>
-            <div className="flex items-center gap-2 text-xs text-gray-500">
+            <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <span>{formatFileSize(packet.size)}</span>
               {docStats.total > 0 && (
                 <>
@@ -575,8 +575,8 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
 
       {/* Expanded documents */}
       {expanded && packet.documents?.length > 0 && (
-        <div className="bg-gray-50">
-          <div className="divide-y divide-gray-100">
+        <div className="bg-gray-50 dark:bg-gray-900">
+          <div className="divide-y divide-gray-100 dark:divide-gray-700">
             {packet.documents.map((doc) => (
               <DocumentRow
                 key={doc.id}
@@ -600,7 +600,7 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
 
       {/* Empty state for expanded packet with no docs */}
       {expanded && !packet.documents?.length && !isProcessing && !packet.error && (
-        <div className="p-4 bg-gray-50/80 rounded-lg text-sm text-gray-500 text-center">
+        <div className="p-4 bg-gray-50/80 dark:bg-gray-900/50 rounded-lg text-sm text-gray-500 dark:text-gray-400 text-center">
           Documents will appear here once processing finishes.
         </div>
       )}
@@ -689,14 +689,16 @@ export function PacketResultsView({
 
   if (packets.length === 0) {
     return (
-      <div className="text-center py-12 px-4">
-        <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gray-100 mb-4">
-          <FileText className="h-7 w-7 text-gray-400" />
+      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-neutral-900 pt-16 pb-16">
+        <div className="text-center max-w-md">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gray-100 dark:bg-neutral-700 mb-4">
+            <FileText className="h-7 w-7 text-gray-400 dark:text-neutral-500" />
+          </div>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-neutral-100 mb-2">No items to display</h2>
+          <p className="text-gray-500 dark:text-neutral-400 mb-6">
+            Upload documents from the Upload tab and run processing to see results here.
+          </p>
         </div>
-        <p className="text-gray-600 font-medium">No items to display</p>
-        <p className="text-sm text-gray-500 mt-1 max-w-xs mx-auto">
-          Upload documents from the Upload tab and run processing to see results here.
-        </p>
       </div>
     );
   }
@@ -705,7 +707,7 @@ export function PacketResultsView({
     <div className="space-y-3">
       {/* Minimal filter bar */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+        <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
           {FILTER_OPTIONS.map(option => (
             <button
               key={option.value}
@@ -714,9 +716,9 @@ export function PacketResultsView({
                 "px-3 py-1 text-xs font-medium rounded-md transition-colors",
                 filter === option.value
                   ? option.value === "needs_review"
-                    ? "bg-amber-100 text-amber-900 shadow-sm border border-amber-200/60"
-                    : "bg-white text-gray-900 shadow-sm"
-                  : "text-gray-500 hover:text-gray-700"
+                    ? "bg-amber-100 dark:bg-amber-900/50 text-amber-900 dark:text-amber-200 shadow-sm border border-amber-200/60 dark:border-amber-700"
+                    : "bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm"
+                  : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
               )}
             >
               {option.label}
@@ -754,8 +756,8 @@ export function PacketResultsView({
 
       {filteredPackets.length === 0 && packets.length > 0 && (
         <div className="text-center py-8 px-4">
-          <p className="text-gray-500 text-sm">No packets match this filter.</p>
-          <p className="text-gray-400 text-xs mt-1">Try a different filter.</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">No packets match this filter.</p>
+          <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">Try a different filter.</p>
         </div>
       )}
     </div>

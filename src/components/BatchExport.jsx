@@ -104,6 +104,22 @@ export function BatchExport({ packets, stats }) {
           processed_at: packet.completedAt,
           documents: (packet.documents || []).map(doc => {
             const { data, likelihoods } = getExtractionData(doc.extraction);
+            // Merge editedFields corrections into final data
+            const editedFields = doc.editedFields || {};
+            const finalData = { ...data };
+            const corrections = [];
+            
+            for (const [field, correctedValue] of Object.entries(editedFields)) {
+              if (correctedValue !== undefined && correctedValue !== data[field]) {
+                corrections.push({
+                  field,
+                  original_value: data[field],
+                  corrected_value: correctedValue,
+                });
+                finalData[field] = correctedValue;
+              }
+            }
+            
             return {
               document_id: doc.id,
               document_type: doc.classification?.category,
@@ -112,8 +128,12 @@ export function BatchExport({ packets, stats }) {
               classification_confidence: doc.classification?.confidence,
               classification_reasoning: doc.classification?.reasoning,
               needs_review: doc.needsReview,
+              review_status: doc.status === "reviewed" ? "reviewed" : (doc.status === "rejected" ? "rejected" : (doc.needsReview ? "pending_review" : "auto_approved")),
+              reviewed_at: doc.reviewedAt,
               review_reasons: doc.reviewReasons,
-              extracted_data: data,
+              extracted_data: finalData,  // Final data with corrections applied
+              original_data: data,         // Original AI extraction
+              corrections,                 // Audit trail of what was changed
               likelihoods,
             };
           }),
@@ -149,26 +169,51 @@ export function BatchExport({ packets, stats }) {
         "document_type",
         "pages",
         "classification_confidence",
-        "needs_review",
+        "review_status",
+        "reviewed_at",
+        "has_corrections",
         "review_reasons",
       ]);
 
-      // First pass: collect all columns
+      // First pass: collect all columns (from final merged data)
       for (const packet of exportablePackets) {
         for (const doc of packet.documents || []) {
           const { data } = getExtractionData(doc.extraction);
-          const flattened = flattenObject(data, "data");
+          // Merge corrections into data for column detection
+          const editedFields = doc.editedFields || {};
+          const finalData = { ...data, ...editedFields };
+          const flattened = flattenObject(finalData, "data");
           Object.keys(flattened).forEach(key => columnSet.add(key));
         }
       }
 
       const columns = Array.from(columnSet);
 
-      // Second pass: create rows
+      // Second pass: create rows with corrections merged
       for (const packet of exportablePackets) {
         for (const doc of packet.documents || []) {
           const { data } = getExtractionData(doc.extraction);
-          const flattened = flattenObject(data, "data");
+          // Merge editedFields corrections into final data
+          const editedFields = doc.editedFields || {};
+          const finalData = { ...data };
+          let hasCorrections = false;
+          
+          for (const [field, correctedValue] of Object.entries(editedFields)) {
+            if (correctedValue !== undefined) {
+              finalData[field] = correctedValue;
+              if (correctedValue !== data[field]) {
+                hasCorrections = true;
+              }
+            }
+          }
+          
+          const flattened = flattenObject(finalData, "data");
+          
+          // Determine review status
+          let reviewStatus = "auto_approved";
+          if (doc.status === "reviewed") reviewStatus = "human_reviewed";
+          else if (doc.status === "rejected") reviewStatus = "rejected";
+          else if (doc.needsReview) reviewStatus = "pending_review";
           
           const row = {
             packet_id: packet.id,
@@ -177,7 +222,9 @@ export function BatchExport({ packets, stats }) {
             document_type: doc.classification?.category,
             pages: Array.isArray(doc.pages) ? doc.pages.join("-") : doc.pages,
             classification_confidence: doc.classification?.confidence,
-            needs_review: doc.needsReview ? "Yes" : "No",
+            review_status: reviewStatus,
+            reviewed_at: doc.reviewedAt || "",
+            has_corrections: hasCorrections ? "Yes" : "No",
             review_reasons: (doc.reviewReasons || []).join("; "),
             ...flattened,
           };
