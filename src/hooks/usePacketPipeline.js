@@ -9,6 +9,7 @@ import {
   getSchemaForCategory,
   checkNeedsReview,
 } from "../lib/documentCategories";
+import { RETAB_MODELS, DEFAULT_CONFIG } from "../lib/retabConfig";
 
 /**
  * Generate unique document ID
@@ -48,7 +49,19 @@ export function usePacketPipeline() {
       onDocumentProcessed = () => {},
       skipSplit = false,
       forcedCategory = null,
+      retabConfig = {},
     } = options;
+    
+    // Merge with defaults
+    const config = {
+      model: retabConfig.model || DEFAULT_CONFIG.model,
+      nConsensus: retabConfig.nConsensus || DEFAULT_CONFIG.nConsensus,
+      imageDpi: retabConfig.imageDpi || DEFAULT_CONFIG.imageDpi,
+      temperature: retabConfig.temperature || DEFAULT_CONFIG.temperature,
+    };
+    
+    // Get model info for credit calculation
+    const modelInfo = RETAB_MODELS[config.model] || RETAB_MODELS["retab-small"];
 
     const result = {
       packetId: packet.id,
@@ -85,13 +98,15 @@ export function usePacketPipeline() {
             document: packet.base64,
             filename: packet.name || packet.filename,
             subdocuments: SUBDOCUMENT_TYPES,
+            model: config.model,
+            imageDpi: config.imageDpi,
           });
           
           splits = splitResponse.splits || [];
           
-          // Track split usage (retab-small = 1.0 credit/page)
+          // Track split usage
           const splitPages = splitResponse.usage?.page_count || splits.reduce((acc, s) => acc + (s.pages?.length || 1), 0);
-          result.usage.splitCredits = splitPages * 1.0; // retab-small
+          result.usage.splitCredits = splitPages * modelInfo.creditsPerPage;
           result.usage.totalPages = splitPages;
           result.usage.apiCalls++;
           
@@ -149,17 +164,21 @@ export function usePacketPipeline() {
             document: packet.base64,
             filename: packet.name || packet.filename,
             jsonSchema: schema,
-            model: "retab-small",
-            nConsensus: 1,
+            model: config.model,
+            nConsensus: config.nConsensus,
+            imageDpi: config.imageDpi,
+            temperature: config.temperature,
           });
           
           documentResult.extraction = extractionResponse;
           
-          // Track extraction usage (retab-small = 1.0 credit/page, nConsensus=1)
+          // Track extraction usage
           const docPages = split.pages?.length || 1;
           documentResult.usage = {
             pages: docPages,
-            credits: docPages * 1.0 * 1, // model_credits × pages × n_consensus
+            credits: docPages * modelInfo.creditsPerPage * config.nConsensus,
+            model: config.model,
+            nConsensus: config.nConsensus,
           };
           
           // Calculate extraction confidence
@@ -248,7 +267,18 @@ export function usePacketPipeline() {
    * Process a single document (no splitting)
    */
   const processDocument = useCallback(async (file, category, options = {}) => {
-    const { onStatusChange = () => {} } = options;
+    const { 
+      onStatusChange = () => {},
+      retabConfig = {},
+    } = options;
+    
+    // Merge with defaults
+    const config = {
+      model: retabConfig.model || DEFAULT_CONFIG.model,
+      nConsensus: retabConfig.nConsensus || DEFAULT_CONFIG.nConsensus,
+      imageDpi: retabConfig.imageDpi || DEFAULT_CONFIG.imageDpi,
+      temperature: retabConfig.temperature || DEFAULT_CONFIG.temperature,
+    };
     
     onStatusChange(file.id, PipelineStatus.EXTRACTING);
     
@@ -262,8 +292,10 @@ export function usePacketPipeline() {
       document: file.base64,
       filename: file.name,
       jsonSchema: schema,
-      model: "retab-small",
-      nConsensus: 1,
+      model: config.model,
+      nConsensus: config.nConsensus,
+      imageDpi: config.imageDpi,
+      temperature: config.temperature,
     });
 
     const reviewCheck = checkNeedsReview(extractionResponse, category);

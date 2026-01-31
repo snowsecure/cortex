@@ -6,6 +6,9 @@ import { BatchExport } from "./components/BatchExport";
 import { ExportModal } from "./components/ExportModal";
 import { HistoryLog, HistoryButton } from "./components/HistoryLog";
 import { DocumentDetailModal } from "./components/DocumentDetailModal";
+import { AdminDashboard } from "./components/AdminDashboard";
+import { RetabSettingsPanel, BatchConfigOverride, QuickSettingsBadge } from "./components/RetabSettings";
+import { saveSettings, RETAB_MODELS } from "./lib/retabConfig";
 import { useBatchQueue, BatchStatus } from "./hooks/useBatchQueue";
 import { useProcessingHistory } from "./hooks/useProcessingHistory";
 import { getApiKey, setApiKey, hasApiKey } from "./lib/retab";
@@ -45,6 +48,9 @@ import {
   Clock,
   CheckCircle,
   Menu,
+  BarChart3,
+  Sliders,
+  Zap,
 } from "lucide-react";
 
 /**
@@ -56,6 +62,7 @@ const ViewMode = {
   RESULTS: "results",
   REVIEW: "review",
   HISTORY: "history",
+  ADMIN: "admin",
 };
 
 function App() {
@@ -68,7 +75,9 @@ function App() {
   const [viewMode, setViewMode] = useState(ViewMode.UPLOAD);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showSessionRestoredBanner, setShowSessionRestoredBanner] = useState(false);
+  const [batchConfig, setBatchConfig] = useState(null); // Per-batch override
 
   // Batch queue hook
   const {
@@ -77,6 +86,7 @@ function App() {
     usage,
     batchStatus,
     config,
+    retabConfig,
     sessionId,
     dbConnected,
     addPackets,
@@ -87,6 +97,7 @@ function App() {
     retryAllFailed,
     removePacket,
     clearAll,
+    setRetabConfig,
     isProcessing,
     isPaused,
     isComplete,
@@ -169,15 +180,21 @@ function App() {
 
   // Handle start processing
   const handleStartProcessing = useCallback(() => {
+    // Apply batch-specific config if set
+    if (batchConfig) {
+      setRetabConfig(batchConfig);
+    }
     setViewMode(ViewMode.PROCESSING);
     setCurrentBatchSaved(false);
     start();
-  }, [start]);
+    // Clear batch config after starting
+    setBatchConfig(null);
+  }, [start, batchConfig, setRetabConfig]);
 
   // Handle view document
-  const handleViewDocument = useCallback((document) => {
-    setSelectedDocument(document);
-    console.log("View document:", document);
+  const handleViewDocument = useCallback((document, packet) => {
+    setSelectedDocument({ document, packet });
+    console.log("View document:", document, "from packet:", packet?.filename);
   }, []);
 
   // Handle open review queue
@@ -187,30 +204,33 @@ function App() {
 
   // Handle close review queue
   const handleCloseReview = useCallback(() => {
-    setViewMode(ViewMode.PROCESSING);
+    setViewMode(ViewMode.RESULTS);
   }, []);
 
   // Handle approve review item - apply edits and mark as reviewed
-  const handleApproveReview = useCallback((item) => {
-    const { packet, document, editedFields } = item;
+  const handleApproveReview = useCallback((document, packet, reviewData) => {
+    console.log("Approved:", document.id, {
+      editedFields: reviewData.editedFields,
+      notes: reviewData.reviewerNotes,
+    });
     
-    // If there are edits, we would update the document's extraction data
-    // For now, just mark as reviewed (clear the needsReview flag)
-    console.log("Approved:", document.id, "with edits:", editedFields);
-    
-    // In a production app, you'd update the packet/document state here
-    // For example: dispatch({ type: 'UPDATE_DOCUMENT', packetId, documentId, updates })
+    // TODO: In production, update the document state:
+    // - Apply editedFields to extraction data
+    // - Clear needsReview flag
+    // - Save reviewerNotes
+    // - Sync to database
   }, []);
 
   // Handle reject review item - mark for re-processing or removal
-  const handleRejectReview = useCallback((item) => {
-    const { document } = item;
-    console.log("Rejected:", document.id);
+  const handleRejectReview = useCallback((document, packet, reviewData) => {
+    console.log("Rejected:", document.id, {
+      notes: reviewData.reviewerNotes,
+    });
     
-    // In a production app, you might:
-    // - Flag the document for re-extraction
-    // - Remove it from results
-    // - Add a note explaining the rejection
+    // TODO: In production:
+    // - Flag document as rejected
+    // - Save rejection reason/notes
+    // - Optionally remove from results or mark for re-processing
   }, []);
 
   // Handle new batch - go back to upload without clearing results
@@ -328,6 +348,12 @@ function App() {
                   </div>
                 )}
                 
+                {/* Quick settings badge */}
+                <QuickSettingsBadge 
+                  config={retabConfig} 
+                  onClick={() => setShowSettingsPanel(true)} 
+                />
+                
                 {/* Settings dropdown */}
                 <div className="relative group">
                   <Button variant="ghost" size="sm" className="text-gray-500">
@@ -335,6 +361,21 @@ function App() {
                     <ChevronDown className="h-3 w-3" />
                   </Button>
                   <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                    <button
+                      onClick={() => setShowSettingsPanel(true)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <Sliders className="h-4 w-4" />
+                      Retab Settings
+                    </button>
+                    <button
+                      onClick={() => setViewMode(ViewMode.ADMIN)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <BarChart3 className="h-4 w-4" />
+                      Admin Dashboard
+                    </button>
+                    <div className="border-t border-gray-100 my-1" />
                     <button
                       onClick={handleClearApiKey}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
@@ -569,6 +610,15 @@ function App() {
                   onRemoveFile={handleRemoveFile}
                   disabled={isProcessing}
                 />
+                
+                {/* Batch-specific config override */}
+                {hasPackets && (
+                  <BatchConfigOverride
+                    config={batchConfig || retabConfig}
+                    onChange={setBatchConfig}
+                    globalConfig={retabConfig}
+                  />
+                )}
 
                 {hasPackets && (
                   <div className="flex items-center justify-between pt-4 border-t">
@@ -727,6 +777,19 @@ function App() {
             </Card>
           </div>
         )}
+
+        {/* Admin Dashboard view */}
+        {apiKeyConfigured && viewMode === ViewMode.ADMIN && (
+          <div className="flex-1 min-h-0">
+            <AdminDashboard
+              packets={packets}
+              stats={stats}
+              usage={usage}
+              retabConfig={retabConfig}
+              onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.UPLOAD)}
+            />
+          </div>
+        )}
       </main>
 
       {/* Footer */}
@@ -744,7 +807,8 @@ function App() {
       {/* Document Detail Modal */}
       {selectedDocument && (
         <DocumentDetailModal
-          document={selectedDocument}
+          document={selectedDocument.document}
+          packet={selectedDocument.packet}
           onClose={() => setSelectedDocument(null)}
         />
       )}
@@ -756,6 +820,22 @@ function App() {
         isOpen={showExportModal}
         onClose={() => setShowExportModal(false)}
       />
+      
+      {/* Retab Settings Panel */}
+      {showSettingsPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl w-[700px] max-h-[90vh] flex flex-col">
+            <RetabSettingsPanel
+              onClose={() => setShowSettingsPanel(false)}
+              onSave={(newSettings) => {
+                setRetabConfig(newSettings);
+                saveSettings(newSettings);
+                setShowSettingsPanel(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

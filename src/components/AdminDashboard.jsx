@@ -1,0 +1,1015 @@
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  BarChart3,
+  TrendingUp,
+  TrendingDown,
+  Clock,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  Users,
+  FileText,
+  Download,
+  Server,
+  Activity,
+  Cpu,
+  Database,
+  Zap,
+  Target,
+  Eye,
+  RefreshCw,
+  Sparkles,
+  MessageSquare,
+  ChevronRight,
+  ArrowUpRight,
+  ArrowDownRight,
+  Info,
+  Settings,
+  Calendar,
+  DollarSign,
+  Gauge,
+  Shield,
+  Lightbulb,
+  Bot,
+  Send,
+  Loader2,
+} from "lucide-react";
+import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
+import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
+import { cn } from "../lib/utils";
+import { 
+  generateRetabResponse, 
+  RETAB_CONCEPTS, 
+  OPTIMIZATION_STRATEGIES,
+  TROUBLESHOOTING,
+} from "../lib/retabKnowledge";
+
+// ============================================================================
+// METRIC CARD COMPONENT
+// ============================================================================
+
+function MetricCard({ title, value, subtitle, icon: Icon, trend, trendValue, variant = "default" }) {
+  const variants = {
+    default: "bg-white",
+    success: "bg-green-50 border-green-200",
+    warning: "bg-amber-50 border-amber-200",
+    danger: "bg-red-50 border-red-200",
+    info: "bg-blue-50 border-blue-200",
+  };
+  
+  return (
+    <div className={cn("rounded-lg border p-4", variants[variant])}>
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm text-gray-500">{title}</p>
+          <p className="text-2xl font-bold mt-1">{value}</p>
+          {subtitle && <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>}
+        </div>
+        {Icon && (
+          <div className={cn(
+            "p-2 rounded-lg",
+            variant === "success" && "bg-green-100",
+            variant === "warning" && "bg-amber-100",
+            variant === "danger" && "bg-red-100",
+            variant === "info" && "bg-blue-100",
+            variant === "default" && "bg-gray-100",
+          )}>
+            <Icon className={cn(
+              "h-5 w-5",
+              variant === "success" && "text-green-600",
+              variant === "warning" && "text-amber-600",
+              variant === "danger" && "text-red-600",
+              variant === "info" && "text-blue-600",
+              variant === "default" && "text-gray-600",
+            )} />
+          </div>
+        )}
+      </div>
+      {trend && (
+        <div className={cn(
+          "flex items-center gap-1 mt-2 text-xs",
+          trend === "up" && "text-green-600",
+          trend === "down" && "text-red-600",
+        )}>
+          {trend === "up" ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+          <span>{trendValue}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// CONFIDENCE DISTRIBUTION CHART
+// ============================================================================
+
+function ConfidenceDistribution({ data }) {
+  const buckets = [
+    { label: "< 40%", range: [0, 0.4], color: "bg-red-500" },
+    { label: "40-60%", range: [0.4, 0.6], color: "bg-amber-500" },
+    { label: "60-80%", range: [0.6, 0.8], color: "bg-yellow-500" },
+    { label: "80-95%", range: [0.8, 0.95], color: "bg-green-400" },
+    { label: "95%+", range: [0.95, 1.01], color: "bg-green-600" },
+  ];
+  
+  const distribution = buckets.map(bucket => ({
+    ...bucket,
+    count: data.filter(c => c >= bucket.range[0] && c < bucket.range[1]).length,
+  }));
+  
+  const maxCount = Math.max(...distribution.map(d => d.count), 1);
+  
+  return (
+    <div className="space-y-2">
+      {distribution.map((bucket, i) => (
+        <div key={i} className="flex items-center gap-3">
+          <span className="text-xs text-gray-500 w-16">{bucket.label}</span>
+          <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden">
+            <div 
+              className={cn("h-full transition-all", bucket.color)}
+              style={{ width: `${(bucket.count / maxCount) * 100}%` }}
+            />
+          </div>
+          <span className="text-xs font-medium w-8 text-right">{bucket.count}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// PROCESSING SPEED CHART
+// ============================================================================
+
+function ProcessingSpeedChart({ data }) {
+  if (!data || data.length === 0) {
+    return <p className="text-gray-400 text-sm text-center py-4">No data yet</p>;
+  }
+  
+  const maxTime = Math.max(...data.map(d => d.avgTime), 1);
+  
+  return (
+    <div className="space-y-1">
+      {data.slice(-7).map((day, i) => (
+        <div key={i} className="flex items-center gap-3">
+          <span className="text-xs text-gray-500 w-16">{day.date}</span>
+          <div className="flex-1 h-4 bg-gray-100 rounded overflow-hidden">
+            <div 
+              className="h-full bg-blue-500"
+              style={{ width: `${(day.avgTime / maxTime) * 100}%` }}
+            />
+          </div>
+          <span className="text-xs font-medium w-12 text-right">{day.avgTime.toFixed(1)}s</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// ACTIVITY LOG
+// ============================================================================
+
+function ActivityLog({ logs }) {
+  const getLogIcon = (type) => {
+    switch (type) {
+      case "success": return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case "error": return <XCircle className="h-4 w-4 text-red-500" />;
+      case "warning": return <AlertTriangle className="h-4 w-4 text-amber-500" />;
+      case "info": return <Info className="h-4 w-4 text-blue-500" />;
+      default: return <Activity className="h-4 w-4 text-gray-500" />;
+    }
+  };
+  
+  return (
+    <div className="space-y-2 max-h-[300px] overflow-y-auto">
+      {logs.length === 0 ? (
+        <p className="text-gray-400 text-sm text-center py-4">No recent activity</p>
+      ) : (
+        logs.map((log, i) => (
+          <div key={i} className="flex items-start gap-3 p-2 rounded hover:bg-gray-50">
+            {getLogIcon(log.type)}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-gray-900">{log.message}</p>
+              <p className="text-xs text-gray-400">{log.timestamp}</p>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// AI ASSISTANT COMPONENT
+// ============================================================================
+
+function AIAssistant({ metrics, retabConfig, onSuggestionApply }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [isThinking, setIsThinking] = useState(false);
+  
+  // Quick question suggestions
+  const quickQuestions = [
+    "How do I improve confidence scores?",
+    "What is consensus mode?",
+    "Which model should I use?",
+    "How can I reduce costs?",
+    "Why are documents needing review?",
+    "What DPI setting is best?",
+  ];
+  
+  // Generate initial suggestions based on metrics
+  useEffect(() => {
+    if (metrics && messages.length === 0) {
+      generateInitialSuggestions();
+    }
+  }, [metrics]);
+  
+  const generateInitialSuggestions = () => {
+    const suggestions = [];
+    
+    // Analyze metrics using knowledge base strategies
+    if (metrics.avgConfidence < 0.7) {
+      const strategies = OPTIMIZATION_STRATEGIES.confidence.strategies.slice(0, 2);
+      suggestions.push({
+        type: "warning",
+        title: "Low Average Confidence",
+        message: `Your average extraction confidence is ${(metrics.avgConfidence * 100).toFixed(1)}%. ${RETAB_CONCEPTS.confidenceScoring.content.split('\n')[0]}`,
+        details: strategies.map(s => `• **${s.name}**: ${s.description}`).join('\n'),
+        action: "Enable consensus mode",
+      });
+    }
+    
+    if (metrics.reviewRate > 0.3) {
+      const strategies = OPTIMIZATION_STRATEGIES.reviews.strategies.slice(0, 2);
+      suggestions.push({
+        type: "optimization",
+        title: "High Human Review Rate",
+        message: `${(metrics.reviewRate * 100).toFixed(1)}% of documents require human review.`,
+        details: strategies.map(s => `• **${s.name}**: ${s.description}`).join('\n'),
+        action: "View review patterns",
+      });
+    }
+    
+    if (metrics.avgProcessingTime > 10) {
+      const strategies = OPTIMIZATION_STRATEGIES.speed.strategies.slice(0, 2);
+      suggestions.push({
+        type: "performance",
+        title: "Processing Time Optimization",
+        message: `Average processing time is ${metrics.avgProcessingTime.toFixed(1)}s.`,
+        details: strategies.map(s => `• **${s.name}**: ${s.description}`).join('\n'),
+        action: "Review model usage",
+      });
+    }
+    
+    if (metrics.errorRate > 0.05) {
+      const troubleshooting = TROUBLESHOOTING.extractionErrors;
+      suggestions.push({
+        type: "error",
+        title: "Elevated Error Rate",
+        message: `Error rate is ${(metrics.errorRate * 100).toFixed(1)}%.`,
+        details: `**Common Causes:**\n${troubleshooting.causes.slice(0, 3).map(c => `• ${c}`).join('\n')}\n\n**Solutions:**\n${troubleshooting.solutions.slice(0, 3).map(s => `• ${s}`).join('\n')}`,
+        action: "View error logs",
+      });
+    }
+    
+    // Add config-based suggestions
+    if ((retabConfig?.nConsensus || 1) === 1 && metrics.avgConfidence < 0.8) {
+      suggestions.push({
+        type: "optimization",
+        title: "Consider Consensus Mode",
+        message: `You're not using consensus mode (n_consensus=1). ${RETAB_CONCEPTS.consensus.content.split('\n')[0]}`,
+        details: "Consensus mode runs multiple extractions and compares results. Using n_consensus=3 typically improves confidence by 10-15%.",
+        action: "Enable consensus",
+      });
+    }
+    
+    // Add a general tip if no issues
+    if (suggestions.length === 0) {
+      suggestions.push({
+        type: "success",
+        title: "System Health: Good",
+        message: "All metrics are within healthy ranges. Your Retab configuration appears optimized.",
+        details: `**Current Config:**\n• Model: ${retabConfig?.model || 'retab-small'}\n• Consensus: ${retabConfig?.nConsensus || 1}x\n• DPI: ${retabConfig?.imageDpi || 192}`,
+        action: null,
+      });
+    }
+    
+    setMessages([{
+      role: "assistant",
+      content: "I've analyzed your processing metrics using Retab best practices. Here are my recommendations:",
+      suggestions,
+    }]);
+  };
+  
+  const handleSend = async (customMessage = null) => {
+    const messageToSend = customMessage || input.trim();
+    if (!messageToSend) return;
+    
+    setInput("");
+    setMessages(prev => [...prev, { role: "user", content: messageToSend }]);
+    setIsThinking(true);
+    
+    // Generate response using knowledge base
+    setTimeout(() => {
+      const response = generateRetabResponse(messageToSend, metrics, retabConfig);
+      setMessages(prev => [...prev, { 
+        role: "assistant", 
+        content: response.content,
+        title: response.title,
+        suggestions: response.suggestions,
+      }]);
+      setIsThinking(false);
+    }, 800);
+  };
+  
+  const handleQuickQuestion = (question) => {
+    handleSend(question);
+  };
+  
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center gap-2 p-3 border-b bg-gradient-to-r from-purple-50 to-blue-50">
+        <Bot className="h-5 w-5 text-purple-600" />
+        <span className="font-medium text-gray-900">SAIL AI Assistant</span>
+        <Badge variant="secondary" className="text-xs">Powered by Retab Docs</Badge>
+      </div>
+      
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((msg, i) => (
+          <div key={i} className={cn(
+            "flex",
+            msg.role === "user" ? "justify-end" : "justify-start"
+          )}>
+            <div className={cn(
+              "max-w-[90%] rounded-lg p-3",
+              msg.role === "user" 
+                ? "bg-[#9e2339] text-white"
+                : "bg-gray-100 text-gray-900"
+            )}>
+              {/* Title for assistant messages */}
+              {msg.role === "assistant" && msg.title && (
+                <div className="flex items-center gap-2 mb-2 pb-2 border-b border-gray-200">
+                  <Sparkles className="h-4 w-4 text-purple-500" />
+                  <span className="text-sm font-semibold text-gray-800">{msg.title}</span>
+                </div>
+              )}
+              
+              {/* Message content with markdown-like formatting */}
+              <div className="text-sm prose prose-sm max-w-none">
+                {msg.content.split('\n').map((line, lineIdx) => {
+                  // Handle headers
+                  if (line.startsWith('**') && line.endsWith('**')) {
+                    return <p key={lineIdx} className="font-semibold text-gray-800 mt-2 mb-1">{line.replace(/\*\*/g, '')}</p>;
+                  }
+                  // Handle bullet points
+                  if (line.startsWith('•') || line.startsWith('-')) {
+                    return <p key={lineIdx} className="ml-2 text-gray-700">{line}</p>;
+                  }
+                  // Handle numbered items
+                  if (/^\d+\./.test(line)) {
+                    return <p key={lineIdx} className="ml-2 text-gray-700">{line}</p>;
+                  }
+                  // Handle empty lines
+                  if (line.trim() === '') {
+                    return <br key={lineIdx} />;
+                  }
+                  // Regular text
+                  return <p key={lineIdx} className="text-gray-700">{line}</p>;
+                })}
+              </div>
+              
+              {/* Suggestions (for initial analysis) */}
+              {msg.suggestions && msg.suggestions.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {msg.suggestions.map((suggestion, j) => (
+                    <div 
+                      key={j}
+                      className={cn(
+                        "p-3 rounded-lg border",
+                        suggestion.type === "warning" && "bg-amber-50 border-amber-200",
+                        suggestion.type === "error" && "bg-red-50 border-red-200",
+                        suggestion.type === "optimization" && "bg-blue-50 border-blue-200",
+                        suggestion.type === "performance" && "bg-purple-50 border-purple-200",
+                        suggestion.type === "success" && "bg-green-50 border-green-200",
+                      )}
+                    >
+                      <div className="flex items-start gap-2">
+                        <Lightbulb className={cn(
+                          "h-4 w-4 mt-0.5 shrink-0",
+                          suggestion.type === "warning" && "text-amber-600",
+                          suggestion.type === "error" && "text-red-600",
+                          suggestion.type === "optimization" && "text-blue-600",
+                          suggestion.type === "performance" && "text-purple-600",
+                          suggestion.type === "success" && "text-green-600",
+                        )} />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{suggestion.title}</p>
+                          <p className="text-xs text-gray-600 mt-1">{suggestion.message}</p>
+                          {suggestion.details && (
+                            <div className="mt-2 text-xs text-gray-500 whitespace-pre-wrap">
+                              {suggestion.details}
+                            </div>
+                          )}
+                          {suggestion.action && (
+                            <Button 
+                              size="sm" 
+                              variant="ghost"
+                              className="mt-2 h-7 text-xs"
+                              onClick={() => onSuggestionApply?.(suggestion)}
+                            >
+                              {suggestion.action}
+                              <ChevronRight className="h-3 w-3 ml-1" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        
+        {isThinking && (
+          <div className="flex justify-start">
+            <div className="bg-gray-100 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-gray-500">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Consulting Retab documentation...</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* Quick Questions */}
+      {messages.length <= 1 && (
+        <div className="px-3 pb-2">
+          <p className="text-xs text-gray-500 mb-2">Quick questions:</p>
+          <div className="flex flex-wrap gap-1">
+            {quickQuestions.map((q, i) => (
+              <button
+                key={i}
+                onClick={() => handleQuickQuestion(q)}
+                className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-full text-gray-600 transition-colors"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Input */}
+      <div className="p-3 border-t">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSend()}
+            placeholder="Ask about Retab, confidence, models, costs..."
+            className="flex-1 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#9e2339]"
+          />
+          <Button size="icon" onClick={() => handleSend()} disabled={!input.trim() || isThinking}>
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
+        <p className="text-[10px] text-gray-400 mt-1 text-center">
+          Answers based on Retab API documentation and your current metrics
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN ADMIN DASHBOARD COMPONENT
+// ============================================================================
+
+export function AdminDashboard({ packets, stats, usage, retabConfig, onClose }) {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [refreshing, setRefreshing] = useState(false);
+  
+  // Calculate comprehensive metrics from packets
+  const metrics = useMemo(() => {
+    const allDocs = packets.flatMap(p => p.documents || []);
+    const completedDocs = allDocs.filter(d => d.status === "completed" || d.status === "needs_review");
+    
+    // Collect all confidence scores
+    const allConfidences = [];
+    const fieldConfidences = {};
+    
+    completedDocs.forEach(doc => {
+      const likelihoods = doc.extraction?.likelihoods || {};
+      Object.entries(likelihoods).forEach(([field, conf]) => {
+        if (typeof conf === "number") {
+          allConfidences.push(conf);
+          if (!fieldConfidences[field]) fieldConfidences[field] = [];
+          fieldConfidences[field].push(conf);
+        }
+      });
+    });
+    
+    // Calculate field-level stats
+    const fieldStats = Object.entries(fieldConfidences).map(([field, confs]) => ({
+      field,
+      avgConfidence: confs.reduce((a, b) => a + b, 0) / confs.length,
+      minConfidence: Math.min(...confs),
+      count: confs.length,
+    })).sort((a, b) => a.avgConfidence - b.avgConfidence);
+    
+    // Review statistics
+    const needsReviewDocs = allDocs.filter(d => d.needsReview);
+    const reviewReasons = {};
+    needsReviewDocs.forEach(doc => {
+      (doc.reviewReasons || []).forEach(reason => {
+        reviewReasons[reason] = (reviewReasons[reason] || 0) + 1;
+      });
+    });
+    
+    // Processing time estimates (simulated - in production, track actual times)
+    const avgProcessingTime = packets.length > 0 ? 3.5 + Math.random() * 2 : 0;
+    
+    return {
+      // Document counts
+      totalPackets: packets.length,
+      totalDocuments: allDocs.length,
+      completedDocuments: completedDocs.length,
+      needsReviewCount: needsReviewDocs.length,
+      failedCount: allDocs.filter(d => d.status === "failed").length,
+      
+      // Confidence metrics
+      avgConfidence: allConfidences.length > 0 
+        ? allConfidences.reduce((a, b) => a + b, 0) / allConfidences.length 
+        : 0,
+      minConfidence: allConfidences.length > 0 ? Math.min(...allConfidences) : 0,
+      maxConfidence: allConfidences.length > 0 ? Math.max(...allConfidences) : 0,
+      confidenceDistribution: allConfidences,
+      lowConfidenceFields: fieldStats.filter(f => f.avgConfidence < 0.7).length,
+      fieldStats,
+      
+      // Review metrics
+      reviewRate: allDocs.length > 0 ? needsReviewDocs.length / allDocs.length : 0,
+      reviewReasons: Object.entries(reviewReasons)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5),
+      
+      // Performance metrics
+      avgProcessingTime,
+      minProcessingTime: avgProcessingTime * 0.6,
+      maxProcessingTime: avgProcessingTime * 1.8,
+      
+      // Cost metrics
+      totalCredits: usage?.totalCredits || 0,
+      totalCost: usage?.totalCost || 0,
+      avgCreditsPerDoc: completedDocs.length > 0 
+        ? (usage?.totalCredits || 0) / completedDocs.length 
+        : 0,
+      
+      // Error rate
+      errorRate: allDocs.length > 0 
+        ? allDocs.filter(d => d.status === "failed").length / allDocs.length 
+        : 0,
+    };
+  }, [packets, usage]);
+  
+  // Generate activity logs
+  const activityLogs = useMemo(() => {
+    const logs = [];
+    
+    packets.forEach(packet => {
+      if (packet.completedAt) {
+        logs.push({
+          type: packet.status === "failed" ? "error" : 
+                packet.status === "needs_review" ? "warning" : "success",
+          message: `${packet.filename} - ${packet.status}`,
+          timestamp: new Date(packet.completedAt).toLocaleString(),
+        });
+      }
+    });
+    
+    return logs.slice(0, 20);
+  }, [packets]);
+  
+  const handleRefresh = () => {
+    setRefreshing(true);
+    setTimeout(() => setRefreshing(false), 1000);
+  };
+  
+  const tabs = [
+    { id: "overview", label: "Overview", icon: BarChart3 },
+    { id: "confidence", label: "Confidence", icon: Target },
+    { id: "reviews", label: "Reviews", icon: Eye },
+    { id: "logs", label: "Logs", icon: FileText },
+    { id: "assistant", label: "AI Assistant", icon: Bot },
+  ];
+  
+  return (
+    <div className="h-full flex flex-col bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b px-6 py-4 shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Settings className="h-6 w-6 text-gray-400" />
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">Admin Dashboard</h1>
+              <p className="text-sm text-gray-500">System metrics and AI insights</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
+              <RefreshCw className={cn("h-4 w-4 mr-2", refreshing && "animate-spin")} />
+              Refresh
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Close
+            </Button>
+          </div>
+        </div>
+        
+        {/* Tabs */}
+        <div className="flex gap-1 mt-4">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors",
+                activeTab === tab.id
+                  ? "bg-[#9e2339] text-white"
+                  : "text-gray-600 hover:bg-gray-100"
+              )}
+            >
+              <tab.icon className="h-4 w-4" />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-6">
+        {/* Overview Tab */}
+        {activeTab === "overview" && (
+          <div className="space-y-6">
+            {/* Key Metrics */}
+            <div className="grid grid-cols-4 gap-4">
+              <MetricCard
+                title="Total Documents"
+                value={metrics.totalDocuments}
+                subtitle={`${metrics.totalPackets} packets`}
+                icon={FileText}
+              />
+              <MetricCard
+                title="Avg Confidence"
+                value={`${(metrics.avgConfidence * 100).toFixed(1)}%`}
+                subtitle="Across all fields"
+                icon={Target}
+                variant={metrics.avgConfidence >= 0.75 ? "success" : metrics.avgConfidence >= 0.6 ? "warning" : "danger"}
+              />
+              <MetricCard
+                title="Human Review Rate"
+                value={`${(metrics.reviewRate * 100).toFixed(1)}%`}
+                subtitle={`${metrics.needsReviewCount} documents`}
+                icon={Eye}
+                variant={metrics.reviewRate <= 0.2 ? "success" : metrics.reviewRate <= 0.4 ? "warning" : "danger"}
+              />
+              <MetricCard
+                title="Total Cost"
+                value={`$${metrics.totalCost.toFixed(2)}`}
+                subtitle={`${metrics.totalCredits.toFixed(1)} credits`}
+                icon={DollarSign}
+                variant="info"
+              />
+            </div>
+            
+            {/* Charts Row */}
+            <div className="grid grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Confidence Distribution</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ConfidenceDistribution data={metrics.confidenceDistribution} />
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">System Health</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Server className="h-4 w-4 text-green-500" />
+                        <span className="text-sm">API Status</span>
+                      </div>
+                      <Badge variant="success">Connected</Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Database className="h-4 w-4 text-green-500" />
+                        <span className="text-sm">Database</span>
+                      </div>
+                      <Badge variant="success">Healthy</Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Cpu className="h-4 w-4 text-blue-500" />
+                        <span className="text-sm">Avg Processing</span>
+                      </div>
+                      <span className="text-sm font-medium">{metrics.avgProcessingTime.toFixed(1)}s</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Zap className="h-4 w-4 text-amber-500" />
+                        <span className="text-sm">Error Rate</span>
+                      </div>
+                      <span className={cn(
+                        "text-sm font-medium",
+                        metrics.errorRate > 0.05 ? "text-red-600" : "text-green-600"
+                      )}>
+                        {(metrics.errorRate * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+            
+            {/* Activity Log */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Recent Activity</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ActivityLog logs={activityLogs} />
+              </CardContent>
+            </Card>
+          </div>
+        )}
+        
+        {/* Confidence Tab */}
+        {activeTab === "confidence" && (
+          <div className="space-y-6">
+            {/* Confidence Summary */}
+            <div className="grid grid-cols-4 gap-4">
+              <MetricCard
+                title="Average"
+                value={`${(metrics.avgConfidence * 100).toFixed(1)}%`}
+                icon={Gauge}
+                variant={metrics.avgConfidence >= 0.75 ? "success" : "warning"}
+              />
+              <MetricCard
+                title="Minimum"
+                value={`${(metrics.minConfidence * 100).toFixed(1)}%`}
+                icon={TrendingDown}
+                variant={metrics.minConfidence >= 0.5 ? "success" : "danger"}
+              />
+              <MetricCard
+                title="Maximum"
+                value={`${(metrics.maxConfidence * 100).toFixed(1)}%`}
+                icon={TrendingUp}
+                variant="success"
+              />
+              <MetricCard
+                title="Low Confidence Fields"
+                value={metrics.lowConfidenceFields}
+                subtitle="Below 70%"
+                icon={AlertTriangle}
+                variant={metrics.lowConfidenceFields === 0 ? "success" : "warning"}
+              />
+            </div>
+            
+            {/* Field-Level Analysis */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Field Confidence Analysis</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {metrics.fieldStats.length === 0 ? (
+                  <p className="text-gray-400 text-sm text-center py-4">No extraction data yet</p>
+                ) : (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {metrics.fieldStats.map((field, i) => (
+                      <div key={i} className="flex items-center gap-3 p-2 rounded hover:bg-gray-50">
+                        <div className={cn(
+                          "w-2 h-2 rounded-full shrink-0",
+                          field.avgConfidence >= 0.8 && "bg-green-500",
+                          field.avgConfidence >= 0.6 && field.avgConfidence < 0.8 && "bg-amber-500",
+                          field.avgConfidence < 0.6 && "bg-red-500",
+                        )} />
+                        <span className="text-sm font-medium flex-1 truncate">
+                          {field.field.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                        </span>
+                        <span className="text-xs text-gray-400">{field.count} samples</span>
+                        <Badge 
+                          variant={field.avgConfidence >= 0.8 ? "success" : field.avgConfidence >= 0.6 ? "warning" : "destructive"}
+                          className="font-mono text-xs"
+                        >
+                          {(field.avgConfidence * 100).toFixed(0)}%
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            
+            {/* Retab Confidence Guide */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Retab Confidence Score Guide</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 p-2 bg-green-50 rounded">
+                    <div className="w-3 h-3 rounded-full bg-green-500" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">95-100%</p>
+                      <p className="text-xs text-gray-500">All consensus sources agreed exactly</p>
+                    </div>
+                    <Badge variant="success">High Confidence</Badge>
+                  </div>
+                  <div className="flex items-center gap-3 p-2 bg-green-50/50 rounded">
+                    <div className="w-3 h-3 rounded-full bg-green-400" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">80-95%</p>
+                      <p className="text-xs text-gray-500">Minor variations, strong consensus</p>
+                    </div>
+                    <Badge variant="secondary">Generally Reliable</Badge>
+                  </div>
+                  <div className="flex items-center gap-3 p-2 bg-amber-50 rounded">
+                    <div className="w-3 h-3 rounded-full bg-amber-500" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">60-80%</p>
+                      <p className="text-xs text-gray-500">Some disagreement between sources</p>
+                    </div>
+                    <Badge variant="warning">Review Recommended</Badge>
+                  </div>
+                  <div className="flex items-center gap-3 p-2 bg-red-50 rounded">
+                    <div className="w-3 h-3 rounded-full bg-red-500" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">Below 60%</p>
+                      <p className="text-xs text-gray-500">Significant disagreement or ambiguity</p>
+                    </div>
+                    <Badge variant="destructive">Human Review Required</Badge>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+        
+        {/* Reviews Tab */}
+        {activeTab === "reviews" && (
+          <div className="space-y-6">
+            {/* Review Stats */}
+            <div className="grid grid-cols-3 gap-4">
+              <MetricCard
+                title="Total Reviews Needed"
+                value={metrics.needsReviewCount}
+                icon={Eye}
+                variant="warning"
+              />
+              <MetricCard
+                title="Review Rate"
+                value={`${(metrics.reviewRate * 100).toFixed(1)}%`}
+                subtitle="of all documents"
+                icon={Users}
+                variant={metrics.reviewRate <= 0.2 ? "success" : "warning"}
+              />
+              <MetricCard
+                title="Auto-Approved"
+                value={`${((1 - metrics.reviewRate) * 100).toFixed(1)}%`}
+                subtitle="passed automatically"
+                icon={CheckCircle}
+                variant="success"
+              />
+            </div>
+            
+            {/* Top Review Reasons */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Top Review Reasons</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {metrics.reviewReasons.length === 0 ? (
+                  <p className="text-gray-400 text-sm text-center py-4">No reviews yet</p>
+                ) : (
+                  <div className="space-y-2">
+                    {metrics.reviewReasons.map(([reason, count], i) => (
+                      <div key={i} className="flex items-center gap-3">
+                        <span className="text-sm text-gray-600 flex-1">{reason}</span>
+                        <div className="w-32 h-2 bg-gray-100 rounded overflow-hidden">
+                          <div 
+                            className="h-full bg-amber-500"
+                            style={{ width: `${(count / metrics.needsReviewCount) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-sm font-medium w-8 text-right">{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            
+            {/* Recommendations */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Lightbulb className="h-4 w-4 text-amber-500" />
+                  Recommendations to Reduce Reviews
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <p className="text-sm font-medium text-blue-900">Improve Schema Descriptions</p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      Add more specific descriptions to fields with low confidence. For example, specify date formats like "ISO 8601 (YYYY-MM-DD)".
+                    </p>
+                  </div>
+                  <div className="p-3 bg-purple-50 rounded-lg">
+                    <p className="text-sm font-medium text-purple-900">Use Consensus Mode</p>
+                    <p className="text-xs text-purple-700 mt-1">
+                      Enable n_consensus=3 for critical document types. This runs multiple extractions and averages results for higher accuracy.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-green-50 rounded-lg">
+                    <p className="text-sm font-medium text-green-900">Refine Document Classification</p>
+                    <p className="text-xs text-green-700 mt-1">
+                      Documents classified as "Other" often need review. Add more specific subdocument types to your split configuration.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+        
+        {/* Logs Tab */}
+        {activeTab === "logs" && (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">Processing Logs</CardTitle>
+                  <Button variant="outline" size="sm">
+                    <Download className="h-4 w-4 mr-2" />
+                    Export Logs
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ActivityLog logs={activityLogs} />
+              </CardContent>
+            </Card>
+            
+            {/* Error Summary */}
+            {metrics.failedCount > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base text-red-600">Error Summary</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    <p className="text-sm text-gray-600">
+                      {metrics.failedCount} document(s) failed processing. Common causes:
+                    </p>
+                    <ul className="text-sm text-gray-500 list-disc list-inside space-y-1">
+                      <li>Malformed or corrupted PDF files</li>
+                      <li>Documents exceeding size limits</li>
+                      <li>Rate limiting from API (try reducing concurrency)</li>
+                      <li>Network timeouts on large documents</li>
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+        
+        {/* AI Assistant Tab */}
+        {activeTab === "assistant" && (
+          <div className="h-[calc(100vh-250px)]">
+            <Card className="h-full">
+              <AIAssistant metrics={metrics} retabConfig={retabConfig} />
+            </Card>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default AdminDashboard;

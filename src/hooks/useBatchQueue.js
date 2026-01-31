@@ -1,6 +1,7 @@
 import { useReducer, useCallback, useRef, useEffect, useState } from "react";
 import { usePacketPipeline, PipelineStatus } from "./usePacketPipeline";
 import * as api from "../lib/api";
+import { loadSettings, DEFAULT_CONFIG as RETAB_DEFAULT_CONFIG } from "../lib/retabConfig";
 
 /**
  * Batch processing status constants
@@ -42,6 +43,7 @@ const ActionTypes = {
   REMOVE_PACKET: "REMOVE_PACKET",
   CLEAR_ALL: "CLEAR_ALL",
   SET_CONFIG: "SET_CONFIG",
+  SET_RETAB_CONFIG: "SET_RETAB_CONFIG",
   SET_SESSION_ID: "SET_SESSION_ID",
 };
 
@@ -133,6 +135,7 @@ function getInitialState() {
       concurrency: 5,
       maxRetries: 3,
     },
+    retabConfig: loadSettings(), // Retab API settings (model, consensus, etc.)
     dbConnected: false, // Track if database is available
   };
   
@@ -498,6 +501,10 @@ function batchQueueReducer(state, action) {
       return { ...state, config: { ...state.config, ...action.config } };
     }
     
+    case ActionTypes.SET_RETAB_CONFIG: {
+      return { ...state, retabConfig: { ...state.retabConfig, ...action.retabConfig } };
+    }
+    
     case ActionTypes.SET_SESSION_ID: {
       return { 
         ...state, 
@@ -605,6 +612,7 @@ export function useBatchQueue() {
         onDocumentProcessed: (id, document) => {
           dispatch({ type: ActionTypes.PACKET_DOCUMENT_PROCESSED, packetId: id, document });
         },
+        retabConfig: stateRef.current.retabConfig,
       });
       
       dispatch({ type: ActionTypes.PACKET_COMPLETED, packetId, result });
@@ -754,6 +762,10 @@ export function useBatchQueue() {
   const setConfig = useCallback((config) => {
     dispatch({ type: ActionTypes.SET_CONFIG, config });
   }, []);
+  
+  const setRetabConfig = useCallback((retabConfig) => {
+    dispatch({ type: ActionTypes.SET_RETAB_CONFIG, retabConfig });
+  }, []);
 
   // Get packets as sorted array
   const packetsArray = Array.from(state.packets.values()).sort((a, b) => {
@@ -781,6 +793,7 @@ export function useBatchQueue() {
     stats: state.stats,
     usage: state.usage,
     config: state.config,
+    retabConfig: state.retabConfig,
     sessionId: state.sessionId,
     dbConnected: state.dbConnected,
     addPackets,
@@ -792,6 +805,7 @@ export function useBatchQueue() {
     removePacket,
     clearAll,
     setConfig,
+    setRetabConfig,
     isProcessing: state.batchStatus === BatchStatus.PROCESSING,
     isPaused: state.batchStatus === BatchStatus.PAUSED,
     isComplete: state.batchStatus === BatchStatus.COMPLETED,

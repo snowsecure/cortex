@@ -56,6 +56,7 @@ export async function extractDocument({
   model = "retab-small",
   temperature = 0,
   nConsensus = 1,
+  imageDpi = 192,
 }) {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -77,6 +78,7 @@ export async function extractDocument({
       json_schema: jsonSchema,
       temperature,
       n_consensus: nConsensus,
+      image_resolution_dpi: imageDpi,
     }),
   });
 
@@ -226,6 +228,7 @@ export async function splitDocument({
   filename = "document.pdf",
   subdocuments,
   model = "retab-small",
+  imageDpi = 192,
   context = null,
 }) {
   const apiKey = getApiKey();
@@ -237,6 +240,7 @@ export async function splitDocument({
     document: { filename, url: document },
     subdocuments,
     model,
+    image_resolution_dpi: imageDpi,
   };
 
   if (context) {

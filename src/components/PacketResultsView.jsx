@@ -169,7 +169,7 @@ function getPriorityFields(category) {
 /**
  * Document row within a packet - expandable to show extracted data
  */
-function DocumentRow({ document, onViewDocument, expanded, onToggle }) {
+function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
   const data = document.extraction?.choices?.[0]?.message?.parsed || 
                document.extraction?.data || 
                {};
@@ -314,7 +314,7 @@ function DocumentRow({ document, onViewDocument, expanded, onToggle }) {
             className="h-7 w-7"
             onClick={(e) => {
               e.stopPropagation();
-              onViewDocument(document);
+              onViewDocument(document, packet);
             }}
             title="View full details"
           >
@@ -363,7 +363,7 @@ function DocumentRow({ document, onViewDocument, expanded, onToggle }) {
                 className="text-xs text-gray-500 hover:text-gray-700"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onViewDocument(document);
+                  onViewDocument(document, packet);
                 }}
               >
                 View all {extractedFields.length} fields →
@@ -558,6 +558,7 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
               <DocumentRow
                 key={doc.id}
                 document={doc}
+                packet={packet}
                 onViewDocument={onViewDocument}
                 expanded={expandedDocs.has(doc.id)}
                 onToggle={() => toggleDoc(doc.id)}
