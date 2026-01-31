@@ -1,101 +1,196 @@
-# Retab Document Extractor
+# SAIL-IDP v0.2.0
 
-A modern web application for extracting structured data from title insurance documents using the [Retab API](https://retab.com).
+**Stewart AI Intelligent Document Processing**
+
+Enterprise-ready document ingestion and extraction platform powered by Retab AI.
 
 ## Features
 
-- **PDF Upload**: Drag-and-drop PDF upload with file validation
-- **Prebuilt Schemas**: 6 title insurance document schemas ready to use:
-  - Title Commitment
-  - Deed
-  - Mortgage / Deed of Trust
-  - Closing Disclosure
-  - Title Insurance Policy
-  - Survey / Plat
-- **Custom Schemas**: Monaco editor for defining custom JSON schemas
-- **Auto-Generate**: Automatically generate schemas from uploaded documents
-- **Progress Tracking**: Real-time extraction progress with status updates
-- **Results Display**: Interactive JSON tree view with confidence scores
-- **Export Options**: Copy to clipboard or download as JSON
+- **Batch Document Processing**: Upload multiple document packets for parallel processing
+- **Intelligent Splitting**: Automatically splits multi-document PDFs into individual documents
+- **Schema-Based Extraction**: Extract structured data using predefined title document schemas
+- **Human Review Queue**: Flag low-confidence extractions for manual review
+- **Persistent Storage**: SQLite database for robust data persistence
+- **Cost Tracking**: Real-time credit usage and cost monitoring
+- **Customizable Exports**: Export data in JSON, CSV, or summary formats
+- **Docker Ready**: Production-ready containerization
 
-## Getting Started
+## Quick Start
 
-### Prerequisites
-
-- Node.js 18+ 
-- npm or yarn
-- Retab API key ([Get one here](https://retab.com/dashboard))
-
-### Installation
+### Development Mode
 
 ```bash
 # Install dependencies
 npm install
 
-# Start both frontend and proxy server
+# Start both frontend and backend
 npm start
+
+# Or run separately:
+npm run server  # Backend on http://localhost:3001
+npm run dev     # Frontend on http://localhost:5173
 ```
 
-This starts:
-- **Frontend**: http://localhost:5173
-- **Proxy Server**: http://localhost:3001 (forwards requests to Retab API)
-
-Alternatively, run servers separately:
-```bash
-npm run server  # Start proxy server only
-npm run dev     # Start frontend only
-```
-
-### Build for Production
+### Production Mode
 
 ```bash
-npm run build
+# Build and run
+npm run production
+
+# Server runs at http://localhost:3001
 ```
 
-The built files will be in the `dist/` directory.
+### Docker Deployment
 
-## Usage
+```bash
+# Build and start with Docker Compose
+docker-compose up -d
 
-1. **Enter API Key**: On first launch, enter your Retab API key
-2. **Upload Document**: Drag and drop a PDF or click to browse
-3. **Select Schema**: Choose a prebuilt schema or define a custom one
-4. **Extract**: Click "Extract Data" to process the document
-5. **View Results**: Browse the extracted data in tree or raw JSON view
+# View logs
+docker-compose logs -f
 
-## Tech Stack
+# Stop
+docker-compose down
 
-- **React 18** with Vite
-- **Tailwind CSS** for styling
-- **Monaco Editor** for JSON schema editing
-- **react-dropzone** for file uploads
-- **Lucide React** for icons
-
-## Project Structure
-
-```
-retab/
-├── src/
-│   ├── components/
-│   │   ├── ui/              # Reusable UI components
-│   │   ├── FileUpload.jsx   # PDF upload component
-│   │   ├── SchemaSelector.jsx
-│   │   ├── ExtractionProgress.jsx
-│   │   └── ResultsDisplay.jsx
-│   ├── schemas/             # Prebuilt JSON schemas
-│   ├── hooks/               # React hooks for API
-│   ├── lib/                 # Utilities and API client
-│   ├── App.jsx
-│   └── main.jsx
-├── package.json
-└── vite.config.js
+# Stop and remove data (WARNING: deletes database)
+docker-compose down -v
 ```
 
-## Security Notes
+Or build manually:
 
-- API keys are stored in browser localStorage
-- For production deployments, consider using a backend proxy to protect API keys
-- Not recommended for use on shared or public computers
+```bash
+docker build -t sail-idp .
+docker run -p 3001:3001 -v sail-idp-data:/app/data sail-idp
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     SAIL-IDP Architecture                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐ │
+│  │   React     │────│   Express   │────│   Retab API         │ │
+│  │   Frontend  │    │   Backend   │    │   (ai.retab.com)    │ │
+│  └─────────────┘    └──────┬──────┘    └─────────────────────┘ │
+│                            │                                    │
+│                     ┌──────▼──────┐                            │
+│                     │   SQLite    │                            │
+│                     │   Database  │                            │
+│                     └─────────────┘                            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## API Endpoints
+
+### Health & Status
+- `GET /health` - Health check
+- `GET /api/status` - Server status with database stats
+
+### Sessions
+- `GET /api/sessions/active` - Get or create active session
+- `GET /api/sessions/:id` - Get session by ID
+- `GET /api/sessions/:id/full` - Get session with all packets and documents
+- `POST /api/sessions` - Create new session
+- `PATCH /api/sessions/:id` - Update session
+- `POST /api/sessions/:id/close` - Close session
+
+### Packets
+- `POST /api/packets` - Create packet(s)
+- `GET /api/packets/:id` - Get packet
+- `GET /api/sessions/:id/packets` - Get packets by session
+- `PATCH /api/packets/:id` - Update packet
+- `POST /api/packets/:id/complete` - Mark packet complete
+- `DELETE /api/packets/:id` - Delete packet
+
+### Documents
+- `POST /api/documents` - Create document(s)
+- `GET /api/documents/:id` - Get document
+- `GET /api/packets/:id/documents` - Get documents by packet
+- `GET /api/sessions/:id/review-queue` - Get documents needing review
+- `POST /api/documents/:id/review` - Review document (approve/reject)
+
+### Retab Proxy
+- `POST /api/documents/extract` - Extract data from document
+- `POST /api/documents/split` - Split document into subdocuments
+- `POST /api/documents/classify` - Classify document type
+- `POST /api/documents/parse` - Parse document
+- `POST /api/schemas/generate` - Generate schema
+- `POST /api/jobs` - Create async job
+- `GET /api/jobs/:id` - Get job status
+
+### History & Usage
+- `GET /api/history` - Get processing history
+- `POST /api/history` - Create history entry
+- `DELETE /api/history/:id` - Delete history entry
+- `DELETE /api/history` - Clear all history
+- `GET /api/usage` - Get usage statistics
+
+### Export Templates
+- `GET /api/export-templates` - List templates
+- `POST /api/export-templates` - Save template
+- `DELETE /api/export-templates/:name` - Delete template
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3001` | Server port |
+| `NODE_ENV` | `development` | Environment mode |
+| `DB_PATH` | `./data` | Database directory |
+| `CORS_ORIGIN` | `*` | Allowed CORS origins |
+| `VITE_API_URL` | `http://localhost:3001` | API URL for frontend |
+
+## Database Schema
+
+### Tables
+
+- **sessions** - Processing sessions
+- **packets** - Document packets
+- **documents** - Extracted documents
+- **history** - Processing history
+- **usage_daily** - Daily usage aggregates
+- **export_templates** - Saved export configurations
+
+### Data Persistence
+
+- Database stored at `./data/sail-idp.db`
+- WAL mode enabled for concurrent access
+- In Docker, mount `/app/data` volume for persistence
+
+## Cost Tracking
+
+Based on Retab pricing:
+- **1 Credit = $0.01**
+- **retab-small = 1.0 credit/page**
+- **Formula**: `credits = model_credits × pages × n_consensus`
+
+## Document Types Supported
+
+- Deeds (Warranty, Quitclaim, Grant, Survivorship, etc.)
+- Mortgages & Deeds of Trust
+- Liens (Mechanic's, Tax, Judgment, etc.)
+- Easements & Rights of Way
+- Title Insurance Policies
+- Settlement Statements (HUD-1, ALTA)
+- Surveys & Plats
+- Powers of Attorney
+- Affidavits
+- Notices & Agreements
+- And more...
+
+## Development
+
+```bash
+# Run linting
+npm run lint
+
+# Preview production build
+npm run preview
+```
 
 ## License
 
-Internal use only - Stewart Title R&D
+Proprietary - Stewart Title

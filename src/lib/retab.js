@@ -210,3 +210,242 @@ export async function getJobStatus(jobId) {
 
   return response.json();
 }
+
+/**
+ * Split a document packet into subdocuments
+ * @param {Object} options
+ * @param {string} options.document - Base64 data URL of the document
+ * @param {string} options.filename - Filename of the document
+ * @param {Array} options.subdocuments - Array of subdocument type definitions
+ * @param {string} options.model - Model to use (default: "retab-small")
+ * @param {string} options.context - Additional context for splitting
+ * @returns {Promise<Object>} Split response with page ranges
+ */
+export async function splitDocument({
+  document,
+  filename = "document.pdf",
+  subdocuments,
+  model = "retab-small",
+  context = null,
+}) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error("API key not configured");
+  }
+
+  const body = {
+    document: { filename, url: document },
+    subdocuments,
+    model,
+  };
+
+  if (context) {
+    body.context = context;
+  }
+
+  const response = await fetch(`${RETAB_API_BASE}/documents/split`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Api-Key": apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMsg = errorData.detail || errorData.error || errorData.message || `API error: ${response.status}`;
+    console.error("Split API error:", response.status, errorData);
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+/**
+ * Classify a document into categories
+ * @param {Object} options
+ * @param {string} options.document - Base64 data URL of the document
+ * @param {string} options.filename - Filename of the document
+ * @param {Array} options.categories - Array of category definitions with name and description
+ * @param {string} options.model - Model to use (default: "retab-small")
+ * @param {number} options.firstNPages - Only use first N pages for classification
+ * @param {string} options.context - Additional context for classification
+ * @returns {Promise<Object>} Classification response with category and confidence
+ */
+export async function classifyDocument({
+  document,
+  filename = "document.pdf",
+  categories,
+  model = "retab-small",
+  firstNPages = null,
+  context = null,
+}) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error("API key not configured");
+  }
+
+  const body = {
+    document: { filename, url: document },
+    categories,
+    model,
+  };
+
+  if (firstNPages) {
+    body.first_n_pages = firstNPages;
+  }
+
+  if (context) {
+    body.context = context;
+  }
+
+  const response = await fetch(`${RETAB_API_BASE}/documents/classify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Api-Key": apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMsg = errorData.detail || errorData.error || errorData.message || `API error: ${response.status}`;
+    console.error("Classify API error:", response.status, errorData);
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+/**
+ * Parse a document to text/markdown
+ * @param {Object} options
+ * @param {string} options.document - Base64 data URL of the document
+ * @param {string} options.filename - Filename of the document
+ * @param {string} options.model - Model to use (default: "retab-small")
+ * @param {string} options.tableParsingFormat - Format for tables (html, markdown, etc.)
+ * @returns {Promise<Object>} Parse response with text content
+ */
+export async function parseDocument({
+  document,
+  filename = "document.pdf",
+  model = "retab-small",
+  tableParsingFormat = "html",
+}) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error("API key not configured");
+  }
+
+  const response = await fetch(`${RETAB_API_BASE}/documents/parse`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Api-Key": apiKey,
+    },
+    body: JSON.stringify({
+      document: { filename, url: document },
+      model,
+      table_parsing_format: tableParsingFormat,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMsg = errorData.detail || errorData.error || errorData.message || `API error: ${response.status}`;
+    console.error("Parse API error:", response.status, errorData);
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+/**
+ * Create an async job for any supported endpoint
+ * @param {Object} options
+ * @param {string} options.endpoint - The API endpoint (e.g., "/v1/documents/extract")
+ * @param {Object} options.request - The request body for the endpoint
+ * @param {Object} options.metadata - Optional metadata for tracking
+ * @returns {Promise<Object>} Job creation response with job ID
+ */
+export async function createJob({
+  endpoint,
+  request,
+  metadata = null,
+}) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error("API key not configured");
+  }
+
+  const body = {
+    endpoint,
+    request,
+  };
+
+  if (metadata) {
+    body.metadata = metadata;
+  }
+
+  const response = await fetch(`${RETAB_API_BASE}/jobs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Api-Key": apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMsg = errorData.detail || errorData.error || errorData.message || `API error: ${response.status}`;
+    console.error("Job creation API error:", response.status, errorData);
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+/**
+ * Poll a job until completion
+ * @param {string} jobId - Job ID to poll
+ * @param {Object} options - Polling options
+ * @param {number} options.pollInterval - Interval between polls in ms (default: 2000)
+ * @param {number} options.maxAttempts - Maximum poll attempts (default: 120)
+ * @param {Function} options.onProgress - Callback for progress updates
+ * @returns {Promise<Object>} Job result when complete
+ */
+export async function pollJobUntilComplete(jobId, {
+  pollInterval = 2000,
+  maxAttempts = 120,
+  onProgress = null,
+} = {}) {
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    const job = await getJobStatus(jobId);
+    
+    if (onProgress) {
+      onProgress(job);
+    }
+
+    switch (job.status) {
+      case "completed":
+        return job.response;
+      case "failed":
+        throw new Error(job.error?.message || "Job failed");
+      case "cancelled":
+        throw new Error("Job was cancelled");
+      case "expired":
+        throw new Error("Job expired");
+      default:
+        // Still processing (validating, queued, processing)
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        attempts++;
+    }
+  }
+
+  throw new Error("Job polling timed out");
+}

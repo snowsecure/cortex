@@ -1,0 +1,46 @@
+# Dependencies
+node_modules
+
+# Build output (will be built in container)
+dist
+
+# Database files (should be in volume)
+data
+*.db
+*.db-wal
+*.db-shm
+
+# Development files
+.git
+.gitignore
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test files
+coverage
+*.test.js
+*.spec.js
+__tests__
+
+# Documentation
+*.md
+!README.md
+
+# Misc
+.eslintcache
+.cache
