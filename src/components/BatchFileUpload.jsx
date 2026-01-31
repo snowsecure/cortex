@@ -343,19 +343,8 @@ export function BatchFileUpload({
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <Files className="h-5 w-5 text-[#9e2339] shrink-0" />
             <span className="font-medium text-gray-900">
-              {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""}
-              {selectedFiles.length === 1
-                ? `: ${selectedFiles[0].name ?? selectedFiles[0].filename ?? "—"}`
-                : ""}
+              {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""} ready
             </span>
-            <span className="text-sm text-gray-400 shrink-0">
-              ({formatFileSize(totalSize)})
-            </span>
-            {totalEstimatedCost != null && totalEstimatedCost > 0 && (
-              <span className="text-sm text-teal-600 shrink-0" title="Estimated cost at current quality settings">
-                ~${totalEstimatedCost.toFixed(2)} est.
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button

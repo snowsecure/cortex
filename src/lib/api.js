@@ -282,6 +282,23 @@ export async function getAdminMetrics() {
   return apiRequest("/api/admin/metrics");
 }
 
+export async function clearDatabase(password) {
+  try {
+    return await apiRequest("/api/admin/clear-database", {
+      method: "POST",
+      body: { password: password != null ? String(password).trim() : "" },
+    });
+  } catch (e) {
+    const msg = e.message || "";
+    if (msg === "Not Found" || msg === "Not found" || msg.includes("404")) {
+      throw new Error(
+        "Clear database endpoint not available. Restart the backend server and try again. Password is \"stewart\" (lowercase)."
+      );
+    }
+    throw e;
+  }
+}
+
 // ============================================================================
 // EXPORT TEMPLATES
 // ============================================================================

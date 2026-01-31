@@ -10,7 +10,6 @@ import {
   XCircle,
   Clock,
   Download,
-  X,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -259,22 +258,6 @@ export function HistoryLog({ history, onDelete, onClearAll, onExport, onClose })
           <History className="h-5 w-5 text-gray-600" />
           <h3 className="font-semibold text-gray-900">Processing History</h3>
           <Badge variant="secondary">{history.length}</Badge>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClearAll}
-            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-          >
-            <Trash2 className="h-4 w-4 mr-1" />
-            Clear All
-          </Button>
-          {onClose && (
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="h-4 w-4" />
-            </Button>
-          )}
         </div>
       </div>
       

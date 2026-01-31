@@ -156,7 +156,7 @@ export function usePacketPipeline() {
           needsReview: false,
           reviewReasons: [],
           error: null,
-          extractionConfidence: 0.8,
+          extractionConfidence: undefined,
         };
 
         try {
@@ -192,11 +192,13 @@ export function usePacketPipeline() {
             nConsensus: config.nConsensus,
           };
           
-          // Calculate extraction confidence
+          // Calculate extraction confidence only when API returned per-field likelihoods
           const { likelihoods } = getExtractionData(extractionResponse);
-          const likelihoodValues = Object.values(likelihoods).filter(v => typeof v === 'number');
+          const likelihoodValues = Object.values(likelihoods || {}).filter(v => typeof v === 'number');
           if (likelihoodValues.length > 0) {
             documentResult.extractionConfidence = likelihoodValues.reduce((sum, v) => sum + v, 0) / likelihoodValues.length;
+          } else {
+            documentResult.extractionConfidence = null;
           }
           
           // Check if needs review

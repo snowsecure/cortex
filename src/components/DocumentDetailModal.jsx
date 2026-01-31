@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { 
   X, 
   FileText, 
@@ -11,17 +11,19 @@ import {
   ChevronLeft,
   ChevronRight,
   Maximize2,
+  Loader2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getExtractionData } from "../lib/utils";
+import * as api from "../lib/api";
 
 /**
  * PDF Preview Component
  */
-function PDFPreview({ base64Data, pages, filename }) {
+function PDFPreview({ base64Data, pages, filename, loading }) {
   const [zoom, setZoom] = useState(100);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   
@@ -64,6 +66,17 @@ function PDFPreview({ base64Data, pages, filename }) {
       }
     };
   }, [pdfUrl]);
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full bg-gray-100 text-gray-500">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 mx-auto mb-2 animate-spin opacity-60" />
+          <p>Loading PDF from server…</p>
+        </div>
+      </div>
+    );
+  }
   
   if (!base64Data) {
     return (
@@ -165,7 +178,39 @@ function PDFPreview({ base64Data, pages, filename }) {
  */
 export function DocumentDetailModal({ document, packet, onClose }) {
   const [copied, setCopied] = useState(false);
-  
+  const [fetchedBase64, setFetchedBase64] = useState(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
+  const [pdfFetchError, setPdfFetchError] = useState(false);
+
+  // Fetch PDF from server when packet was uploaded to server but base64 isn't in browser memory
+  useEffect(() => {
+    if (!packet?.id) return;
+    if (packet.base64) {
+      setFetchedBase64(null);
+      setLoadingPdf(false);
+      setPdfFetchError(false);
+      return;
+    }
+    if (!packet.hasServerFile) {
+      setFetchedBase64(null);
+      setLoadingPdf(false);
+      return;
+    }
+    setFetchedBase64(null);
+    setPdfFetchError(false);
+    setLoadingPdf(true);
+    api.getPacketFileAsBase64(packet.id)
+      .then((b64) => {
+        setFetchedBase64(b64);
+        setPdfFetchError(false);
+      })
+      .catch(() => setPdfFetchError(true))
+      .finally(() => setLoadingPdf(false));
+  }, [packet?.id, packet?.base64, packet?.hasServerFile]);
+
+  const pdfBase64 = packet?.base64 ?? fetchedBase64;
+  const pdfLoading = loadingPdf && !pdfBase64;
+
   if (!document) return null;
   
   // Get extracted data and likelihoods
@@ -272,10 +317,16 @@ export function DocumentDetailModal({ document, packet, onClose }) {
           {/* PDF Preview - Left Side */}
           <div className="w-1/2 border-r border-gray-200">
             <PDFPreview 
-              base64Data={packet?.base64} 
+              base64Data={pdfBase64} 
               pages={document.pages}
               filename={packet?.filename}
+              loading={pdfLoading}
             />
+            {pdfFetchError && !pdfBase64 && (
+              <p className="text-xs text-amber-600 px-3 py-2 bg-amber-50 border-t border-amber-100">
+                Could not load PDF from server. Extracted data above is still from the original file.
+              </p>
+            )}
           </div>
           
           {/* Extracted Data - Right Side */}

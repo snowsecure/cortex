@@ -172,6 +172,9 @@ function WelcomeDashboard({
       <div className="relative z-10 max-w-3xl w-full">
         {/* Hero */}
         <div className="text-center mb-6">
+          <p className="text-xs tracking-[0.25em] uppercase text-slate-400 mb-1" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            Stewart
+          </p>
           <h1 className="text-5xl sm:text-6xl tracking-tight text-slate-900 mb-2" style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}>
             CORTEX
           </h1>
@@ -719,7 +722,6 @@ function App() {
                   alt="Stewart" 
                   className="h-8 w-8 rounded-full"
                 />
-                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-white" />
               </div>
               
               {/* Brand text */}
@@ -896,7 +898,7 @@ function App() {
                 </p>
                 <p className="text-xs text-blue-700">
                   {stats.completed + stats.needsReview} document{stats.completed + stats.needsReview !== 1 ? 's' : ''} from your last session. 
-                  Note: Original PDF files are not preserved.
+                  PDFs available for 1 hour; extraction results retained until cleared.
                 </p>
               </div>
             </div>
@@ -1052,10 +1054,9 @@ function App() {
                 )}
 
                 {hasPackets && (
-                  <div className="flex items-center justify-between pt-4 border-t">
+                  <div className="flex items-center justify-between pt-6">
                     <p className="text-sm text-gray-600">
-                      {packets.length} packet{packets.length !== 1 ? "s" : ""} ready
-                      to process
+                      {packets.length} packet{packets.length !== 1 ? "s" : ""} ready to process
                     </p>
                     <Button onClick={handleStartProcessing} size="lg">
                       <Play className="h-4 w-4 mr-2" />
@@ -1119,7 +1120,7 @@ function App() {
             {/* Completion message */}
             {isComplete && !isProcessing && (
               <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg shrink-0">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-green-100 rounded-full">
                       <FileText className="h-5 w-5 text-green-600" />
@@ -1134,17 +1135,22 @@ function App() {
                         {stats.failed > 0 && `, ${stats.failed} failed`}
                         {currentRunSaved && " • Saved to history"}
                       </p>
+                      {stats.needsReview > 0 && (
+                        <p className="text-sm text-amber-800 mt-0.5 font-medium">
+                          Review results to approve or fix extractions.
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {hasNeedsReview && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    {stats.needsReview > 0 && (
                       <Button
-                        size="sm"
+                        size="default"
                         onClick={() => setViewMode(ViewMode.REVIEW)}
-                        className="bg-amber-600 hover:bg-amber-700 text-white"
+                        className="bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
                       >
-                        <ListChecks className="h-4 w-4 mr-1" />
-                        Review {stats.needsReview} {stats.needsReview === 1 ? "Result" : "Results"}
+                        <ListChecks className="h-4 w-4 mr-1.5" />
+                        Review results
                       </Button>
                     )}
                     {hasFailed && (
@@ -1242,7 +1248,10 @@ function App() {
               >
                 {healthStatus.server === 'online' && healthStatus.database === 'online' ? (
                   <>
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                    <div className="relative">
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping absolute" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                    </div>
                     <span className="text-gray-400">Retab Online</span>
                   </>
                 ) : healthStatus.server === 'checking' ? (

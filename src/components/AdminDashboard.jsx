@@ -38,7 +38,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { cn, getExtractionData } from "../lib/utils";
-import { getAdminMetrics } from "../lib/api";
+import { getAdminMetrics, clearDatabase } from "../lib/api";
 import { 
   generateRetabResponse, 
   RETAB_CONCEPTS, 
@@ -98,6 +98,87 @@ function MetricCard({ title, value, subtitle, icon: Icon, trend, trendValue, var
         </div>
       )}
     </div>
+  );
+}
+
+// ============================================================================
+// DANGER ZONE - Clear Database
+// ============================================================================
+
+function DangerZone({ dbConnected, onCleared }) {
+  const [password, setPassword] = useState("");
+  const [clearing, setClearing] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(false);
+
+  const handleClear = async () => {
+    if (!password.trim()) {
+      setError("Password required");
+      return;
+    }
+    setClearing(true);
+    setError(null);
+    setSuccess(false);
+    try {
+      await clearDatabase(password);
+      setSuccess(true);
+      setPassword("");
+      onCleared?.();
+    } catch (e) {
+      setError(e.message || "Failed to clear database");
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  if (!dbConnected) {
+    return null;
+  }
+
+  return (
+    <Card className="border-red-200 bg-red-50/30">
+      <CardHeader>
+        <CardTitle className="text-base text-red-700 flex items-center gap-2">
+          <Shield className="h-4 w-4" />
+          Danger Zone
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            Clear all data from the database. This removes all sessions, packets, documents, and history.
+            <strong className="text-red-700"> This action cannot be undone.</strong>
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              placeholder="Enter admin password"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(null); setSuccess(false); }}
+              className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+              disabled={clearing}
+            />
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleClear}
+              disabled={clearing || !password.trim()}
+            >
+              {clearing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  Clearing…
+                </>
+              ) : (
+                "Clear Database"
+              )}
+            </Button>
+          </div>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+          {success && <p className="text-xs text-green-600">Database cleared successfully.</p>}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -713,6 +794,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
     { id: "reviews", label: "Reviews", icon: Eye },
     { id: "logs", label: "Logs", icon: FileText },
     { id: "assistant", label: "AI Assistant", icon: Bot },
+    { id: "settings", label: "Settings", icon: Shield },
   ];
   
   return (
@@ -1100,6 +1182,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
                 </CardContent>
               </Card>
             )}
+            
           </div>
         )}
         
@@ -1109,6 +1192,61 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
             <Card className="h-full">
               <AIAssistant metrics={metrics} retabConfig={retabConfig} />
             </Card>
+          </div>
+        )}
+        
+        {/* Settings Tab */}
+        {activeTab === "settings" && (
+          <div className="space-y-6 max-w-2xl mx-auto w-full">
+            <div className="text-center">
+              <h2 className="text-lg font-semibold text-gray-900 mb-1">Admin Settings</h2>
+              <p className="text-sm text-gray-500">Manage system data and configurations.</p>
+            </div>
+            
+            {/* Database Info */}
+            {dbConnected && serverMetrics && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Database className="h-4 w-4" />
+                    Database Status
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-gray-500">Sessions</p>
+                      <p className="font-medium">{serverMetrics.totalSessions ?? 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Packets</p>
+                      <p className="font-medium">{serverMetrics.totalPackets ?? 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Documents</p>
+                      <p className="font-medium">{serverMetrics.totalDocuments ?? 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">History Entries</p>
+                      <p className="font-medium">{serverMetrics.totalHistoryEntries ?? 0}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+            
+            {/* Danger Zone */}
+            <DangerZone dbConnected={dbConnected} onCleared={fetchServerMetrics} />
+            
+            {!dbConnected && (
+              <Card className="border-amber-200 bg-amber-50/50">
+                <CardContent className="py-4">
+                  <p className="text-sm text-amber-800">
+                    Database not connected. Admin settings require a database connection.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
       </div>

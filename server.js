@@ -497,6 +497,22 @@ app.get("/api/admin/metrics", (req, res) => {
   }
 });
 
+// Password-protected database clear
+const ADMIN_CLEAR_PASSWORD = "stewart";
+
+app.post("/api/admin/clear-database", (req, res) => {
+  const password = (req.body && req.body.password) != null ? String(req.body.password).trim() : "";
+  if (password !== ADMIN_CLEAR_PASSWORD) {
+    return res.status(403).json({ error: "Invalid password" });
+  }
+  try {
+    const result = db.clearAllData();
+    res.json({ success: true, message: "Database cleared", ...result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================================================
 // USAGE STATS
 // ============================================================================

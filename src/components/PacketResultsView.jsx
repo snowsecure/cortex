@@ -115,10 +115,13 @@ function formatFileSize(bytes) {
 }
 
 /**
- * Format confidence as percentage
+ * Confidence tier label and styling for document row indicator
  */
-function formatConfidence(confidence) {
-  return `${Math.round((confidence || 0) * 100)}%`;
+function getConfidenceTier(confidence) {
+  const c = confidence ?? 0;
+  if (c >= 0.75) return { label: "High", variant: "success", Icon: CheckCircle };
+  if (c >= 0.5) return { label: "Medium", variant: "warning", Icon: AlertTriangle };
+  return { label: "Low", variant: "destructive", Icon: XCircle };
 }
 
 /**
@@ -202,8 +205,9 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
 
   const keyInfo = getKeyInfo();
   
-  // Use extraction confidence if available, otherwise classification confidence
-  const confidence = document.extractionConfidence || document.classification?.confidence || 0;
+  // Use extraction confidence when set; null means API didn't return likelihoods (show as unknown)
+  const extractionKnown = document.extractionConfidence != null && typeof document.extractionConfidence === "number";
+  const confidence = extractionKnown ? document.extractionConfidence : (document.classification?.confidence ?? 0);
   
   // Format pages display
   const formatPages = () => {
@@ -268,17 +272,17 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
           </button>
           <StatusIcon status={document.status} className="h-4 w-4 shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap w-fit max-w-full">
               <span className="text-sm font-medium text-gray-900">
                 {displayName}
               </span>
               {pagesDisplay && (
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-gray-500 shrink-0">
                   (pages {pagesDisplay})
                 </span>
               )}
               {fieldCount > 0 && (
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-gray-400 shrink-0">
                   • {fieldCount} fields
                 </span>
               )}
@@ -300,12 +304,35 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
               {lowConfCount} low conf
             </Badge>
           )}
-          <Badge 
-            variant={confidence >= 0.75 ? "success" : confidence >= 0.5 ? "warning" : "destructive"}
-            className="text-xs"
-          >
-            {formatConfidence(confidence)}
-          </Badge>
+          {(() => {
+            if (!extractionKnown) {
+              return (
+                <span
+                  className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500"
+                  title="Extraction confidence not available (no per-field scores from API)"
+                >
+                  —
+                </span>
+              );
+            }
+            const tier = getConfidenceTier(confidence);
+            const TierIcon = tier.Icon;
+            const pct = Math.round((confidence ?? 0) * 100);
+            return (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium",
+                  tier.variant === "success" && "bg-green-100 text-green-800",
+                  tier.variant === "warning" && "bg-amber-100 text-amber-800",
+                  tier.variant === "destructive" && "bg-red-100 text-red-800"
+                )}
+                title={`${tier.label} — ${pct}% extraction confidence for this document`}
+              >
+                <TierIcon className="h-3 w-3 shrink-0" />
+                {tier.label}
+              </span>
+            );
+          })()}
           <Button
             variant="ghost"
             size="icon"
@@ -549,10 +576,6 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
       {/* Expanded documents */}
       {expanded && packet.documents?.length > 0 && (
         <div className="bg-gray-50">
-          {/* Document controls */}
-          <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-gray-100">
-            </div>
-          {/* Document list */}
           <div className="divide-y divide-gray-100">
             {packet.documents.map((doc) => (
               <DocumentRow
@@ -690,7 +713,9 @@ export function PacketResultsView({
               className={cn(
                 "px-3 py-1 text-xs font-medium rounded-md transition-colors",
                 filter === option.value
-                  ? "bg-white text-gray-900 shadow-sm"
+                  ? option.value === "needs_review"
+                    ? "bg-amber-100 text-amber-900 shadow-sm border border-amber-200/60"
+                    : "bg-white text-gray-900 shadow-sm"
                   : "text-gray-500 hover:text-gray-700"
               )}
             >

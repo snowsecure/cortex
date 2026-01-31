@@ -941,11 +941,36 @@ export function getDbStats() {
   };
 }
 
+// ============================================================================
+// CLEAR ALL DATA (admin action)
+// ============================================================================
+
+function clearAllData() {
+  const tables = ["documents", "packets", "sessions", "history", "usage_daily"];
+  db.exec("BEGIN TRANSACTION");
+  try {
+    for (const table of tables) {
+      db.exec(`DELETE FROM ${table}`);
+    }
+    db.exec("COMMIT");
+    console.log("[DB] All data cleared");
+    return { success: true, tablesCleared: tables };
+  } catch (e) {
+    db.exec("ROLLBACK");
+    console.error("[DB] clearAllData failed:", e.message);
+    throw e;
+  }
+}
+
 // Close database connection on process exit
 process.on("exit", () => db.close());
 process.on("SIGINT", () => {
   db.close();
   process.exit();
 });
+
+export {
+  clearAllData,
+};
 
 export default db;
