@@ -203,6 +203,11 @@ export async function createDocuments(sessionId, packetId, documents) {
     body: {
       documents: documents.map(d => {
         const { data, likelihoods } = getExtractionData(d.extraction);
+        const likelihoodValues = Object.values(likelihoods || {}).filter(v => typeof v === "number");
+        const derivedConfidence =
+          likelihoodValues.length > 0
+            ? likelihoodValues.reduce((s, v) => s + v, 0) / likelihoodValues.length
+            : null;
         return {
           id: d.id,
           packet_id: packetId,
@@ -212,8 +217,8 @@ export async function createDocuments(sessionId, packetId, documents) {
           status: d.status,
           pages: d.pages,
           extraction_data: data,
-          likelihoods: likelihoods,
-          extraction_confidence: d.extractionConfidence,
+          likelihoods: likelihoods || {},
+          extraction_confidence: d.extractionConfidence ?? derivedConfidence,
           needs_review: d.needsReview,
           review_reasons: d.reviewReasons,
           credits_used: d.usage?.credits || 0,

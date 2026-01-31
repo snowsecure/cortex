@@ -725,7 +725,6 @@ export function getAdminDashboardMetrics() {
   const usage = getTotalUsage();
   let totalCredits = Number(usage?.total_credits ?? 0) || 0;
   let totalCost = Number(usage?.total_cost ?? 0) || 0;
-  // When usage_daily is empty (e.g. runs only saved via history), use history totals so cost still shows
   if (totalCredits === 0 && totalCost === 0) {
     const historyTotals = db.prepare(`
       SELECT COALESCE(SUM(total_credits), 0) as total_credits, COALESCE(SUM(total_cost), 0) as total_cost
@@ -733,6 +732,30 @@ export function getAdminDashboardMetrics() {
     `).get();
     totalCredits = Number(historyTotals?.total_credits ?? 0) || 0;
     totalCost = Number(historyTotals?.total_cost ?? 0) || 0;
+  }
+  if (totalCredits === 0 && totalCost === 0) {
+    const packetTotals = db.prepare(`
+      SELECT COALESCE(SUM(total_credits), 0) as total_credits, COALESCE(SUM(total_cost), 0) as total_cost
+      FROM packets
+    `).get();
+    totalCredits = Number(packetTotals?.total_credits ?? 0) || 0;
+    totalCost = Number(packetTotals?.total_cost ?? 0) || 0;
+  }
+  if (totalCredits === 0 && totalCost === 0) {
+    const sessionTotals = db.prepare(`
+      SELECT COALESCE(SUM(total_credits), 0) as total_credits, COALESCE(SUM(total_cost), 0) as total_cost
+      FROM sessions
+    `).get();
+    totalCredits = Number(sessionTotals?.total_credits ?? 0) || 0;
+    totalCost = Number(sessionTotals?.total_cost ?? 0) || 0;
+  }
+  if (totalCredits === 0 && totalCost === 0) {
+    const docCredits = db.prepare(`SELECT COALESCE(SUM(credits_used), 0) as total_credits FROM documents`).get();
+    const credits = Number(docCredits?.total_credits ?? 0) || 0;
+    if (credits > 0) {
+      totalCredits = credits;
+      totalCost = credits * 0.01;
+    }
   }
 
   // Confidence: use extraction_confidence when set, else derive from likelihoods per document

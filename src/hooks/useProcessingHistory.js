@@ -92,6 +92,17 @@ export function useProcessingHistory() {
     // Persist run summary to server so admin panel has full data (fire-and-forget)
     const sessionId = runData.sessionId ?? null;
     const usage = runData.usage ?? {};
+    const fromPackets = runData.packets.reduce(
+      (acc, p) => {
+        const u = p.result?.usage ?? p.usage ?? {};
+        acc.credits += u.totalCredits ?? 0;
+        acc.cost += u.totalCost ?? 0;
+        return acc;
+      },
+      { credits: 0, cost: 0 }
+    );
+    const totalCredits = usage?.totalCredits ?? fromPackets.credits;
+    const totalCost = usage?.totalCost ?? fromPackets.cost;
     api.createHistoryEntry({
       id: historyEntry.id,
       session_id: sessionId,
@@ -100,8 +111,8 @@ export function useProcessingHistory() {
       completed: runData.stats.completed,
       needs_review: runData.stats.needsReview,
       failed: runData.stats.failed,
-      total_credits: usage?.totalCredits ?? 0,
-      total_cost: usage?.totalCost ?? 0,
+      total_credits: totalCredits ?? 0,
+      total_cost: totalCost ?? 0,
       summary: { packets: historyEntry.packets, stats: historyEntry.stats },
     }).catch((err) => console.warn("Failed to save run to server history:", err));
 

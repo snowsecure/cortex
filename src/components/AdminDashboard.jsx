@@ -718,7 +718,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
   return (
     <div className="h-full flex flex-col bg-gray-50">
       {/* Header */}
-      <div className="bg-white border-b px-6 py-4 shrink-0">
+      <div className="bg-white px-6 py-4 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Settings className="h-6 w-6 text-gray-400" />

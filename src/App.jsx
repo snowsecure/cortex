@@ -180,32 +180,45 @@ function WelcomeDashboard({
           </p>
         </div>
 
-        {/* Health & usage (compact block) */}
-        <div className="flex flex-wrap items-center justify-center gap-4 mb-6 py-3 px-4 rounded-xl bg-white/70 border border-slate-200/60 text-xs">
-          <span className={healthStatus?.server === "online" ? "text-emerald-600" : "text-slate-500"}>
-            Server {healthStatus?.server === "online" ? "●" : "○"}
-          </span>
-          <span className={healthStatus?.database === "online" ? "text-emerald-600" : "text-slate-500"}>
-            DB {healthStatus?.database === "online" ? "●" : "○"}
-          </span>
-          <span className={apiKeyConfigured ? "text-emerald-600" : "text-amber-600"}>
-            API {apiKeyConfigured ? "●" : "○"}
-          </span>
-          {usage?.totalCost > 0 && (
-            <>
-              <span className="text-slate-400">·</span>
-              <span className="text-slate-600 font-medium">${usage.totalCost.toFixed(3)}</span>
-              <span className="text-slate-400">total</span>
-            </>
-          )}
-          {history.length > 0 && (
-            <>
-              <span className="text-slate-400">·</span>
-              <span className="text-slate-600 font-medium">{history.length}</span>
-              <span className="text-slate-400">runs</span>
-            </>
-          )}
-        </div>
+        {/* Alerts: review needed or new results */}
+        {(hasNeedsReview || (hasPackets && ((currentStats?.completed ?? 0) + (currentStats?.needsReview ?? 0) + (currentStats?.failed ?? 0)) > 0)) && (
+          <div className="space-y-3 mb-6">
+            {hasNeedsReview && (
+              <Alert variant="warning" className="rounded-xl border-amber-200/80 bg-amber-50/90">
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <AlertTitle className="text-amber-900">
+                  {(currentStats?.needsReview ?? 0)} document{(currentStats?.needsReview ?? 0) !== 1 ? "s" : ""} need review
+                </AlertTitle>
+                <AlertDescription className="flex flex-wrap items-center gap-2 mt-1">
+                  <span className="text-amber-800 text-sm">Review and approve or reject extracted data.</span>
+                  <button
+                    onClick={onViewReview}
+                    className="inline-flex items-center gap-1 text-sm font-medium text-amber-700 hover:text-amber-900 underline underline-offset-2"
+                  >
+                    Go to Review →
+                  </button>
+                </AlertDescription>
+              </Alert>
+            )}
+            {hasPackets && ((currentStats?.completed ?? 0) + (currentStats?.needsReview ?? 0) + (currentStats?.failed ?? 0)) > 0 && (
+              <Alert className="rounded-xl border-slate-200 bg-white/90">
+                <ListChecks className="h-4 w-4 text-slate-600" />
+                <AlertTitle className="text-slate-900">Results ready</AlertTitle>
+                <AlertDescription className="flex flex-wrap items-center gap-2 mt-1">
+                  <span className="text-slate-600 text-sm">
+                    {(currentStats?.completed ?? 0) + (currentStats?.needsReview ?? 0)} document{((currentStats?.completed ?? 0) + (currentStats?.needsReview ?? 0)) !== 1 ? "s" : ""} from your last run.
+                  </span>
+                  <button
+                    onClick={onViewResults}
+                    className="inline-flex items-center gap-1 text-sm font-medium text-[#9e2339] hover:text-[#9e2339]/80 underline underline-offset-2"
+                  >
+                    View Results →
+                  </button>
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
 
         {/* Outstanding tasks — large block */}
         {hasOutstanding && (
@@ -285,139 +298,23 @@ function WelcomeDashboard({
         )}
 
         {/* Primary action — large block */}
-        <button
-          onClick={onUpload}
-          className="w-full group flex items-center gap-3 p-3.5 mb-5 rounded-xl bg-white border border-slate-200/60 shadow-sm hover:shadow-md hover:border-[#9e2339]/20 hover:bg-[#9e2339]/5 transition-all text-left"
-        >
+        <div className="flex justify-center mb-5">
+          <button
+            onClick={onUpload}
+            className="w-full max-w-md group flex items-center gap-3 p-3.5 rounded-xl bg-white border border-slate-200/60 shadow-sm hover:shadow-md hover:border-[#9e2339]/20 hover:bg-[#9e2339]/5 transition-all text-left"
+          >
           <div className="w-9 h-9 rounded-lg bg-[#9e2339]/10 flex items-center justify-center shrink-0 group-hover:bg-[#9e2339]/20 transition-colors">
             <Upload className="h-4 w-4 text-[#9e2339]" />
           </div>
           <div className="min-w-0 flex-1">
-            <span className="font-semibold text-slate-900 text-sm">Upload Documents</span>
-            <span className="text-slate-500 text-xs ml-2">Process PDF packets</span>
+            <span className="font-semibold text-slate-900 text-sm">Upload PDFs</span>
           </div>
           <span className="text-slate-400 group-hover:text-[#9e2339] text-xs shrink-0">Get started</span>
-        </button>
-
-        {/* Last 30 days — large block */}
-        {(has30dStats || stats30dLoading) && (
-          <div className="mb-10">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider text-center mb-3">Last 30 days</p>
-            {stats30dLoading ? (
-              <div className="flex flex-wrap items-center justify-center gap-8 py-6 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm">
-                <div className="text-slate-400 text-sm">Loading stats…</div>
-              </div>
-            ) : has30dStats ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 py-4 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm shadow-slate-200/50">
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-slate-800">{Number(stats30d.totalPages || 0).toLocaleString()}</p>
-                  <p className="text-xs text-slate-500">Pages</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-slate-800">{Number(stats30d.packetsProcessed || 0).toLocaleString()}</p>
-                  <p className="text-xs text-slate-500">Packets</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-slate-800">{Number(stats30d.documentsProcessed || stats30d.totalDocuments || 0).toLocaleString()}</p>
-                  <p className="text-xs text-slate-500">Documents</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-emerald-600">{stats30d.accuracyPercent != null ? `${stats30d.accuracyPercent}%` : "—"}</p>
-                  <p className="text-xs text-slate-500">Accuracy</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-amber-600">{stats30d.reviewPercent != null ? `${stats30d.reviewPercent}%` : "—"}</p>
-                  <p className="text-xs text-slate-500">Needs review</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-slate-800">
-                    {stats30d.avgProcessingSeconds != null
-                      ? `${stats30d.avgProcessingSeconds < 60 ? `${stats30d.avgProcessingSeconds}s` : `${Math.round(stats30d.avgProcessingSeconds / 60)}m`}`
-                      : "—"}
-                  </p>
-                  <p className="text-xs text-slate-500">Avg time</p>
-                </div>
-                {stats30d.totalCost > 0 && (
-                  <div className="text-center col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-6 border-t border-slate-100 pt-4 mt-2">
-                    <p className="text-xl font-bold text-teal-600">${Number(stats30d.totalCost).toFixed(3)}</p>
-                    <p className="text-xs text-slate-500">Total cost (30 days)</p>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="py-4 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm text-center">
-                <p className="text-sm text-slate-500">No processing data in the last 30 days. Upload packets to see stats.</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Fallback: all-time stats from local history when 30d API has no data */}
-        {!has30dStats && !stats30dLoading && (() => {
-          let totalDocs = 0, totalCompleted = 0, totalReview = 0;
-          for (const entry of history) {
-            if (entry.stats) {
-              totalDocs += entry.stats.totalDocuments ?? entry.stats.total ?? 0;
-              totalCompleted += entry.stats.completed ?? 0;
-              totalReview += entry.stats.needsReview ?? 0;
-            }
-          }
-          if (currentStats?.total > 0) {
-            totalDocs += currentStats.total;
-            totalCompleted += currentStats.completed ?? 0;
-            totalReview += currentStats.needsReview ?? 0;
-          }
-          const successRate = totalDocs > 0 ? Math.round((totalCompleted / totalDocs) * 100) : 0;
-          const reviewPct = totalDocs > 0 ? Math.round((totalReview / totalDocs) * 100) : 0;
-          const hasAny = totalDocs > 0 || (usage?.totalCost > 0);
-          if (!hasAny) {
-            return (
-              <div className="py-4 px-6 mb-10 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm text-center">
-                <p className="text-sm text-slate-500">No processing data yet. Upload packets to see stats.</p>
-              </div>
-            );
-          }
-          return (
-            <div className="flex items-center justify-center gap-6 mb-10 py-4 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm">
-              <div className="text-center">
-                <p className="text-2xl font-bold text-slate-800">{totalDocs}</p>
-                <p className="text-xs text-slate-500">Documents</p>
-              </div>
-              <div className="w-px h-8 bg-slate-200" />
-              <div className="text-center">
-                <p className="text-2xl font-bold text-emerald-600">{successRate}%</p>
-                <p className="text-xs text-slate-500">Accuracy</p>
-              </div>
-              <div className="w-px h-8 bg-slate-200" />
-              <div className="text-center">
-                <p className="text-2xl font-bold text-amber-600">{reviewPct}%</p>
-                <p className="text-xs text-slate-500">Needs review</p>
-              </div>
-              {usage?.totalCost > 0 && (
-                <>
-                  <div className="w-px h-8 bg-slate-200" />
-                  <div className="text-center">
-                    <p className="text-2xl font-bold text-teal-600">${usage.totalCost.toFixed(3)}</p>
-                    <p className="text-xs text-slate-500">Total spent</p>
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })()}
+          </button>
+        </div>
 
         {/* Secondary actions */}
         <div className="flex flex-wrap items-center justify-center gap-3 mb-8">
-          <button
-            onClick={onViewHistory}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-white/80 border border-slate-200/60 hover:bg-white hover:border-slate-300 hover:text-slate-900 transition-all"
-          >
-            <History className="h-4 w-4 text-slate-400" />
-            History
-            {history.length > 0 && (
-              <span className="text-slate-400 font-normal">({history.length})</span>
-            )}
-          </button>
           <button
             onClick={onViewHelp}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-white/80 border border-slate-200/60 hover:bg-white hover:border-slate-300 hover:text-slate-900 transition-all"
@@ -426,17 +323,6 @@ function WelcomeDashboard({
             Help & Docs
           </button>
         </div>
-
-        {/* Tagline + learn more */}
-        <p className="text-center text-slate-400 text-sm mb-1">
-          PDFs in → structured data out.
-        </p>
-        <button
-          onClick={onViewHelp}
-          className="text-center w-full text-xs text-slate-400 hover:text-[#9e2339] transition-colors py-2"
-        >
-          See how it works
-        </button>
 
         {/* Footer */}
         <div className="flex items-center justify-center gap-3 mt-10 pt-6 border-t border-slate-200/50">
@@ -1251,6 +1137,16 @@ function App() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {hasNeedsReview && (
+                      <Button
+                        size="sm"
+                        onClick={() => setViewMode(ViewMode.REVIEW)}
+                        className="bg-amber-600 hover:bg-amber-700 text-white"
+                      >
+                        <ListChecks className="h-4 w-4 mr-1" />
+                        Review {stats.needsReview} {stats.needsReview === 1 ? "Result" : "Results"}
+                      </Button>
+                    )}
                     {hasFailed && (
                       <Button
                         variant="outline"
@@ -1327,9 +1223,9 @@ function App() {
         )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-100 bg-gradient-to-r from-gray-50 via-white to-gray-50 shrink-0">
-        <div className="max-w-7xl mx-auto px-4 py-2.5">
+      {/* Footer — full width across base of page */}
+      <footer className="border-t border-gray-100 bg-gradient-to-r from-gray-50 via-white to-gray-50 shrink-0 w-full">
+        <div className="w-full px-4 py-2.5">
           <div className="flex items-center justify-between">
             {/* Left: Health + Processing Stats */}
             <div className="flex items-center gap-3 min-w-[200px]">
