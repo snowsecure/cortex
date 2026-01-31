@@ -453,7 +453,7 @@ export function SchemaExplorer({ onClose }) {
                 ))}
                 
                 {filteredCategories.length === 0 && (
-                  <p className="p-6 text-center text-sm text-gray-400">No results</p>
+                  <p className="p-6 text-center text-sm text-gray-500">No schemas match your search.</p>
                 )}
               </div>
             </div>

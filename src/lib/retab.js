@@ -63,6 +63,11 @@ export async function extractDocument({
     throw new Error("API key not configured");
   }
 
+  // API requires temperature > 0 when n_consensus > 1 (consensus needs variation between runs)
+  const t = Number(temperature);
+  const needNonZeroTemp = nConsensus > 1 && (t === 0 || Number.isNaN(t) || t < 0.01);
+  const effectiveTemperature = needNonZeroTemp ? 0.1 : (typeof temperature === "number" ? temperature : (Number.isNaN(t) ? 0 : t));
+
   // Build request body - only include optional params when not default
   const requestBody = {
     document: {
@@ -71,7 +76,7 @@ export async function extractDocument({
     },
     model,
     json_schema: jsonSchema,
-    temperature,
+    temperature: effectiveTemperature,
     image_resolution_dpi: imageDpi,
   };
   

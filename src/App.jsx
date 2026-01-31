@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { BatchFileUpload } from "./components/BatchFileUpload";
 import { PacketResultsView } from "./components/PacketResultsView";
 import { ReviewQueue } from "./components/ReviewQueue";
@@ -10,12 +10,13 @@ import { HistoryLog, HistoryButton } from "./components/HistoryLog";
 import { DocumentDetailModal } from "./components/DocumentDetailModal";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { HelpDocumentation } from "./components/HelpDocumentation";
-import { RetabSettingsPanel, BatchConfigOverride, QuickSettingsBadge } from "./components/RetabSettings";
+import { RetabSettingsPanel, ProcessingConfigOverride, QuickSettingsBadge } from "./components/RetabSettings";
 import { SchemaExplorer } from "./components/SchemaExplorer";
 import { saveSettings, RETAB_MODELS } from "./lib/retabConfig";
 import { useBatchQueue, BatchStatus } from "./hooks/useBatchQueue";
 import { useProcessingHistory } from "./hooks/useProcessingHistory";
 import { getApiKey, setApiKey, hasApiKey } from "./lib/retab";
+import { requestPermission, showProcessingComplete, showNeedsReview, isSupported as notificationsSupported } from "./lib/notifications";
 import {
   Card,
   CardHeader,
@@ -75,189 +76,380 @@ const ViewMode = {
 };
 
 /**
- * Welcome Dashboard Component
+ * Home Dashboard: health, outstanding tasks, upload, and stats.
  */
-function WelcomeDashboard({ 
-  onUpload, 
-  onViewHistory, 
-  onViewHelp, 
+const DASHBOARD_PDF_TYPES = ["application/pdf"];
+const DASHBOARD_MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+
+function WelcomeDashboard({
+  onUpload,
+  onFilesDropped,
+  onViewHistory,
+  onViewHelp,
   onViewAdmin,
+  onViewResults,
+  onViewReview,
   history,
   usage,
-  currentStats 
+  currentStats,
+  healthStatus,
+  apiKeyConfigured,
+  packets = [],
+  isProcessing = false,
+  hasPackets = false,
+  hasNeedsReview = false,
+  hasFailed = false,
 }) {
-  // Calculate aggregate stats from history
-  const totalStats = React.useMemo(() => {
-    let totalDocs = 0;
-    let totalCompleted = 0;
-    let totalFailed = 0;
-    let totalReview = 0;
-    
-    for (const entry of history) {
-      if (entry.stats) {
-        totalDocs += entry.stats.total || 0;
-        totalCompleted += entry.stats.completed || 0;
-        totalFailed += entry.stats.failed || 0;
-        totalReview += entry.stats.needsReview || 0;
-      }
-    }
-    
-    // Add current batch if any
-    if (currentStats?.total > 0) {
-      totalDocs += currentStats.total;
-      totalCompleted += currentStats.completed || 0;
-      totalFailed += currentStats.failed || 0;
-      totalReview += currentStats.needsReview || 0;
-    }
-    
-    const successRate = totalDocs > 0 ? Math.round((totalCompleted / totalDocs) * 100) : 0;
-    
-    return { totalDocs, totalCompleted, totalFailed, totalReview, successRate };
-  }, [history, currentStats]);
+  const [stats30d, setStats30d] = React.useState(null);
+  const [stats30dLoading, setStats30dLoading] = React.useState(true);
+  const [isDragOver, setIsDragOver] = React.useState(false);
 
-  const hasStats = totalStats.totalDocs > 0 || usage?.totalCost > 0;
+  const handleDragOver = React.useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes("Files")) setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = React.useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = React.useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    if (!onFilesDropped) return;
+    const files = Array.from(e.dataTransfer.files || []).filter(
+      (f) => DASHBOARD_PDF_TYPES.includes(f.type) && f.size <= DASHBOARD_MAX_FILE_SIZE
+    );
+    if (files.length > 0) onFilesDropped(files);
+  }, [onFilesDropped]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const base = window.location.origin;
+    fetch(`${base}/api/stats/30d`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setStats30d(data);
+      })
+      .catch(() => { if (!cancelled) setStats30d(null); })
+      .finally(() => { if (!cancelled) setStats30dLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const has30dStats = stats30d && (
+    (stats30d.totalPages > 0) ||
+    (stats30d.packetsProcessed > 0) ||
+    (stats30d.documentsProcessed > 0) ||
+    (stats30d.totalCost > 0)
+  );
+
+  const queuedCount = currentStats?.queued ?? packets.filter((p) => p.status === "queued").length;
+  const hasOutstanding = isProcessing || (hasPackets && queuedCount > 0) || hasNeedsReview || hasFailed;
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8">
-      <div className="max-w-4xl w-full">
-        {/* Hero Section */}
-        <div className="text-center mb-8">
-          <h1 className="text-6xl tracking-tight text-gray-900 mb-2" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>
+    <div
+      className={`flex-1 flex flex-col items-center justify-center p-8 min-h-0 bg-[#fafafa] relative overflow-hidden transition-colors ${isDragOver ? "bg-[#9e2339]/5 ring-2 ring-[#9e2339]/30 ring-inset" : ""}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragOver && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/80 backdrop-blur-sm pointer-events-none">
+          <div className="flex flex-col items-center gap-2 px-6 py-4 rounded-xl border-2 border-dashed border-[#9e2339]/50 bg-[#9e2339]/5">
+            <Upload className="h-10 w-10 text-[#9e2339]" />
+            <span className="text-sm font-medium text-[#9e2339]">Drop PDFs here</span>
+            <span className="text-xs text-slate-500">Files will be added to the upload queue</span>
+          </div>
+        </div>
+      )}
+      {/* Subtle whoosh of color */}
+      <div className="absolute -top-24 -right-24 w-[28rem] h-[28rem] rounded-full bg-[#9e2339]/[0.08] blur-[100px] pointer-events-none" aria-hidden />
+      <div className="absolute -bottom-32 left-1/4 w-80 h-80 rounded-full bg-sky-300/15 blur-[80px] pointer-events-none" aria-hidden />
+      <div className="relative z-10 max-w-3xl w-full">
+        {/* Hero */}
+        <div className="text-center mb-6">
+          <h1 className="text-5xl sm:text-6xl tracking-tight text-slate-900 mb-2" style={{ fontFamily: "Inter, sans-serif", fontWeight: 900 }}>
             CORTEX
           </h1>
-          <p className="text-sm text-gray-400 tracking-widest uppercase" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+          <p className="text-xs tracking-[0.25em] uppercase text-slate-400" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
             Structured Data, On Demand
           </p>
         </div>
 
-        {/* Stats Row */}
-        {hasStats && (
-          <div className="flex items-center justify-center gap-8 mb-10 py-4 px-6 bg-white rounded-xl border border-gray-100 shadow-sm">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-gray-900">{totalStats.totalDocs}</p>
-              <p className="text-xs text-gray-500">Documents</p>
+        {/* Health & usage (compact block) */}
+        <div className="flex flex-wrap items-center justify-center gap-4 mb-6 py-3 px-4 rounded-xl bg-white/70 border border-slate-200/60 text-xs">
+          <span className={healthStatus?.server === "online" ? "text-emerald-600" : "text-slate-500"}>
+            Server {healthStatus?.server === "online" ? "●" : "○"}
+          </span>
+          <span className={healthStatus?.database === "online" ? "text-emerald-600" : "text-slate-500"}>
+            DB {healthStatus?.database === "online" ? "●" : "○"}
+          </span>
+          <span className={apiKeyConfigured ? "text-emerald-600" : "text-amber-600"}>
+            API {apiKeyConfigured ? "●" : "○"}
+          </span>
+          {usage?.totalCost > 0 && (
+            <>
+              <span className="text-slate-400">·</span>
+              <span className="text-slate-600 font-medium">${usage.totalCost.toFixed(3)}</span>
+              <span className="text-slate-400">total</span>
+            </>
+          )}
+          {history.length > 0 && (
+            <>
+              <span className="text-slate-400">·</span>
+              <span className="text-slate-600 font-medium">{history.length}</span>
+              <span className="text-slate-400">runs</span>
+            </>
+          )}
+        </div>
+
+        {/* Outstanding tasks — large block */}
+        {hasOutstanding && (
+          <div className="mb-6 py-4 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm shadow-slate-200/50">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider text-center mb-4">Outstanding tasks</p>
+            <div className="space-y-3">
+              {isProcessing && (
+                <button
+                  onClick={onViewResults}
+                  className="w-full flex items-center justify-between p-4 rounded-xl bg-amber-50 border border-amber-200/80 text-left hover:bg-amber-100/80 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-200/60 flex items-center justify-center">
+                      <Clock className="h-5 w-5 text-amber-700" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-amber-900">Processing in progress</p>
+                      <p className="text-sm text-amber-700">View status and results</p>
+                    </div>
+                  </div>
+                  <span className="text-amber-600 text-sm font-medium">View →</span>
+                </button>
+              )}
+              {!isProcessing && hasPackets && queuedCount > 0 && (
+                <button
+                  onClick={onViewResults}
+                  className="w-full flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200 text-left hover:bg-slate-100 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-slate-200/80 flex items-center justify-center">
+                      <FileText className="h-5 w-5 text-slate-600" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-slate-900">{packets.length} packet{packets.length !== 1 ? "s" : ""} ready</p>
+                      <p className="text-sm text-slate-500">Pending — start processing or add more</p>
+                    </div>
+                  </div>
+                  <span className="text-slate-500 text-sm font-medium">View →</span>
+                </button>
+              )}
+              {hasNeedsReview && (
+                <button
+                  onClick={onViewReview}
+                  className="w-full flex items-center justify-between p-4 rounded-xl bg-amber-50 border border-amber-200/80 text-left hover:bg-amber-100/80 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-200/60 flex items-center justify-center">
+                      <ListChecks className="h-5 w-5 text-amber-700" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-amber-900">{currentStats?.needsReview ?? 0} document{(currentStats?.needsReview ?? 0) !== 1 ? "s" : ""} need review</p>
+                      <p className="text-sm text-amber-700">Review queue awaiting your action</p>
+                    </div>
+                  </div>
+                  <span className="text-amber-600 text-sm font-medium">Review →</span>
+                </button>
+              )}
+              {hasFailed && (
+                <button
+                  onClick={onViewResults}
+                  className="w-full flex items-center justify-between p-4 rounded-xl bg-red-50 border border-red-200/80 text-left hover:bg-red-100/80 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-red-200/60 flex items-center justify-center">
+                      <AlertCircle className="h-5 w-5 text-red-700" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-red-900">{currentStats?.failed ?? 0} failed</p>
+                      <p className="text-sm text-red-700">View errors and retry</p>
+                    </div>
+                  </div>
+                  <span className="text-red-600 text-sm font-medium">View →</span>
+                </button>
+              )}
             </div>
-            <div className="w-px h-8 bg-gray-200" />
-            <div className="text-center">
-              <p className="text-2xl font-bold text-green-600">{totalStats.successRate}%</p>
-              <p className="text-xs text-gray-500">Success Rate</p>
-            </div>
-            <div className="w-px h-8 bg-gray-200" />
-            <div className="text-center">
-              <p className="text-2xl font-bold text-gray-900">{history.length}</p>
-              <p className="text-xs text-gray-500">Batches</p>
-            </div>
-            {usage?.totalCost > 0 && (
-              <>
-                <div className="w-px h-8 bg-gray-200" />
+          </div>
+        )}
+
+        {/* Primary action — large block */}
+        <button
+          onClick={onUpload}
+          className="w-full group flex items-center gap-3 p-3.5 mb-5 rounded-xl bg-white border border-slate-200/60 shadow-sm hover:shadow-md hover:border-[#9e2339]/20 hover:bg-[#9e2339]/5 transition-all text-left"
+        >
+          <div className="w-9 h-9 rounded-lg bg-[#9e2339]/10 flex items-center justify-center shrink-0 group-hover:bg-[#9e2339]/20 transition-colors">
+            <Upload className="h-4 w-4 text-[#9e2339]" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className="font-semibold text-slate-900 text-sm">Upload Documents</span>
+            <span className="text-slate-500 text-xs ml-2">Process PDF packets</span>
+          </div>
+          <span className="text-slate-400 group-hover:text-[#9e2339] text-xs shrink-0">Get started</span>
+        </button>
+
+        {/* Last 30 days — large block */}
+        {(has30dStats || stats30dLoading) && (
+          <div className="mb-10">
+            <p className="text-xs font-medium text-slate-500 uppercase tracking-wider text-center mb-3">Last 30 days</p>
+            {stats30dLoading ? (
+              <div className="flex flex-wrap items-center justify-center gap-8 py-6 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm">
+                <div className="text-slate-400 text-sm">Loading stats…</div>
+              </div>
+            ) : has30dStats ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 py-4 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm shadow-slate-200/50">
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-emerald-600">${usage.totalCost.toFixed(2)}</p>
-                  <p className="text-xs text-gray-500">Total Spent</p>
+                  <p className="text-2xl font-bold text-slate-800">{Number(stats30d.totalPages || 0).toLocaleString()}</p>
+                  <p className="text-xs text-slate-500">Pages</p>
                 </div>
-              </>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-slate-800">{Number(stats30d.packetsProcessed || 0).toLocaleString()}</p>
+                  <p className="text-xs text-slate-500">Packets</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-slate-800">{Number(stats30d.documentsProcessed || stats30d.totalDocuments || 0).toLocaleString()}</p>
+                  <p className="text-xs text-slate-500">Documents</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-emerald-600">{stats30d.accuracyPercent != null ? `${stats30d.accuracyPercent}%` : "—"}</p>
+                  <p className="text-xs text-slate-500">Accuracy</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-amber-600">{stats30d.reviewPercent != null ? `${stats30d.reviewPercent}%` : "—"}</p>
+                  <p className="text-xs text-slate-500">Needs review</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-slate-800">
+                    {stats30d.avgProcessingSeconds != null
+                      ? `${stats30d.avgProcessingSeconds < 60 ? `${stats30d.avgProcessingSeconds}s` : `${Math.round(stats30d.avgProcessingSeconds / 60)}m`}`
+                      : "—"}
+                  </p>
+                  <p className="text-xs text-slate-500">Avg time</p>
+                </div>
+                {stats30d.totalCost > 0 && (
+                  <div className="text-center col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-6 border-t border-slate-100 pt-4 mt-2">
+                    <p className="text-xl font-bold text-teal-600">${Number(stats30d.totalCost).toFixed(3)}</p>
+                    <p className="text-xs text-slate-500">Total cost (30 days)</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="py-4 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm text-center">
+                <p className="text-sm text-slate-500">No processing data in the last 30 days. Upload packets to see stats.</p>
+              </div>
             )}
           </div>
         )}
 
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
-          <button
-            onClick={onUpload}
-            className="group p-6 bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all text-left"
-          >
-            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center mb-4 group-hover:bg-gray-200 transition-colors">
-              <Upload className="h-5 w-5 text-gray-600" />
+        {/* Fallback: all-time stats from local history when 30d API has no data */}
+        {!has30dStats && !stats30dLoading && (() => {
+          let totalDocs = 0, totalCompleted = 0, totalReview = 0;
+          for (const entry of history) {
+            if (entry.stats) {
+              totalDocs += entry.stats.totalDocuments ?? entry.stats.total ?? 0;
+              totalCompleted += entry.stats.completed ?? 0;
+              totalReview += entry.stats.needsReview ?? 0;
+            }
+          }
+          if (currentStats?.total > 0) {
+            totalDocs += currentStats.total;
+            totalCompleted += currentStats.completed ?? 0;
+            totalReview += currentStats.needsReview ?? 0;
+          }
+          const successRate = totalDocs > 0 ? Math.round((totalCompleted / totalDocs) * 100) : 0;
+          const reviewPct = totalDocs > 0 ? Math.round((totalReview / totalDocs) * 100) : 0;
+          const hasAny = totalDocs > 0 || (usage?.totalCost > 0);
+          if (!hasAny) {
+            return (
+              <div className="py-4 px-6 mb-10 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm text-center">
+                <p className="text-sm text-slate-500">No processing data yet. Upload packets to see stats.</p>
+              </div>
+            );
+          }
+          return (
+            <div className="flex items-center justify-center gap-6 mb-10 py-4 px-6 rounded-xl bg-white/90 backdrop-blur border border-slate-100 shadow-sm">
+              <div className="text-center">
+                <p className="text-2xl font-bold text-slate-800">{totalDocs}</p>
+                <p className="text-xs text-slate-500">Documents</p>
+              </div>
+              <div className="w-px h-8 bg-slate-200" />
+              <div className="text-center">
+                <p className="text-2xl font-bold text-emerald-600">{successRate}%</p>
+                <p className="text-xs text-slate-500">Accuracy</p>
+              </div>
+              <div className="w-px h-8 bg-slate-200" />
+              <div className="text-center">
+                <p className="text-2xl font-bold text-amber-600">{reviewPct}%</p>
+                <p className="text-xs text-slate-500">Needs review</p>
+              </div>
+              {usage?.totalCost > 0 && (
+                <>
+                  <div className="w-px h-8 bg-slate-200" />
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-teal-600">${usage.totalCost.toFixed(3)}</p>
+                    <p className="text-xs text-slate-500">Total spent</p>
+                  </div>
+                </>
+              )}
             </div>
-            <h3 className="font-semibold text-gray-900 mb-1">Upload Documents</h3>
-            <p className="text-sm text-gray-500">
-              Process new PDF packets
-            </p>
-          </button>
+          );
+        })()}
 
+        {/* Secondary actions */}
+        <div className="flex flex-wrap items-center justify-center gap-3 mb-8">
           <button
             onClick={onViewHistory}
-            className="group p-6 bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all text-left"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-white/80 border border-slate-200/60 hover:bg-white hover:border-slate-300 hover:text-slate-900 transition-all"
           >
-            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center mb-4 group-hover:bg-gray-200 transition-colors">
-              <History className="h-5 w-5 text-gray-600" />
-            </div>
-            <h3 className="font-semibold text-gray-900 mb-1">
-              View History
-              {history.length > 0 && (
-                <span className="ml-2 text-xs font-normal text-gray-400">
-                  ({history.length})
-                </span>
-              )}
-            </h3>
-            <p className="text-sm text-gray-500">
-              Previously processed documents
-            </p>
+            <History className="h-4 w-4 text-slate-400" />
+            History
+            {history.length > 0 && (
+              <span className="text-slate-400 font-normal">({history.length})</span>
+            )}
           </button>
-
           <button
             onClick={onViewHelp}
-            className="group p-6 bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all text-left"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 bg-white/80 border border-slate-200/60 hover:bg-white hover:border-slate-300 hover:text-slate-900 transition-all"
           >
-            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center mb-4 group-hover:bg-gray-200 transition-colors">
-              <HelpCircle className="h-5 w-5 text-gray-600" />
-            </div>
-            <h3 className="font-semibold text-gray-900 mb-1">Help & Docs</h3>
-            <p className="text-sm text-gray-500">
-              Learn how CORTEX works
-            </p>
+            <HelpCircle className="h-4 w-4 text-slate-400" />
+            Help & Docs
           </button>
         </div>
 
-        {/* Workflow Steps - Interactive */}
-        <div className="flex items-center justify-center gap-3 text-sm">
-          <button
-            onClick={onUpload}
-            className="group flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:scale-105 transition-all"
-          >
-            <span className="w-6 h-6 rounded-full bg-gray-900 group-hover:bg-gray-800 text-white flex items-center justify-center text-xs font-bold transition-colors">1</span>
-            <span className="text-gray-700 font-medium">Upload</span>
-          </button>
-          <div className="w-8 h-px bg-gradient-to-r from-gray-300 to-gray-200" />
-          <button
-            onClick={onViewHelp}
-            className="group flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:scale-105 transition-all"
-            title="AI identifies document boundaries"
-          >
-            <span className="w-6 h-6 rounded-full bg-gray-900 group-hover:bg-gray-800 text-white flex items-center justify-center text-xs font-bold transition-colors">2</span>
-            <span className="text-gray-700 font-medium">Split</span>
-          </button>
-          <div className="w-8 h-px bg-gradient-to-r from-gray-200 to-gray-300" />
-          <button
-            onClick={onViewHelp}
-            className="group flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:scale-105 transition-all"
-            title="Data extracted using custom schemas"
-          >
-            <span className="w-6 h-6 rounded-full bg-gray-900 group-hover:bg-gray-800 text-white flex items-center justify-center text-xs font-bold transition-colors">3</span>
-            <span className="text-gray-700 font-medium">Extract</span>
-          </button>
-          <div className="w-8 h-px bg-gradient-to-r from-gray-300 to-gray-200" />
-          <button
-            onClick={onViewHelp}
-            className="group flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:scale-105 transition-all"
-            title="Export to JSON, CSV, or TPS"
-          >
-            <span className="w-6 h-6 rounded-full bg-gray-900 group-hover:bg-gray-800 text-white flex items-center justify-center text-xs font-bold transition-colors">4</span>
-            <span className="text-gray-700 font-medium">Export</span>
-          </button>
-        </div>
+        {/* Tagline + learn more */}
+        <p className="text-center text-slate-400 text-sm mb-1">
+          PDFs in → structured data out.
+        </p>
+        <button
+          onClick={onViewHelp}
+          className="text-center w-full text-xs text-slate-400 hover:text-[#9e2339] transition-colors py-2"
+        >
+          See how it works
+        </button>
 
-        {/* Bottom Links */}
-        <div className="flex items-center justify-center gap-4 mt-8 text-sm text-gray-500">
-          <button 
+        {/* Footer */}
+        <div className="flex items-center justify-center gap-3 mt-10 pt-6 border-t border-slate-200/50">
+          <button
             onClick={onViewAdmin}
-            className="hover:text-gray-700 transition-colors"
+            className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
           >
             Admin
           </button>
-          <span className="text-gray-300">·</span>
-          <a 
+          <span className="text-slate-300 text-xs">·</span>
+          <a
             href="mailto:philip.snowden@stewart.com?subject=SAIL%20Inquiry%20from%20CORTEX"
-            className="hover:text-gray-700 transition-colors"
+            className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
           >
             Contact
           </a>
@@ -325,7 +517,8 @@ function App() {
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
   const [showSessionRestoredBanner, setShowSessionRestoredBanner] = useState(false);
-  const [batchConfig, setBatchConfig] = useState(null); // Per-batch override
+  const [runConfig, setRunConfig] = useState(null); // Per-run config override
+  const [pendingDropFiles, setPendingDropFiles] = useState(null); // Files dropped on homepage
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, action: null });
   
   // Health status
@@ -337,7 +530,7 @@ function App() {
     error: null
   });
 
-  // Batch queue hook
+  // Processing queue hook
   const {
     packets,
     stats,
@@ -373,23 +566,88 @@ function App() {
     hasHistory,
   } = useProcessingHistory();
 
-  // Track if we've saved the current batch to history
-  const [currentBatchSaved, setCurrentBatchSaved] = useState(false);
-
-  // Save to history when batch completes
-  useEffect(() => {
-    if (isComplete && !currentBatchSaved && packets.length > 0) {
-      addToHistory({ packets, stats });
-      setCurrentBatchSaved(true);
+  // Document-level progress for footer bar (updates as docs are extracted, not only when packets finish)
+  const footerProgress = useMemo(() => {
+    if (!packets.length || !stats.total) return { percent: 0, label: "0%", completedSteps: 0, totalSteps: 0 };
+    let completedSteps = 0;
+    let totalSteps = 0;
+    for (const p of packets) {
+      const total = Math.max(1, p.progress?.totalDocs ?? p.documents?.length ?? 1);
+      if (p.status === "completed" || p.status === "needs_review" || p.status === "failed") {
+        completedSteps += total;
+        totalSteps += total;
+      } else if (p.status === "splitting" || p.status === "classifying" || p.status === "extracting") {
+        totalSteps += total;
+        completedSteps += p.progress?.docIndex ?? 0;
+      } else {
+        totalSteps += 1;
+      }
     }
-  }, [isComplete, currentBatchSaved, packets, stats, addToHistory]);
+    const percent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : Math.round((stats.completed / stats.total) * 100);
+    return { percent, completedSteps, totalSteps, label: `${percent}%` };
+  }, [packets, stats.total, stats.completed]);
 
-  // Reset saved flag when starting new batch
+  // Current step label for active processing (toolbar + footer)
+  const currentActivityLabel = useMemo(() => {
+    const p = packets.find(px => ["splitting", "classifying", "extracting"].includes(px.status));
+    if (!p) return null;
+    if (p.status === "splitting") return "Splitting PDF…";
+    if (p.status === "classifying") return "Classifying…";
+    if (p.status === "extracting" && p.progress?.totalDocs > 0) {
+      const current = Math.min((p.progress.docIndex ?? 0) + 1, p.progress.totalDocs);
+      return `Extracting document ${current} of ${p.progress.totalDocs}`;
+    }
+    return "Extracting…";
+  }, [packets]);
+
+  // Track if we've saved the current run to history
+  const [currentRunSaved, setCurrentRunSaved] = useState(false);
+
+  // Save to history when processing completes (localStorage + server when db connected)
+  useEffect(() => {
+    if (isComplete && !currentRunSaved && packets.length > 0) {
+      addToHistory({ packets, stats, sessionId, usage });
+      setCurrentRunSaved(true);
+    }
+  }, [isComplete, currentRunSaved, packets, stats, sessionId, usage, addToHistory]);
+
+  // Reset saved flag when starting new run
   useEffect(() => {
     if (batchStatus === BatchStatus.PROCESSING) {
-      setCurrentBatchSaved(false);
+      setCurrentRunSaved(false);
     }
   }, [batchStatus]);
+
+  // Browser notification when processing completes (transition PROCESSING → COMPLETED)
+  const prevBatchStatusRef = useRef(batchStatus);
+  useEffect(() => {
+    const wasProcessing = prevBatchStatusRef.current === BatchStatus.PROCESSING;
+    const isNowComplete = batchStatus === BatchStatus.COMPLETED;
+    prevBatchStatusRef.current = batchStatus;
+    if (wasProcessing && isNowComplete && packets.length > 0) {
+      setViewMode(ViewMode.RESULTS);
+    }
+    if (notificationsSupported() && wasProcessing && isNowComplete && packets.length > 0) {
+      requestPermission().then((granted) => {
+        if (granted) showProcessingComplete(stats);
+      });
+    }
+  }, [batchStatus, packets.length, stats]);
+
+  // Remind user of items needing review when they return to the tab
+  const wasHiddenRef = useRef(false);
+  useEffect(() => {
+    if (!notificationsSupported() || stats.needsReview <= 0) return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") wasHiddenRef.current = true;
+      if (document.visibilityState === "visible" && wasHiddenRef.current) {
+        wasHiddenRef.current = false;
+        if (Notification.permission === "granted") showNeedsReview(stats.needsReview);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [stats.needsReview]);
 
   // Check for restored session on mount
   useEffect(() => {
@@ -476,16 +734,17 @@ function App() {
 
   // Handle start processing
   const handleStartProcessing = useCallback(() => {
-    // Apply batch-specific config if set
-    if (batchConfig) {
-      setRetabConfig(batchConfig);
+    // Request notification permission when user starts (so they get alerted when complete)
+    if (notificationsSupported()) requestPermission();
+    // Apply per-run config if set
+    if (runConfig) {
+      setRetabConfig(runConfig);
     }
     setViewMode(ViewMode.PROCESSING);
-    setCurrentBatchSaved(false);
+    setCurrentRunSaved(false);
     start();
-    // Clear batch config after starting
-    setBatchConfig(null);
-  }, [start, batchConfig, setRetabConfig]);
+    setRunConfig(null);
+  }, [start, runConfig, setRetabConfig]);
 
   // Handle view document
   const handleViewDocument = useCallback((document, packet) => {
@@ -529,10 +788,10 @@ function App() {
     // - Optionally remove from results or mark for re-processing
   }, []);
 
-  // Handle new batch - go back to upload without clearing results
-  const handleNewBatch = useCallback(() => {
+  // Handle new upload - go back to upload without clearing results
+  const handleNewUpload = useCallback(() => {
     clearAll();
-    setCurrentBatchSaved(false);
+    setCurrentRunSaved(false);
     setViewMode(ViewMode.UPLOAD);
   }, [clearAll]);
 
@@ -620,13 +879,11 @@ function App() {
                   
                   <button
                     onClick={() => setViewMode(ViewMode.RESULTS)}
-                    disabled={!hasPackets}
+                    title={hasPackets ? "View processing results" : "Results (no items yet)"}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
                       viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS
                         ? "bg-white text-gray-900 shadow-sm"
-                        : hasPackets 
-                          ? "text-gray-600 hover:text-gray-900" 
-                          : "text-gray-400 cursor-not-allowed"
+                        : "text-gray-600 hover:text-gray-900"
                     }`}
                   >
                     Results
@@ -634,18 +891,16 @@ function App() {
                   
                   <button
                     onClick={() => setViewMode(ViewMode.REVIEW)}
-                    disabled={!hasNeedsReview}
+                    title={hasNeedsReview ? `${stats.needsReview} document(s) need review` : "Review queue (empty if none need review)"}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5 ${
                       viewMode === ViewMode.REVIEW
                         ? "bg-white text-gray-900 shadow-sm"
-                        : hasNeedsReview 
-                          ? "text-gray-600 hover:text-gray-900" 
-                          : "text-gray-400 cursor-not-allowed"
+                        : "text-gray-600 hover:text-gray-900"
                     }`}
                   >
                     Review
                     {hasNeedsReview && (
-                      <span className="w-2 h-2 bg-amber-500 rounded-full" />
+                      <span className="w-2 h-2 bg-amber-500 rounded-full" title={`${stats.needsReview} need review`} />
                     )}
                   </button>
                   
@@ -665,21 +920,6 @@ function App() {
             {/* Right: Actions */}
             {apiKeyConfigured && (
               <div className="flex items-center gap-3">
-                {/* Cost tracker */}
-                {usage.totalCost > 0 && (
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-emerald-50 to-green-50 rounded-md border border-emerald-100">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    <span className="text-xs font-semibold text-emerald-700">
-                      ${usage.totalCost.toFixed(2)}
-                    </span>
-                    {usage.totalCredits > 0 && (
-                      <span className="text-[10px] text-emerald-500">
-                        ({usage.totalCredits} cr)
-                      </span>
-                    )}
-                  </div>
-                )}
-                
                 <QuickSettingsBadge 
                   config={retabConfig} 
                   onClick={() => setShowSettingsPanel(true)} 
@@ -865,16 +1105,29 @@ function App() {
           </div>
         )}
 
-        {/* Dashboard view */}
+        {/* Dashboard view (home) */}
         {apiKeyConfigured && viewMode === ViewMode.DASHBOARD && (
           <WelcomeDashboard
             onUpload={() => setViewMode(ViewMode.UPLOAD)}
+            onFilesDropped={(files) => {
+              setPendingDropFiles(files);
+              setViewMode(ViewMode.UPLOAD);
+            }}
             onViewHistory={() => setViewMode(ViewMode.HISTORY)}
             onViewHelp={() => setViewMode(ViewMode.HELP)}
             onViewAdmin={() => setViewMode(ViewMode.ADMIN)}
+            onViewResults={() => setViewMode(ViewMode.RESULTS)}
+            onViewReview={() => setViewMode(ViewMode.REVIEW)}
             history={history}
             usage={usage}
             currentStats={stats}
+            healthStatus={healthStatus}
+            apiKeyConfigured={apiKeyConfigured}
+            packets={packets}
+            isProcessing={isProcessing}
+            hasPackets={hasPackets}
+            hasNeedsReview={hasNeedsReview}
+            hasFailed={hasFailed}
           />
         )}
 
@@ -896,13 +1149,18 @@ function App() {
                   onClearAll={handleClearAll}
                   onRemoveFile={handleRemoveFile}
                   disabled={isProcessing}
+                  sessionId={sessionId}
+                  dbConnected={dbConnected}
+                  processingConfig={runConfig || retabConfig}
+                  initialFilesToProcess={pendingDropFiles}
+                  onInitialFilesProcessed={() => setPendingDropFiles(null)}
                 />
                 
-                {/* Batch-specific config override */}
+                {/* Processing config override for this run */}
                 {hasPackets && (
-                  <BatchConfigOverride
-                    config={batchConfig || retabConfig}
-                    onChange={setBatchConfig}
+                  <ProcessingConfigOverride
+                    config={runConfig || retabConfig}
+                    onChange={setRunConfig}
                     globalConfig={retabConfig}
                   />
                 )}
@@ -932,7 +1190,9 @@ function App() {
               <div className="flex items-center gap-3">
                 {isProcessing && (
                   <>
-                    <span className="text-sm text-gray-500">Processing</span>
+                    <span className="text-sm text-gray-500">
+                      {currentActivityLabel ?? "Processing"}
+                    </span>
                     <Button variant="ghost" size="sm" onClick={pause} className="h-7 px-2 text-gray-500">
                       <Pause className="h-3.5 w-3.5" />
                     </Button>
@@ -980,13 +1240,13 @@ function App() {
                     </div>
                     <div>
                       <p className="font-medium text-green-900">
-                        Batch processing complete
+                        Processing complete
                       </p>
                       <p className="text-sm text-green-700">
                         {stats.completed} completed
                         {stats.needsReview > 0 && `, ${stats.needsReview} need review`}
                         {stats.failed > 0 && `, ${stats.failed} failed`}
-                        {currentBatchSaved && " • Saved to history"}
+                        {currentRunSaved && " • Saved to history"}
                       </p>
                     </div>
                   </div>
@@ -1050,6 +1310,8 @@ function App() {
               stats={stats}
               usage={usage}
               retabConfig={retabConfig}
+              history={history}
+              dbConnected={dbConnected}
               onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.DASHBOARD)}
             />
           </div>
@@ -1110,14 +1372,12 @@ function App() {
               {hasPackets && (
                 <>
                   {stats.processing > 0 ? (
-                    <div className="flex items-center gap-1.5 cursor-help" title={`Currently processing ${stats.processing} document${stats.processing > 1 ? 's' : ''}`}>
+                    <div className="flex items-center gap-1.5 cursor-help" title="Processing in progress">
                       <div className="relative">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping absolute" />
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                       </div>
-                      <span className="text-[11px] font-medium text-blue-600">
-                        {stats.processing} processing
-                      </span>
+                      <span className="text-[11px] font-medium text-blue-600">processing</span>
                     </div>
                   ) : isComplete ? (
                     <div className="flex items-center gap-1 cursor-help" title="All documents have been processed">
@@ -1151,30 +1411,14 @@ function App() {
               <span className="font-semibold text-[#9e2339]">SAIL</span>
             </div>
             
-            {/* Right: Cost & Progress */}
+            {/* Right: Cost */}
             <div className="flex items-center gap-3 min-w-[200px] justify-end">
-              {hasPackets && stats.total > 0 && (
-                <div 
-                  className="flex items-center gap-1.5 cursor-help" 
-                  title={`Progress: ${stats.completed} of ${stats.total} documents completed (${Math.round((stats.completed / stats.total) * 100)}%)`}
-                >
-                  <div className="w-20 h-1 bg-gray-200 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-[#9e2339] to-[#c13350] transition-all duration-500"
-                      style={{ width: `${Math.round((stats.completed / stats.total) * 100)}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-gray-400 font-medium w-8">
-                    {Math.round((stats.completed / stats.total) * 100)}%
-                  </span>
-                </div>
-              )}
               {usage.totalCost > 0 && (
                 <div 
                   className="flex items-center gap-1 text-[11px] cursor-help" 
-                  title={`Retab API Usage\nTotal Cost: $${usage.totalCost.toFixed(4)}\nCredits: ${usage.totalCredits}\nPages Processed: ${usage.totalPages || 'N/A'}\nAPI Calls: ${usage.totalCalls || 'N/A'}`}
+                  title={`Retab API Usage\nTotal Cost: $${usage.totalCost.toFixed(3)}\nCredits: ${usage.totalCredits}\nPages Processed: ${usage.totalPages || 'N/A'}\nAPI Calls: ${usage.totalCalls || 'N/A'}`}
                 >
-                  <span className="text-emerald-600 font-semibold">${usage.totalCost.toFixed(2)}</span>
+                  <span className="text-emerald-600 font-semibold">${usage.totalCost.toFixed(3)}</span>
                   {usage.totalCredits > 0 && (
                     <span className="text-gray-400">({usage.totalCredits} cr)</span>
                   )}

@@ -1,6 +1,6 @@
 /**
  * Retab Configuration Management
- * Handles global settings and per-batch overrides
+ * Handles global settings and per-run overrides
  */
 
 // Storage key for persisting settings
@@ -65,13 +65,13 @@ export const RETAB_MODELS = {
   },
 };
 
-// Consensus options
+// Consensus options (aligned with Retab docs: docs.retab.com/overview/Build-your-Schema)
 export const CONSENSUS_OPTIONS = [
   { value: 1, label: "Disabled", description: "Single extraction (fastest, cheapest)", multiplier: 1 },
   { value: 2, label: "2x Consensus", description: "Compare 2 extractions", multiplier: 2 },
-  { value: 3, label: "3x Consensus", description: "Recommended for important docs", multiplier: 3 },
-  { value: 4, label: "4x Consensus", description: "High accuracy", multiplier: 4 },
-  { value: 5, label: "5x Consensus", description: "Maximum accuracy (development)", multiplier: 5 },
+  { value: 3, label: "3x Consensus", description: "Recommended for production", multiplier: 3 },
+  { value: 4, label: "4x Consensus", description: "Schema building / high accuracy (Retab)", multiplier: 4 },
+  { value: 5, label: "5x Consensus", description: "Dev & testing — max accuracy (Retab)", multiplier: 5 },
 ];
 
 // DPI options
@@ -82,12 +82,14 @@ export const DPI_OPTIONS = [
   { value: 300, label: "300 DPI", description: "High quality, slower" },
 ];
 
-// Confidence threshold presets
+// Confidence threshold presets (Retab: ≥0.75 production, ≥0.95 production readiness)
 export const CONFIDENCE_PRESETS = [
   { value: 0.5, label: "Permissive (50%)", description: "More auto-approvals, more errors" },
-  { value: 0.7, label: "Standard (70%)", description: "Balanced (recommended)" },
+  { value: 0.7, label: "Standard (70%)", description: "Balanced" },
+  { value: 0.75, label: "Retab production (75%)", description: "Retab recommended for production" },
   { value: 0.8, label: "Strict (80%)", description: "More reviews, fewer errors" },
-  { value: 0.9, label: "Very Strict (90%)", description: "Most docs need review" },
+  { value: 0.9, label: "Very strict (90%)", description: "Most docs need review" },
+  { value: 0.95, label: "Retab best (95%)", description: "Production readiness (Retab)" },
 ];
 
 /**
@@ -118,7 +120,7 @@ export function saveSettings(settings) {
 }
 
 /**
- * Calculate estimated cost for a batch
+ * Calculate estimated cost for a run
  */
 export function estimateCost(pageCount, config = {}) {
   const model = RETAB_MODELS[config.model || DEFAULT_CONFIG.model];

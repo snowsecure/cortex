@@ -3,6 +3,9 @@ import { Upload, FolderOpen, FileText, X, AlertCircle, Files } from "lucide-reac
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { fileToBase64 } from "../lib/retab";
+import { getPdfPageCount } from "../lib/pdfUtils";
+import { estimateCost } from "../lib/retabConfig";
+import * as api from "../lib/api";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB per file
 const SUPPORTED_TYPES = ["application/pdf"];
@@ -97,6 +100,11 @@ export function BatchFileUpload({
   onRemoveFile,
   disabled = false,
   isProcessing = false,
+  sessionId = null,
+  dbConnected = false,
+  processingConfig = null,
+  initialFilesToProcess = null,
+  onInitialFilesProcessed = null,
 }) {
   const [isDragActive, setIsDragActive] = useState(false);
   const [isDragReject, setIsDragReject] = useState(false);
@@ -106,14 +114,19 @@ export function BatchFileUpload({
   
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
+  const lastProcessedInitialRef = useRef(null);
 
   /**
-   * Process files and convert to base64
+   * Process files: upload to server when connected (so work continues if user leaves),
+   * otherwise convert to base64 in browser. On server upload failure, fall back to base64.
    */
   const processFiles = useCallback(async (fileItems) => {
     setIsScanning(true);
     setError(null);
     setProcessingProgress({ current: 0, total: fileItems.length });
+    
+    const uploadToServer = sessionId && dbConnected;
+    const failedReasons = [];
     
     try {
       const processedFiles = [];
@@ -123,19 +136,50 @@ export function BatchFileUpload({
         setProcessingProgress({ current: i + 1, total: fileItems.length });
         
         try {
-          const base64 = await fileToBase64(file);
-          processedFiles.push({
-            id: generateFileId(),
-            file,
-            name: file.name,
-            path,
-            size: file.size,
-            base64,
-            addedAt: new Date().toISOString(),
-          });
+          const pageCount = await getPdfPageCount(file);
+          if (uploadToServer) {
+            try {
+              const packet = await api.uploadPacketFile(sessionId, file);
+              processedFiles.push({
+                id: packet.id,
+                name: packet.filename || file.name,
+                path: packet.filename || path,
+                size: file.size,
+                pageCount: pageCount ?? undefined,
+                hasServerFile: true,
+                addedAt: new Date().toISOString(),
+              });
+            } catch (uploadErr) {
+              // Fall back to base64 when server upload fails (e.g. backend down, CORS)
+              console.warn(`Server upload failed for ${file.name}, using local processing:`, uploadErr.message);
+              const base64 = await fileToBase64(file);
+              processedFiles.push({
+                id: generateFileId(),
+                file,
+                name: file.name,
+                path,
+                size: file.size,
+                pageCount: pageCount ?? undefined,
+                base64,
+                addedAt: new Date().toISOString(),
+              });
+            }
+          } else {
+            const base64 = await fileToBase64(file);
+            processedFiles.push({
+              id: generateFileId(),
+              file,
+              name: file.name,
+              path,
+              size: file.size,
+              pageCount: pageCount ?? undefined,
+              base64,
+              addedAt: new Date().toISOString(),
+            });
+          }
         } catch (err) {
           console.error(`Failed to process file ${file.name}:`, err);
-          // Continue with other files
+          failedReasons.push(err.message || String(err));
         }
       }
       
@@ -143,17 +187,36 @@ export function BatchFileUpload({
         onFilesSelected(processedFiles);
       }
       
-      if (processedFiles.length < fileItems.length) {
-        setError(`${fileItems.length - processedFiles.length} file(s) could not be processed`);
+      if (failedReasons.length > 0) {
+        const firstReason = failedReasons[0];
+        setError(
+          `${failedReasons.length} file(s) could not be processed${firstReason ? `: ${firstReason}` : ""}`
+        );
       }
     } catch (err) {
-      setError("Failed to process files. Please try again.");
+      setError(`Failed to process files: ${err.message || "Please try again."}`);
       console.error("File processing error:", err);
     } finally {
       setIsScanning(false);
       setProcessingProgress({ current: 0, total: 0 });
     }
-  }, [onFilesSelected]);
+  }, [onFilesSelected, sessionId, dbConnected]);
+
+  // Process initial files (e.g. dropped on dashboard) once when provided
+  React.useEffect(() => {
+    if (!initialFilesToProcess?.length || lastProcessedInitialRef.current === initialFilesToProcess) return;
+    const fileItems = initialFilesToProcess
+      .filter((f) => SUPPORTED_TYPES.includes(f.type) && f.size <= MAX_FILE_SIZE)
+      .map((f) => ({ file: f, path: f.name }));
+    if (fileItems.length === 0) {
+      onInitialFilesProcessed?.();
+      return;
+    }
+    lastProcessedInitialRef.current = initialFilesToProcess;
+    processFiles(fileItems).finally(() => {
+      onInitialFilesProcessed?.();
+    });
+  }, [initialFilesToProcess, processFiles, onInitialFilesProcessed]);
 
   /**
    * Handle drag events
@@ -259,26 +322,42 @@ export function BatchFileUpload({
   }, [processFiles]);
 
   /**
-   * Calculate total size of selected files
+   * Calculate total size and estimated cost of selected files
    */
   const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+  const totalEstimatedCost = processingConfig
+    ? selectedFiles.reduce((sum, f) => {
+        const pages = f.pageCount ?? 0;
+        if (pages <= 0) return sum;
+        const { totalCost } = estimateCost(pages, processingConfig);
+        return sum + totalCost;
+      }, 0)
+    : null;
 
   // Show file list if files are selected
   if (selectedFiles.length > 0) {
     return (
       <div className="space-y-3">
-        {/* Summary row */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Files className="h-5 w-5 text-[#9e2339]" />
+        {/* Summary row: show filename(s), total size, estimated cost */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <Files className="h-5 w-5 text-[#9e2339] shrink-0" />
             <span className="font-medium text-gray-900">
               {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""}
+              {selectedFiles.length === 1
+                ? `: ${selectedFiles[0].name ?? selectedFiles[0].filename ?? "—"}`
+                : ""}
             </span>
-            <span className="text-sm text-gray-400">
+            <span className="text-sm text-gray-400 shrink-0">
               ({formatFileSize(totalSize)})
             </span>
+            {totalEstimatedCost != null && totalEstimatedCost > 0 && (
+              <span className="text-sm text-teal-600 shrink-0" title="Estimated cost at current quality settings">
+                ~${totalEstimatedCost.toFixed(2)} est.
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled || isProcessing}
@@ -297,26 +376,54 @@ export function BatchFileUpload({
           </div>
         </div>
 
-        {/* File list - compact */}
-        <div className="space-y-1">
+        {/* File list: name, size, path (when from folder) */}
+        <div className="space-y-1.5">
           {selectedFiles.map((fileData) => (
             <div
               key={fileData.id}
-              className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg group"
+              className="flex items-center justify-between gap-2 py-2.5 px-3 bg-gray-50 rounded-lg border border-gray-100 group"
             >
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText className="h-4 w-4 text-gray-400 shrink-0" />
-                <span className="text-sm text-gray-600 truncate">
-                  {formatFileSize(fileData.size)}
-                </span>
-                <span className="text-sm text-gray-800 truncate">
-                  {fileData.name}
-                </span>
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <FileText className="h-4 w-4 text-[#9e2339] shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-gray-900 truncate" title={fileData.name ?? fileData.filename}>
+                    {fileData.name ?? fileData.filename ?? "—"}
+                  </p>
+                  <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-500 flex-wrap">
+                    <span>{formatFileSize(fileData.size)}</span>
+                    {fileData.pageCount != null && (
+                      <>
+                        <span className="text-gray-300">·</span>
+                        <span>{fileData.pageCount} page{fileData.pageCount !== 1 ? "s" : ""}</span>
+                      </>
+                    )}
+                    {processingConfig && fileData.pageCount != null && fileData.pageCount > 0 && (() => {
+                      const { totalCost } = estimateCost(fileData.pageCount, processingConfig);
+                      return totalCost > 0 ? (
+                        <>
+                          <span className="text-gray-300">·</span>
+                          <span className="text-teal-600" title="Estimated cost to process this file at current quality settings (model + consensus)">
+                            ~${totalCost.toFixed(2)} est.
+                          </span>
+                        </>
+                      ) : null;
+                    })()}
+                    {fileData.path && fileData.path !== (fileData.name ?? fileData.filename) && (
+                      <>
+                        <span className="text-gray-300">·</span>
+                        <span className="truncate" title={fileData.path}>
+                          {fileData.path}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
               <button
                 onClick={() => onRemoveFile(fileData.id)}
                 disabled={disabled || isProcessing}
-                className="p-1 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50 shrink-0"
+                title="Remove file"
               >
                 <X className="h-4 w-4" />
               </button>

@@ -5,7 +5,7 @@
 
 import { getExtractionData } from "./utils";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
+export const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 /**
  * Generic fetch wrapper with error handling
@@ -148,6 +148,51 @@ export async function deletePacket(id) {
   });
 }
 
+/**
+ * Upload a PDF for a packet (store on server so work continues if user leaves).
+ * Returns the created packet { id, filename, temp_file_path, ... }.
+ */
+export async function uploadPacketFile(sessionId, file) {
+  const url = `${API_BASE}/api/upload`;
+  const form = new FormData();
+  form.append("session_id", sessionId);
+  form.append("file", file);
+  const response = await fetch(url, {
+    method: "POST",
+    body: form,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(err.error || `Upload failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * Fetch stored PDF for a packet as base64 (for processing when file was uploaded to server).
+ */
+export async function getPacketFileAsBase64(packetId) {
+  const url = `${API_BASE}/api/packets/${packetId}/file`;
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || "File not found or expired");
+  }
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result;
+      const base64 = dataUrl?.split(",")[1];
+      if (base64) resolve(base64);
+      else reject(new Error("Failed to read file"));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 // ============================================================================
 // DOCUMENTS
 // ============================================================================
@@ -225,6 +270,14 @@ export async function clearHistory() {
 }
 
 // ============================================================================
+// ADMIN METRICS
+// ============================================================================
+
+export async function getAdminMetrics() {
+  return apiRequest("/api/admin/metrics");
+}
+
+// ============================================================================
 // EXPORT TEMPLATES
 // ============================================================================
 
@@ -292,6 +345,8 @@ export default {
   updatePacket,
   completePacket,
   deletePacket,
+  uploadPacketFile,
+  getPacketFileAsBase64,
   createDocuments,
   getDocument,
   getDocumentsByPacket,

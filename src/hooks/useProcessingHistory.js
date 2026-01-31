@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { getExtractionData } from "../lib/utils";
+import * as api from "../lib/api";
 
 const STORAGE_KEY = "stewart_processing_history";
 const MAX_HISTORY_ITEMS = 100;
@@ -42,13 +43,17 @@ export function useProcessingHistory() {
   }, [history]);
 
   /**
-   * Add a completed batch to history
+   * Add a completed run to history (localStorage + server when sessionId/usage provided)
    */
-  const addToHistory = useCallback((batchData) => {
+  const addToHistory = useCallback((runData) => {
+    const totalDocuments = runData.packets.reduce(
+      (sum, p) => sum + (p.documents?.length || 0),
+      0
+    );
     const historyEntry = {
-      id: `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: `run_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       timestamp: new Date().toISOString(),
-      packets: batchData.packets.map(packet => ({
+      packets: runData.packets.map(packet => ({
         id: packet.id,
         filename: packet.filename,
         status: packet.status,
@@ -68,25 +73,37 @@ export function useProcessingHistory() {
         }) || [],
       })),
       stats: {
-        totalPackets: batchData.stats.total,
-        completed: batchData.stats.completed,
-        needsReview: batchData.stats.needsReview,
-        failed: batchData.stats.failed,
-        totalDocuments: batchData.packets.reduce(
-          (sum, p) => sum + (p.documents?.length || 0), 
-          0
-        ),
+        totalPackets: runData.stats.total,
+        completed: runData.stats.completed,
+        needsReview: runData.stats.needsReview,
+        failed: runData.stats.failed,
+        totalDocuments,
       },
     };
 
     setHistory(prev => {
       const updated = [historyEntry, ...prev];
-      // Limit history size
       if (updated.length > MAX_HISTORY_ITEMS) {
         return updated.slice(0, MAX_HISTORY_ITEMS);
       }
       return updated;
     });
+
+    // Persist run summary to server so admin panel has full data (fire-and-forget)
+    const sessionId = runData.sessionId ?? null;
+    const usage = runData.usage ?? {};
+    api.createHistoryEntry({
+      id: historyEntry.id,
+      session_id: sessionId,
+      total_packets: runData.stats.total,
+      total_documents: totalDocuments,
+      completed: runData.stats.completed,
+      needs_review: runData.stats.needsReview,
+      failed: runData.stats.failed,
+      total_credits: usage?.totalCredits ?? 0,
+      total_cost: usage?.totalCost ?? 0,
+      summary: { packets: historyEntry.packets, stats: historyEntry.stats },
+    }).catch((err) => console.warn("Failed to save run to server history:", err));
 
     return historyEntry;
   }, []);

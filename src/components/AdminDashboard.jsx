@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   BarChart3,
   TrendingUp,
@@ -38,6 +38,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { cn, getExtractionData } from "../lib/utils";
+import { getAdminMetrics } from "../lib/api";
 import { 
   generateRetabResponse, 
   RETAB_CONCEPTS, 
@@ -493,21 +494,81 @@ function AIAssistant({ metrics, retabConfig, onSuggestionApply }) {
 // MAIN ADMIN DASHBOARD COMPONENT
 // ============================================================================
 
-export function AdminDashboard({ packets, stats, usage, retabConfig, onClose }) {
+export function AdminDashboard({ packets, stats, usage, retabConfig, history = [], dbConnected = false, onClose }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [refreshing, setRefreshing] = useState(false);
-  
-  // Calculate comprehensive metrics from packets
+  const [serverMetrics, setServerMetrics] = useState(null);
+  const [serverMetricsLoading, setServerMetricsLoading] = useState(false);
+
+  // Fetch server metrics when db is connected (mount + refresh)
+  useEffect(() => {
+    if (!dbConnected) {
+      setServerMetrics(null);
+      return;
+    }
+    let cancelled = false;
+    setServerMetricsLoading(true);
+    getAdminMetrics()
+      .then((data) => {
+        if (!cancelled) setServerMetrics(data);
+      })
+      .catch(() => {
+        if (!cancelled) setServerMetrics(null);
+      })
+      .finally(() => {
+        if (!cancelled) setServerMetricsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [dbConnected]);
+
+  const fetchServerMetrics = useCallback(() => {
+    if (!dbConnected) return;
+    setServerMetricsLoading(true);
+    getAdminMetrics()
+      .then(setServerMetrics)
+      .catch(() => setServerMetrics(null))
+      .finally(() => setServerMetricsLoading(false));
+  }, [dbConnected]);
+
+  // Use server metrics when available; otherwise compute from packets + history
   const metrics = useMemo(() => {
+    if (serverMetrics && !serverMetricsLoading) {
+      return {
+        totalPackets: serverMetrics.totalPackets ?? 0,
+        totalDocuments: serverMetrics.totalDocuments ?? 0,
+        completedDocuments: serverMetrics.completedDocuments ?? 0,
+        needsReviewCount: serverMetrics.needsReviewCount ?? 0,
+        failedCount: serverMetrics.failedCount ?? 0,
+        avgConfidence: serverMetrics.avgConfidence ?? 0,
+        minConfidence: serverMetrics.minConfidence ?? 0,
+        maxConfidence: serverMetrics.maxConfidence ?? 0,
+        confidenceDistribution: serverMetrics.confidenceDistribution ?? [],
+        fieldStats: serverMetrics.fieldStats ?? [],
+        lowConfidenceFields: serverMetrics.lowConfidenceFields ?? 0,
+        reviewRate: serverMetrics.reviewRate ?? 0,
+        reviewReasons: Array.isArray(serverMetrics.reviewReasons) ? serverMetrics.reviewReasons : [],
+        avgProcessingTime: serverMetrics.avgProcessingTime ?? 0,
+        minProcessingTime: serverMetrics.minProcessingTime ?? 0,
+        maxProcessingTime: serverMetrics.maxProcessingTime ?? 0,
+        totalCredits: serverMetrics.totalCredits ?? 0,
+        totalCost: serverMetrics.totalCost ?? 0,
+        avgCreditsPerDoc: serverMetrics.avgCreditsPerDoc ?? 0,
+        errorRate: serverMetrics.errorRate ?? 0,
+      };
+    }
+    // Fallback: compute from current packets + history
     const allDocs = packets.flatMap(p => p.documents || []);
-    const completedDocs = allDocs.filter(d => d.status === "completed" || d.status === "needs_review");
-    
-    // Collect all confidence scores
     const allConfidences = [];
     const fieldConfidences = {};
-    
-    completedDocs.forEach(doc => {
-      const { likelihoods } = getExtractionData(doc.extraction);
+    let totalPackets = packets.length;
+    let totalDocuments = allDocs.length;
+    let completedDocuments = allDocs.filter(d => d.status === "completed" || d.status === "needs_review").length;
+    let needsReviewCount = allDocs.filter(d => d.needsReview).length;
+    let failedCount = allDocs.filter(d => d.status === "failed").length;
+    const reviewReasons = {};
+
+    function addDocConfidences(doc) {
+      const likelihoods = doc.extraction ? getExtractionData(doc.extraction).likelihoods : (doc.likelihoods || {});
       Object.entries(likelihoods).forEach(([field, conf]) => {
         if (typeof conf === "number") {
           allConfidences.push(conf);
@@ -515,93 +576,136 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, onClose }) 
           fieldConfidences[field].push(conf);
         }
       });
+    }
+
+    allDocs.filter(d => d.status === "completed" || d.status === "needs_review").forEach(addDocConfidences);
+    allDocs.filter(d => d.needsReview).forEach(doc => {
+      (doc.reviewReasons || []).forEach(reason => {
+        reviewReasons[reason] = (reviewReasons[reason] || 0) + 1;
+      });
     });
-    
-    // Calculate field-level stats
+
+    // Aggregate from history so Admin shows data when opened from Home or after clearing current run
+    (history || []).forEach(entry => {
+      const stats = entry.stats || {};
+      const entryPackets = entry.packets || [];
+      const entryDocCount = stats.totalDocuments ?? entryPackets.reduce((s, p) => s + (p.documentCount ?? p.documents?.length ?? 0), 0);
+      totalPackets += entryPackets.length;
+      totalDocuments += entryDocCount;
+      completedDocuments += stats.completed ?? 0;
+      needsReviewCount += stats.needsReview ?? 0;
+      failedCount += stats.failed ?? 0;
+      entryPackets.forEach(p => {
+        (p.documents || []).forEach(doc => {
+          addDocConfidences(doc);
+          if (doc.needsReview && doc.reviewReasons) {
+            doc.reviewReasons.forEach(reason => {
+              reviewReasons[reason] = (reviewReasons[reason] || 0) + 1;
+            });
+          }
+        });
+      });
+    });
+
     const fieldStats = Object.entries(fieldConfidences).map(([field, confs]) => ({
       field,
       avgConfidence: confs.reduce((a, b) => a + b, 0) / confs.length,
       minConfidence: Math.min(...confs),
       count: confs.length,
     })).sort((a, b) => a.avgConfidence - b.avgConfidence);
-    
-    // Review statistics
-    const needsReviewDocs = allDocs.filter(d => d.needsReview);
-    const reviewReasons = {};
-    needsReviewDocs.forEach(doc => {
-      (doc.reviewReasons || []).forEach(reason => {
-        reviewReasons[reason] = (reviewReasons[reason] || 0) + 1;
-      });
-    });
-    
-    // Processing time estimates (simulated - in production, track actual times)
-    const avgProcessingTime = packets.length > 0 ? 3.5 + Math.random() * 2 : 0;
-    
+
+    const avgProcessingTime = totalPackets > 0 ? 3.5 + Math.random() * 2 : 0;
+
     return {
-      // Document counts
-      totalPackets: packets.length,
-      totalDocuments: allDocs.length,
-      completedDocuments: completedDocs.length,
-      needsReviewCount: needsReviewDocs.length,
-      failedCount: allDocs.filter(d => d.status === "failed").length,
-      
-      // Confidence metrics
-      avgConfidence: allConfidences.length > 0 
-        ? allConfidences.reduce((a, b) => a + b, 0) / allConfidences.length 
+      totalPackets,
+      totalDocuments,
+      completedDocuments,
+      needsReviewCount,
+      failedCount,
+      avgConfidence: allConfidences.length > 0
+        ? allConfidences.reduce((a, b) => a + b, 0) / allConfidences.length
         : 0,
       minConfidence: allConfidences.length > 0 ? Math.min(...allConfidences) : 0,
       maxConfidence: allConfidences.length > 0 ? Math.max(...allConfidences) : 0,
       confidenceDistribution: allConfidences,
       lowConfidenceFields: fieldStats.filter(f => f.avgConfidence < 0.7).length,
       fieldStats,
-      
-      // Review metrics
-      reviewRate: allDocs.length > 0 ? needsReviewDocs.length / allDocs.length : 0,
+      reviewRate: totalDocuments > 0 ? needsReviewCount / totalDocuments : 0,
       reviewReasons: Object.entries(reviewReasons)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5),
-      
-      // Performance metrics
       avgProcessingTime,
       minProcessingTime: avgProcessingTime * 0.6,
       maxProcessingTime: avgProcessingTime * 1.8,
-      
-      // Cost metrics
       totalCredits: usage?.totalCredits || 0,
       totalCost: usage?.totalCost || 0,
-      avgCreditsPerDoc: completedDocs.length > 0 
-        ? (usage?.totalCredits || 0) / completedDocs.length 
-        : 0,
-      
-      // Error rate
-      errorRate: allDocs.length > 0 
-        ? allDocs.filter(d => d.status === "failed").length / allDocs.length 
-        : 0,
+      avgCreditsPerDoc: completedDocuments > 0 ? (usage?.totalCredits || 0) / completedDocuments : 0,
+      errorRate: totalDocuments > 0 ? failedCount / totalDocuments : 0,
     };
-  }, [packets, usage]);
+  }, [serverMetrics, serverMetricsLoading, packets, usage, history]);
   
-  // Generate activity logs
+  // Generate activity logs: server recentHistory when available, else current session + history
   const activityLogs = useMemo(() => {
     const logs = [];
-    
+    // When we have server recentHistory, add run-level entries
+    if (serverMetrics?.recentHistory?.length) {
+      serverMetrics.recentHistory.forEach((entry) => {
+        const ts = entry.completed_at || entry.completedAt;
+        if (ts) {
+          logs.push({
+            type: "info",
+            message: `Run: ${entry.total_documents ?? 0} docs, ${entry.total_cost != null ? `$${Number(entry.total_cost).toFixed(2)}` : ""}`,
+            timestamp: new Date(ts).toISOString(),
+            sortKey: new Date(ts).getTime(),
+          });
+        }
+      });
+    }
+    // Current session: packets that have completed
     packets.forEach(packet => {
       if (packet.completedAt) {
         logs.push({
           type: packet.status === "failed" ? "error" : 
                 packet.status === "needs_review" ? "warning" : "success",
-          message: `${packet.filename} - ${packet.status}`,
-          timestamp: new Date(packet.completedAt).toLocaleString(),
+          message: `${packet.filename ?? packet.name ?? "—"} - ${packet.status}`,
+          timestamp: new Date(packet.completedAt).toISOString(),
+          sortKey: new Date(packet.completedAt).getTime(),
         });
       }
     });
-    
-    return logs.slice(0, 20);
-  }, [packets]);
+    // Past runs from client history (when not using server metrics)
+    if (!serverMetrics?.recentHistory?.length) {
+      (history || []).forEach(entry => {
+        const runTime = entry.timestamp || entry.completed_at;
+        (entry.packets || []).forEach(packet => {
+          const ts = packet.processedAt || runTime;
+          if (ts) {
+            logs.push({
+              type: packet.status === "failed" ? "error" : 
+                    packet.status === "needs_review" ? "warning" : "success",
+              message: `${packet.filename ?? "Packet"} - ${packet.status}`,
+              timestamp: new Date(ts).toISOString(),
+              sortKey: new Date(ts).getTime(),
+            });
+          }
+        });
+      });
+    }
+    logs.sort((a, b) => (b.sortKey ?? 0) - (a.sortKey ?? 0));
+    return logs.slice(0, 50).map(({ type, message, timestamp }) => ({
+      type,
+      message,
+      timestamp: new Date(timestamp).toLocaleString(),
+    }));
+  }, [serverMetrics?.recentHistory, packets, history]);
   
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     setRefreshing(true);
+    if (dbConnected) {
+      fetchServerMetrics();
+    }
     setTimeout(() => setRefreshing(false), 1000);
-  };
+  }, [dbConnected, fetchServerMetrics]);
   
   const tabs = [
     { id: "overview", label: "Overview", icon: BarChart3 },

@@ -184,7 +184,9 @@ function batchQueueReducer(state, action) {
           filename: file.name,
           path: file.path,
           size: file.size,
-          base64: file.base64,
+          pageCount: file.pageCount ?? null,
+          base64: file.base64 ?? null,
+          hasServerFile: file.hasServerFile ?? false,
           status: PacketStatus.QUEUED,
           progress: { stage: null, docIndex: 0, totalDocs: 0 },
           documents: [],
@@ -597,6 +599,25 @@ export function useBatchQueue() {
     
     if (!packet) return;
     
+    // Resolve base64 from server if file was uploaded (so work continues if user left)
+    let packetWithData = packet;
+    if (!packet.base64 && packet.hasServerFile) {
+      try {
+        const base64 = await api.getPacketFileAsBase64(packet.id);
+        packetWithData = { ...packet, base64 };
+      } catch (err) {
+        dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: err.message || "File not found or expired" });
+        if (stateRef.current.dbConnected && stateRef.current.sessionId) {
+          try {
+            await api.updatePacket(packetId, { status: "failed", error: err.message });
+          } catch (syncErr) {
+            console.warn("Failed to sync failed packet:", syncErr.message);
+          }
+        }
+        return;
+      }
+    }
+    
     // Mark as starting
     dispatch({ 
       type: ActionTypes.UPDATE_PACKET_STATUS, 
@@ -605,7 +626,7 @@ export function useBatchQueue() {
     });
     
     try {
-      const result = await processPacket(packet, {
+      const result = await processPacket(packetWithData, {
         onStatusChange: (id, status, progress) => {
           dispatch({ type: ActionTypes.UPDATE_PACKET_STATUS, packetId: id, status, progress });
         },
@@ -627,6 +648,18 @@ export function useBatchQueue() {
       }
     } catch (error) {
       dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: error.message });
+      // Persist failed packet to DB so debug/errors and logs show it
+      if (stateRef.current.dbConnected && stateRef.current.sessionId) {
+        try {
+          await api.updatePacket(packetId, {
+            status: "failed",
+            error: error.message,
+            completed_at: new Date().toISOString(),
+          });
+        } catch (syncErr) {
+          console.warn("Failed to sync failed packet to database:", syncErr.message);
+        }
+      }
     }
   }, [processPacket]);
 
@@ -697,8 +730,9 @@ export function useBatchQueue() {
   const addPackets = useCallback(async (files) => {
     dispatch({ type: ActionTypes.ADD_PACKETS, files });
     
-    // Sync to database if connected
-    if (stateRef.current.dbConnected && stateRef.current.sessionId) {
+    // Sync to database if connected (skip when packets were already created via upload)
+    const allFromServer = files.every((f) => f.hasServerFile);
+    if (stateRef.current.dbConnected && stateRef.current.sessionId && !allFromServer) {
       try {
         await api.createPackets(stateRef.current.sessionId, files);
       } catch (error) {

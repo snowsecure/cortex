@@ -89,7 +89,7 @@ function HistoryDocument({ document }) {
 }
 
 /**
- * Single history entry (batch)
+ * Single history entry (run)
  */
 function HistoryEntry({ entry, onDelete, onExport }) {
   const [expanded, setExpanded] = useState(false);
@@ -218,10 +218,14 @@ function PacketHistoryItem({ packet }) {
 export function HistoryLog({ history, onDelete, onClearAll, onExport, onClose }) {
   if (history.length === 0) {
     return (
-      <div className="p-8 text-center text-gray-500">
-        <History className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-        <p className="font-medium">No Processing History</p>
-        <p className="text-sm mt-1">Completed batches will appear here</p>
+      <div className="p-8 text-center">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gray-100 mb-4">
+          <History className="h-7 w-7 text-gray-400" />
+        </div>
+        <p className="text-gray-600 font-medium">No history yet</p>
+        <p className="text-sm text-gray-500 mt-1 max-w-xs mx-auto">
+          Completed runs will show up here after you process documents.
+        </p>
       </div>
     );
   }
@@ -229,7 +233,7 @@ export function HistoryLog({ history, onDelete, onClearAll, onExport, onClose })
   const handleExportEntry = (entry) => {
     const exportData = {
       exported_at: new Date().toISOString(),
-      batch_id: entry.id,
+      run_id: entry.id,
       processed_at: entry.timestamp,
       stats: entry.stats,
       packets: entry.packets,

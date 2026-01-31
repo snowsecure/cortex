@@ -104,6 +104,7 @@ function ConsensusSelector({ value, onChange }) {
             <button
               key={option.value}
               onClick={() => onChange(option.value)}
+              title={option.description}
               className={cn(
                 "flex-1 py-1.5 px-2 rounded text-xs font-medium transition-all",
                 isSelected
@@ -116,6 +117,9 @@ function ConsensusSelector({ value, onChange }) {
           );
         })}
       </div>
+      <p className="mt-1.5 text-[11px] text-gray-500">
+        Retab: 4× for schema building, 5× for dev. When consensus &gt; 1, temperature is raised slightly (API requirement).
+      </p>
     </SettingSection>
   );
 }
@@ -296,10 +300,10 @@ export function RetabSettingsPanel({ onClose, onSave }) {
 }
 
 // ============================================================================
-// BATCH CONFIG OVERRIDE (for upload page)
+// PROCESSING CONFIG OVERRIDE (for upload page)
 // ============================================================================
 
-export function BatchConfigOverride({ config, onChange, globalConfig }) {
+export function ProcessingConfigOverride({ config, onChange, globalConfig }) {
   const [isCustom, setIsCustom] = useState(false);
   
   const currentConfig = isCustom ? config : globalConfig;

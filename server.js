@@ -7,7 +7,11 @@
 
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import multer from "multer";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import * as db from "./db/database.js";
 
@@ -22,16 +26,90 @@ const isProduction = process.env.NODE_ENV === "production";
 // Initialize database
 db.initializeDatabase();
 
-// Enable CORS for all origins (configure for production)
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || "*",
-  credentials: true,
-}));
+// Temp PDF storage (1hr TTL); same base as DB so data/ is one place
+const DATA_DIR = process.env.DB_PATH || "./data";
+const TEMP_PDF_DIR = path.join(DATA_DIR, "temp-pdfs");
+if (!fs.existsSync(TEMP_PDF_DIR)) {
+  fs.mkdirSync(TEMP_PDF_DIR, { recursive: true });
+}
+
+const uploadMulter = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, TEMP_PDF_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname) || ".pdf";
+      cb(null, `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 11)}${ext}`);
+    },
+  }),
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "application/pdf") return cb(null, true);
+    cb(new Error("Only PDF files are allowed"));
+  },
+});
+
+// ---------------------------------------------------------------------------
+// SECURITY HARDENING
+// ---------------------------------------------------------------------------
+
+// Security headers (no strict CSP so SPA and Mermaid work; tune in production)
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+app.use(helmet.noSniff());
+app.use(helmet.frameguard({ action: "sameorigin" }));
+app.use(helmet.referrerPolicy({ policy: "strict-origin-when-cross-origin" }));
+
+// CORS: restrict in production (set CORS_ORIGIN to your frontend origin)
+const corsOrigin = process.env.CORS_ORIGIN || "*";
+if (isProduction && corsOrigin === "*") {
+  console.warn("Security: CORS_ORIGIN is * in production. Set CORS_ORIGIN to your frontend origin.");
+}
+app.use(
+  cors({
+    origin: corsOrigin === "*" ? "*" : corsOrigin.split(",").map((o) => o.trim()),
+    credentials: true,
+  })
+);
+
+// Rate limiting: general API
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: isProduction ? 120 : 300,
+  message: { error: "Too many requests" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api/", apiLimiter);
+
+// Stricter limit for proxy (document) and debug endpoints
+const proxyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: isProduction ? 60 : 120,
+  message: { error: "Too many requests" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use("/api/documents/", proxyLimiter);
+app.use("/api/schemas/", proxyLimiter);
+app.use("/api/jobs", proxyLimiter);
+app.use("/api/debug/", proxyLimiter);
+
+// Disable debug routes in production (avoid leaking stats/env/errors)
+app.use("/api/debug/", (req, res, next) => {
+  if (isProduction) {
+    return res.status(404).json({ error: "Not found" });
+  }
+  next();
+});
 
 // Parse JSON bodies (with increased limit for base64 documents)
 app.use(express.json({ limit: "100mb" }));
 
-// Request logging (simple)
+// Request logging (no headers/body to avoid logging Api-Key)
 app.use((req, res, next) => {
   const start = Date.now();
   res.on("finish", () => {
@@ -245,6 +323,54 @@ app.delete("/api/packets/:id", (req, res) => {
   }
 });
 
+// Upload PDF for a packet (store temp file so work continues if user leaves)
+app.post("/api/upload", uploadMulter.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+  const sessionId = req.body.session_id;
+  if (!sessionId) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: "session_id required" });
+  }
+  try {
+    const packetId = `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const filename = req.file.originalname || "document.pdf";
+    const finalPath = path.join(TEMP_PDF_DIR, `${packetId}.pdf`);
+    fs.renameSync(req.file.path, finalPath);
+    const packet = db.createPacket({
+      id: packetId,
+      session_id: sessionId,
+      filename,
+      status: "queued",
+      temp_file_path: finalPath,
+    });
+    res.status(201).json(packet);
+  } catch (error) {
+    fs.unlink(req.file.path, () => {});
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get stored PDF for a packet (for processing when user returns)
+app.get("/api/packets/:id/file", (req, res) => {
+  try {
+    const packet = db.getPacket(req.params.id);
+    if (!packet || !packet.temp_file_path) {
+      return res.status(404).json({ error: "File not found" });
+    }
+    if (!fs.existsSync(packet.temp_file_path)) {
+      db.updatePacket(packet.id, { temp_file_path: null });
+      return res.status(404).json({ error: "File expired or removed" });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(packet.filename || "document.pdf")}"`);
+    res.sendFile(packet.temp_file_path);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ============================================================================
 // DOCUMENT MANAGEMENT
 // ============================================================================
@@ -359,6 +485,19 @@ app.delete("/api/history", (req, res) => {
 });
 
 // ============================================================================
+// ADMIN METRICS (persistent storage for admin panel)
+// ============================================================================
+
+app.get("/api/admin/metrics", (req, res) => {
+  try {
+    const metrics = db.getAdminDashboardMetrics();
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // USAGE STATS
 // ============================================================================
 
@@ -368,6 +507,16 @@ app.get("/api/usage", (req, res) => {
     const daily = db.getUsageStats(days);
     const total = db.getTotalUsage();
     res.json({ daily, total });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/stats/30d", (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
+    const stats = db.getStats30Days(days);
+    res.json(stats);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -414,13 +563,21 @@ app.post("/api/documents/extract", async (req, res) => {
 
     console.log("Extract request schema name:", req.body.json_schema?.name || "unnamed");
 
+    // Retab API requires temperature > 0 when n_consensus > 1; enforce before forwarding
+    const body = { ...req.body };
+    const nConsensus = body.n_consensus ?? 1;
+    const temp = Number(body.temperature);
+    if (nConsensus > 1 && (temp === 0 || Number.isNaN(temp) || temp < 0.01)) {
+      body.temperature = 0.1;
+    }
+
     const response = await fetch(`${RETAB_API_BASE}/documents/extract`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Api-Key": apiKey,
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(body),
     });
 
     const data = await response.json();
@@ -623,6 +780,66 @@ app.post("/api/documents/parse", async (req, res) => {
     res.status(500).json({ error: error.message || "Document parsing failed" });
   }
 });
+
+// ============================================================================
+// DEBUG & OBSERVABILITY (Technical docs / enterprise support)
+// ============================================================================
+
+app.get("/api/debug/status", (req, res) => {
+  try {
+    const stats = db.getDbStats();
+    const usage = db.getTotalUsage();
+    const activeSession = db.getActiveSession();
+    res.json({
+      status: "ok",
+      database: "connected",
+      stats,
+      usage,
+      activeSession: activeSession ? { id: activeSession.id, status: activeSession.status } : null,
+      version: "0.2.0",
+      env: process.env.NODE_ENV || "development",
+    });
+  } catch (error) {
+    res.status(500).json({ status: "error", error: error.message });
+  }
+});
+
+app.get("/api/debug/errors", (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const errors = db.getRecentFailedPackets(limit);
+    res.json({ errors, count: errors.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// TEMP FILE CLEANUP (1hr TTL)
+// ============================================================================
+
+const TEMP_FILE_MAX_AGE_SECONDS = 60 * 60; // 1 hour
+const CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // every 15 min
+
+function runTempFileCleanup() {
+  try {
+    const old = db.getPacketsWithTempFilesOlderThan(TEMP_FILE_MAX_AGE_SECONDS);
+    for (const row of old) {
+      if (row.temp_file_path && fs.existsSync(row.temp_file_path)) {
+        fs.unlink(row.temp_file_path, () => {});
+      }
+      db.updatePacket(row.id, { temp_file_path: null });
+    }
+    if (old.length > 0) {
+      console.log(`Temp file cleanup: removed ${old.length} expired file(s)`);
+    }
+  } catch (e) {
+    console.warn("Temp file cleanup error:", e.message);
+  }
+}
+
+setInterval(runTempFileCleanup, CLEANUP_INTERVAL_MS);
+runTempFileCleanup();
 
 // ============================================================================
 // STATIC FILES (Production)

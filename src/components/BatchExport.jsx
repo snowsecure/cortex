@@ -65,7 +65,7 @@ function downloadFile(content, filename, type) {
 }
 
 /**
- * Batch export component
+ * Export component for packets and stats
  */
 export function BatchExport({ packets, stats }) {
   const [isExporting, setIsExporting] = useState(false);
@@ -211,7 +211,7 @@ export function BatchExport({ packets, stats }) {
         tps_version: "1.0",
         export_timestamp: new Date().toISOString(),
         source: "Stewart Ingestion Engine",
-        batch_summary: {
+        run_summary: {
           total_packets: exportablePackets.length,
           total_documents: exportablePackets.reduce((sum, p) => sum + (p.documents?.length || 0), 0),
           requires_review_count: stats.needsReview,

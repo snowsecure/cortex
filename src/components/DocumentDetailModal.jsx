@@ -346,4 +346,5 @@ export function DocumentDetailModal({ document, packet, onClose }) {
   );
 }
 
+export { PDFPreview };
 export default DocumentDetailModal;

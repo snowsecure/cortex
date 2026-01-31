@@ -325,8 +325,9 @@ export function ResultsDisplay({ result, file, onReset }) {
 
   if (!result || !parsedData) {
     return (
-      <div className="text-center py-8 text-gray-500">
-        No extraction results to display
+      <div className="text-center py-6 px-4">
+        <p className="text-gray-500 text-sm">No extracted data for this document yet.</p>
+        <p className="text-gray-400 text-xs mt-1">Processing may still be in progress.</p>
       </div>
     );
   }

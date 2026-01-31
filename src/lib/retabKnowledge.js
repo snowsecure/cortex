@@ -44,28 +44,22 @@ The API runs multiple internal samplings and measures agreement:
   
   consensus: {
     title: "Consensus Mode (n_consensus)",
-    content: `Consensus mode runs multiple parallel extractions and aggregates results for improved accuracy.
+    content: `Consensus runs multiple parallel AI requests with the same schema and compares results (Retab: docs.retab.com/overview/Build-your-Schema). When responses disagree, it reveals schema ambiguities.
 
 **How n_consensus Works:**
 • n_consensus=1: Single extraction (fastest, cheapest, default)
-• n_consensus=2: Two extractions compared
-• n_consensus=3: Three extractions - recommended for production
-• n_consensus=5: Maximum accuracy (development/testing)
+• n_consensus=2–3: Compare 2–3 extractions; 3× recommended for production
+• n_consensus=4: Schema building / high accuracy (Retab: execute with n_consensus=4 to see where responses differ)
+• n_consensus=5: Dev & testing — max accuracy (Retab: start with 5 for development)
 
-**Aggregation Strategy by Type:**
-• **Boolean**: Majority voting (if 2/3 say true, result is true)
-• **Number**: Cluster analysis (groups similar values, picks consensus cluster)
-• **String**: Semantic clustering (groups semantically similar answers)
-• **Enum**: Mode selection (most common value wins)
+**Retab Best Practices:**
+• Start with n_consensus=5 for development and testing
+• Target likelihood ≥0.95 on every field for production readiness
+• Fix lowest consensus scores first; test with diverse documents
+• When n_consensus > 1, Retab API requires temperature > 0 (CORTEX adjusts this automatically)
 
 **Cost Impact:**
-Each consensus level multiplies extraction cost:
-- n_consensus=1: 1× cost
-- n_consensus=3: 3× cost
-- n_consensus=5: 5× cost
-
-**Recommendation:**
-Use n_consensus=3 for production workloads. The accuracy improvement typically justifies the 3× cost increase for critical extractions.`,
+Each consensus level multiplies extraction cost (e.g. n_consensus=3 → 3× cost).`,
   },
 };
 
@@ -223,7 +217,7 @@ export const OPTIMIZATION_STRATEGIES = {
         cost: "Requires preprocessing logic",
       },
       {
-        name: "Batch Similar Documents",
+        name: "Group Similar Documents",
         description: "Group similar document types together for consistent model selection.",
         impact: "Low",
         cost: "Requires workflow changes",

@@ -470,14 +470,22 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
                   <span>{docStats.total} document{docStats.total !== 1 ? "s" : ""}</span>
                 </>
               )}
-              {isProcessing && packet.progress?.totalDocs > 0 && (
-                <>
-                  <span>•</span>
-                  <span>
-                    Processing {packet.progress.docIndex}/{packet.progress.totalDocs}
-                  </span>
-                </>
-              )}
+              {isProcessing && (() => {
+                const prog = packet.progress;
+                if (packet.status === PacketStatus.SPLITTING) {
+                  return <><span>•</span><span className="text-blue-600">Splitting PDF…</span></>;
+                }
+                if (packet.status === PacketStatus.CLASSIFYING) {
+                  return <><span>•</span><span className="text-blue-600">Classifying…</span></>;
+                }
+                if (packet.status === PacketStatus.EXTRACTING && prog?.totalDocs > 0) {
+                  const current = Math.min((prog.docIndex ?? 0) + 1, prog.totalDocs);
+                  return (
+                    <><span>•</span><span className="text-blue-600">Extracting document {current} of {prog.totalDocs}</span></>
+                  );
+                }
+                return <><span>•</span><span className="text-blue-600">{getStatusText(packet.status)}</span></>;
+              })()}
             </div>
           </div>
         </div>
@@ -506,7 +514,9 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
           
           {/* Status badge */}
           <Badge variant={getStatusVariant(packet.status)}>
-            {getStatusText(packet.status)}
+            {packet.status === PacketStatus.EXTRACTING && packet.progress?.totalDocs > 0
+              ? `Extracting ${Math.min((packet.progress.docIndex ?? 0) + 1, packet.progress.totalDocs)}/${packet.progress.totalDocs}`
+              : getStatusText(packet.status)}
           </Badge>
           
           {/* Actions */}
@@ -567,8 +577,8 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
 
       {/* Empty state for expanded packet with no docs */}
       {expanded && !packet.documents?.length && !isProcessing && !packet.error && (
-        <div className="p-4 bg-gray-50 text-sm text-gray-500 text-center">
-          No documents processed yet
+        <div className="p-4 bg-gray-50/80 rounded-lg text-sm text-gray-500 text-center">
+          Documents will appear here once processing finishes.
         </div>
       )}
     </div>
@@ -656,10 +666,14 @@ export function PacketResultsView({
 
   if (packets.length === 0) {
     return (
-      <div className="text-center py-12 text-gray-500">
-        <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-        <p>No packets to display</p>
-        <p className="text-sm mt-1">Upload PDF packets to begin processing</p>
+      <div className="text-center py-12 px-4">
+        <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gray-100 mb-4">
+          <FileText className="h-7 w-7 text-gray-400" />
+        </div>
+        <p className="text-gray-600 font-medium">No items to display</p>
+        <p className="text-sm text-gray-500 mt-1 max-w-xs mx-auto">
+          Upload documents from the Upload tab and run processing to see results here.
+        </p>
       </div>
     );
   }
@@ -714,8 +728,9 @@ export function PacketResultsView({
       </div>
 
       {filteredPackets.length === 0 && packets.length > 0 && (
-        <div className="text-center py-8 text-gray-500 text-sm">
-          No packets match filter
+        <div className="text-center py-8 px-4">
+          <p className="text-gray-500 text-sm">No packets match this filter.</p>
+          <p className="text-gray-400 text-xs mt-1">Try a different filter.</p>
         </div>
       )}
     </div>

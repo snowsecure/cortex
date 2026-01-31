@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import mermaid from "mermaid";
 import {
   ChevronRight,
   ChevronDown,
@@ -34,8 +35,15 @@ import {
   Puzzle,
   TrendingUp,
   Gauge,
+  Terminal,
+  Server,
+  Bug,
+  Copy,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { API_BASE } from "../lib/api";
 
 // ============================================================================
 // ANIMATED WORKFLOW DIAGRAM
@@ -57,7 +65,7 @@ function AnimatedWorkflowDiagram() {
       description: "Drop multi-document PDF packets for processing",
       details: {
         what: "Upload PDF files containing title documents from real estate transactions.",
-        how: "Drag & drop files or folders, or click to browse. Supports batch uploads.",
+        how: "Drag & drop files or folders, or click to browse. Supports multiple files.",
         tips: [
           "Each PDF can contain multiple documents",
           "Maximum 100MB per file",
@@ -340,6 +348,12 @@ function ConsensusExplainer() {
           <strong>Consensus</strong> is Retab's approach to extraction validation. It runs multiple parallel 
           AI requests using the same schema and compares results. When responses disagree, it reveals 
           ambiguities in the extraction.
+        </p>
+        <p className="text-xs text-blue-600 mt-2">
+          Retab docs:{" "}
+          <a href="https://docs.retab.com/overview/Build-your-Schema" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-800">Build your Schema</a>
+          {" · "}
+          <a href="https://docs.retab.com/overview/Best-practices" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-800">Best practices</a>
         </p>
       </div>
       
@@ -631,43 +645,60 @@ function ConfidenceThresholdGuide() {
 }
 
 // ============================================================================
-// MODEL COMPARISON
+// MODEL COMPARISON (pricing from Retab docs: docs.retab.com/core-concepts/Pricing)
 // ============================================================================
+
+const RETAB_PRICING = {
+  "retab-micro": { creditsPerPage: 0.2, usdPerPage: 0.002 },
+  "retab-small": { creditsPerPage: 1.0, usdPerPage: 0.01 },
+  "retab-large": { creditsPerPage: 3.0, usdPerPage: 0.03 },
+};
 
 function ModelComparison() {
   const models = [
-    { name: "retab-micro", speed: "Fastest", accuracy: "Good", cost: "$", useCase: "High volume, simple documents" },
-    { name: "retab-small", speed: "Fast", accuracy: "Better", cost: "$$", useCase: "Recommended default for most use cases" },
-    { name: "retab-large", speed: "Slower", accuracy: "Best", cost: "$$$", useCase: "Complex documents, critical accuracy" },
+    { name: "retab-micro", speed: "Fastest", accuracy: "Good", useCase: "Simple tasks, high volume, cost-sensitive" },
+    { name: "retab-small", speed: "Fast", accuracy: "Better", useCase: "Balanced performance and cost (recommended default)" },
+    { name: "retab-large", speed: "Slower", accuracy: "Best", useCase: "Complex tasks, maximum accuracy" },
   ];
-  
+
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200">
-      <table className="w-full">
-        <thead className="bg-gray-50">
-          <tr className="text-left text-sm">
-            <th className="px-4 py-3 font-medium text-gray-700">Model</th>
-            <th className="px-4 py-3 font-medium text-gray-700">Speed</th>
-            <th className="px-4 py-3 font-medium text-gray-700">Accuracy</th>
-            <th className="px-4 py-3 font-medium text-gray-700">Cost</th>
-            <th className="px-4 py-3 font-medium text-gray-700">Best For</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {models.map((m, i) => (
-            <tr key={i} className={i === 1 ? "bg-emerald-50" : ""}>
-              <td className="px-4 py-3 font-mono text-sm">{m.name}</td>
-              <td className="px-4 py-3 text-sm">{m.speed}</td>
-              <td className="px-4 py-3 text-sm">{m.accuracy}</td>
-              <td className="px-4 py-3 text-sm">{m.cost}</td>
-              <td className="px-4 py-3 text-sm text-gray-600">
-                {m.useCase}
-                {i === 1 && <span className="ml-2 text-xs text-emerald-600 font-medium">← Recommended</span>}
-              </td>
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">
+        <strong>1 credit = $0.01.</strong> Extract/Split/Parse/Schema: <code className="bg-gray-100 px-1 rounded">total_credits = model_credits × page_count</code>; with consensus: <code className="bg-gray-100 px-1 rounded">× n_consensus</code>. Source:{" "}
+        <a href="https://docs.retab.com/core-concepts/Pricing" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Retab Pricing</a>.
+      </p>
+      <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr className="text-left">
+              <th className="px-4 py-3 font-medium text-gray-700">Model</th>
+              <th className="px-4 py-3 font-medium text-gray-700">Speed</th>
+              <th className="px-4 py-3 font-medium text-gray-700">Accuracy</th>
+              <th className="px-4 py-3 font-medium text-gray-700">Credits/page</th>
+              <th className="px-4 py-3 font-medium text-gray-700">USD/page</th>
+              <th className="px-4 py-3 font-medium text-gray-700">Best For</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {models.map((m, i) => {
+              const p = RETAB_PRICING[m.name];
+              return (
+                <tr key={m.name} className={i === 1 ? "bg-emerald-50" : ""}>
+                  <td className="px-4 py-3 font-mono">{m.name}</td>
+                  <td className="px-4 py-3">{m.speed}</td>
+                  <td className="px-4 py-3">{m.accuracy}</td>
+                  <td className="px-4 py-3 font-mono">{p.creditsPerPage}</td>
+                  <td className="px-4 py-3 font-mono">${p.usdPerPage.toFixed(3)}</td>
+                  <td className="px-4 py-3 text-gray-600">
+                    {m.useCase}
+                    {i === 1 && <span className="ml-2 text-xs text-emerald-600 font-medium">← Recommended</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -706,7 +737,7 @@ function FAQSection() {
     },
     {
       q: "What happens if processing fails?",
-      a: "Failed documents can be retried individually or as a batch. Common issues: missing API key, network timeout, document too large. Use exponential backoff for retries. For long documents, consider async job flow instead of sync extraction."
+      a: "Failed documents can be retried individually or together. Common issues: missing API key, network timeout, document too large. Use exponential backoff for retries. For long documents, consider async job flow instead of sync extraction."
     },
     {
       q: "Is my data secure?",
@@ -735,6 +766,568 @@ function FAQSection() {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// TECHNICAL REFERENCE (Enterprise architects & senior engineers)
+// ============================================================================
+
+const PROXY_ENDPOINTS = [
+  { method: "POST", path: "/documents/split", description: "Split PDF packet into subdocuments with page ranges", retab: "POST /v1/documents/split" },
+  { method: "POST", path: "/documents/classify", description: "Classify document into categories (e.g. deed, mortgage)", retab: "POST /v1/documents/classify" },
+  { method: "POST", path: "/documents/extract", description: "Extract structured data from document using JSON schema", retab: "POST /v1/documents/extract" },
+  { method: "POST", path: "/documents/parse", description: "Parse document to text/markdown", retab: "POST /v1/documents/parse" },
+  { method: "POST", path: "/schemas/generate", description: "Generate JSON schema from sample document", retab: "POST /v1/schemas/generate" },
+  { method: "POST", path: "/jobs", description: "Create async job (extract, etc.)", retab: "POST /v1/jobs" },
+  { method: "GET", path: "/jobs/:jobId", description: "Get job status and result", retab: "GET /v1/jobs/:id" },
+];
+
+const ERROR_REMEDIATION = [
+  { pattern: "API key not configured", cause: "Missing or invalid Api-Key", fix: "Set API key in Admin → API Key, or localStorage key retab_api_key." },
+  { pattern: "401", cause: "Unauthorized", fix: "Check Api-Key header. Ensure key is valid and has not been revoked." },
+  { pattern: "429", cause: "Rate limit", fix: "Reduce concurrency, add exponential backoff. Consider retab-small or retab-micro for volume." },
+  { pattern: "timeout|ETIMEDOUT|network", cause: "Network or timeout", fix: "Increase client timeout. For large PDFs use async jobs (POST /jobs) and poll." },
+  { pattern: "413|payload|too large", cause: "Request body too large", fix: "Server limit is 100MB. Chunk or compress; reduce image_resolution_dpi." },
+  { pattern: "422|validation|schema", cause: "Validation error", fix: "Check json_schema shape and field types. Do not retry without fixing request." },
+  { pattern: "500|502|503", cause: "Server/upstream error", fix: "Retry with exponential backoff and jitter. Check Retab status page." },
+];
+
+// Mermaid diagram renderer for Technical Reference
+function MermaidDiagram({ chart, className = "" }) {
+  const containerRef = useRef(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!chart || !containerRef.current) return;
+    setError(null);
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "base",
+      themeVariables: {
+        primaryColor: "#f1f5f9",
+        primaryTextColor: "#334155",
+        primaryBorderColor: "#cbd5e1",
+        lineColor: "#64748b",
+        secondaryColor: "#e2e8f0",
+        tertiaryColor: "#f8fafc",
+      },
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: "basis" },
+    });
+    mermaid
+      .run({
+        nodes: [containerRef.current],
+        suppressErrors: true,
+      })
+      .catch((err) => {
+        setError(err?.message || "Failed to render diagram");
+      });
+  }, [chart]);
+
+  return (
+    <div className={cn("mermaid-diagram", className)}>
+      {error ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Diagram could not be rendered: {error}
+        </div>
+      ) : (
+        <div ref={containerRef} className="mermaid">
+          {chart}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ARCHITECTURE_MERMAID = `flowchart LR
+  A[CORTEX] -->|request| B[Proxy]
+  B -->|forward| D[Retab API]
+  D -->|response| B
+  B -->|response| A
+  B <-->|persist| C[(SQLite)]`;
+
+function ArchitectureOverview() {
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-gray-600">
+        CORTEX runs as a client-side React app that talks to a local Node proxy. The proxy forwards requests to the Retab API and persists session/packet/document state in SQLite.
+      </p>
+      <div className="rounded-xl border border-gray-200 bg-slate-50/80 p-6 overflow-x-auto min-h-[140px] flex items-center justify-center">
+        <MermaidDiagram chart={ARCHITECTURE_MERMAID} className="flex justify-center py-2 [&_svg]:max-w-full [&_svg]:h-auto [&_.node]:outline-none [&_.edgePath]:stroke-slate-400" />
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 font-mono text-xs overflow-x-auto">
+        <div className="flex items-center gap-2 text-gray-700">
+          <span className="font-semibold">Browser</span>
+          <ArrowRight className="h-4 w-4 text-gray-400" />
+          <span className="font-semibold">Node proxy (Express)</span>
+          <ArrowRight className="h-4 w-4 text-gray-400" />
+          <span className="font-semibold">Retab API (api.retab.com)</span>
+        </div>
+        <div className="mt-2 text-gray-500">
+          API key is sent in <code className="bg-white px-1 rounded">Api-Key</code> header from client to proxy; proxy forwards it to Retab. No document data is stored on Retab beyond the request/response.
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+        <div className="p-3 rounded-lg border border-gray-200 bg-white">
+          <div className="flex items-center gap-2 text-gray-700 font-medium mb-1"><Database className="h-4 w-4" /> SQLite</div>
+          <p className="text-gray-500 text-xs">Sessions, packets, documents, history, usage. Path: <code className="bg-gray-100 px-1 rounded">DB_PATH/sail-idp.db</code> (default <code className="bg-gray-100 px-1 rounded">./data</code>).</p>
+        </div>
+        <div className="p-3 rounded-lg border border-gray-200 bg-white">
+          <div className="flex items-center gap-2 text-gray-700 font-medium mb-1"><Server className="h-4 w-4" /> Proxy</div>
+          <p className="text-gray-500 text-xs">CORS, request logging, 100MB JSON limit. Port: <code className="bg-gray-100 px-1 rounded">PORT</code> (default 3001).</p>
+        </div>
+        <div className="p-3 rounded-lg border border-gray-200 bg-white">
+          <div className="flex items-center gap-2 text-gray-700 font-medium mb-1"><Zap className="h-4 w-4" /> Retab</div>
+          <p className="text-gray-500 text-xs">Split, classify, extract, parse, jobs. Base: <code className="bg-gray-100 px-1 rounded">https://api.retab.com/v1</code>.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function APIReferenceTable() {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-gray-600">
+        All proxy endpoints are relative to the app origin (e.g. <code className="bg-gray-100 px-1 rounded font-mono text-xs">http://localhost:3001</code>). Authentication: <code className="bg-gray-100 px-1 rounded font-mono text-xs">Api-Key: &lt;your-key&gt;</code> in request headers.
+      </p>
+      <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr className="text-left">
+              <th className="px-4 py-2 font-medium text-gray-700">Method</th>
+              <th className="px-4 py-2 font-medium text-gray-700">Proxy path</th>
+              <th className="px-4 py-2 font-medium text-gray-700">Description</th>
+              <th className="px-4 py-2 font-medium text-gray-700">Retab equivalent</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {PROXY_ENDPOINTS.map((ep, i) => (
+              <tr key={i} className="hover:bg-gray-50/50">
+                <td className="px-4 py-2 font-mono text-xs font-medium text-emerald-700">{ep.method}</td>
+                <td className="px-4 py-2 font-mono text-xs">{ep.path}</td>
+                <td className="px-4 py-2 text-gray-600">{ep.description}</td>
+                <td className="px-4 py-2 font-mono text-xs text-gray-500">{ep.retab}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-gray-500">
+        Request/response bodies follow Retab’s API spec. For extract: <code className="bg-gray-100 px-1 rounded">document.url</code> is a base64 data URL; <code className="bg-gray-100 px-1 rounded">json_schema</code> is required; <code className="bg-gray-100 px-1 rounded">n_consensus</code> optional (default 1).
+      </p>
+    </div>
+  );
+}
+
+function EnvAndConfig() {
+  const envVars = [
+    { name: "PORT", default: "3001", description: "Proxy server port" },
+    { name: "NODE_ENV", default: "development", description: "development | production" },
+    { name: "DB_PATH", default: "./data", description: "Directory for SQLite DB file" },
+    { name: "CORS_ORIGIN", default: "*", description: "Allowed origin for CORS (set in production)" },
+  ];
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-gray-600">
+        Server reads these at startup. API key is not an env var; it is set in the client (Admin or <code className="bg-gray-100 px-1 rounded font-mono text-xs">localStorage.retab_api_key</code>).
+      </p>
+      <div className="rounded-xl border border-gray-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr className="text-left">
+              <th className="px-4 py-2 font-medium text-gray-700">Variable</th>
+              <th className="px-4 py-2 font-medium text-gray-700">Default</th>
+              <th className="px-4 py-2 font-medium text-gray-700">Description</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {envVars.map((v, i) => (
+              <tr key={i}>
+                <td className="px-4 py-2 font-mono text-xs">{v.name}</td>
+                <td className="px-4 py-2 font-mono text-xs text-gray-500">{v.default}</td>
+                <td className="px-4 py-2 text-gray-600">{v.description}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ErrorCodesTable() {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-gray-600">
+        Use these patterns to identify and remediate failures. Prefer idempotent operations and exponential backoff for retriable errors.
+      </p>
+      <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr className="text-left">
+              <th className="px-4 py-2 font-medium text-gray-700">Pattern / Code</th>
+              <th className="px-4 py-2 font-medium text-gray-700">Likely cause</th>
+              <th className="px-4 py-2 font-medium text-gray-700">Remediation</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {ERROR_REMEDIATION.map((row, i) => (
+              <tr key={i} className="hover:bg-gray-50/50">
+                <td className="px-4 py-2 font-mono text-xs text-gray-700">{row.pattern}</td>
+                <td className="px-4 py-2 text-gray-600">{row.cause}</td>
+                <td className="px-4 py-2 text-gray-600">{row.fix}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ConnectivityCheck() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const check = async () => {
+    setLoading(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/debug/status`);
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        const isHtml = /^\s*<(!doctype|html)/i.test(text);
+        throw new Error(
+          isHtml
+            ? "Server returned HTML instead of JSON. Is the API running on the correct port (e.g. 3001)?"
+            : `Invalid JSON: ${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`
+        );
+      }
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setStatus(data);
+    } catch (err) {
+      setError(err.message || "Request failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={check}
+          disabled={loading}
+          className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Wifi className="h-4 w-4" />}
+          {loading ? "Checking…" : "Check connectivity"}
+        </button>
+        {status && (
+          <span className="flex items-center gap-1.5 text-sm text-green-600">
+            <Check className="h-4 w-4" />
+            Connected
+          </span>
+        )}
+        {error && (
+          <span className="flex items-center gap-1.5 text-sm text-red-600">
+            <WifiOff className="h-4 w-4" />
+            {error}
+          </span>
+        )}
+      </div>
+      {status && (
+        <pre className="p-3 rounded-lg bg-gray-900 text-gray-100 text-xs overflow-x-auto max-h-48 overflow-y-auto">
+          {JSON.stringify(status, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function ErrorLogViewer() {
+  const [errors, setErrors] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const [filter, setFilter] = useState("");
+  const [copiedId, setCopiedId] = useState(null);
+
+  const fetchErrors = async () => {
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/debug/errors?limit=100`);
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        const isHtml = /^\s*<(!doctype|html)/i.test(text);
+        setFetchError(
+          isHtml
+            ? "Server returned HTML instead of JSON. Is the API running on the correct port (e.g. 3001)?"
+            : "Invalid response from server."
+        );
+        setErrors([]);
+        return;
+      }
+      if (!res.ok) {
+        setFetchError(data?.error || `HTTP ${res.status}`);
+        setErrors([]);
+        return;
+      }
+      setErrors(data.errors || []);
+    } catch (err) {
+      setFetchError(err.message || "Failed to load errors");
+      setErrors([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyToClipboard = (text, id) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const filtered = filter.trim()
+    ? errors.filter(e => (e.filename || "").toLowerCase().includes(filter.toLowerCase()) || (e.error || "").toLowerCase().includes(filter.toLowerCase()))
+    : errors;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={fetchErrors}
+          disabled={loading}
+          className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Refresh
+        </button>
+        <input
+          type="text"
+          placeholder="Filter by filename or error..."
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          className="flex-1 min-w-[200px] px-3 py-1.5 text-sm border border-gray-300 rounded-md"
+        />
+      </div>
+      {fetchError && (
+        <p className="text-sm text-red-600 flex items-center gap-2">
+          <AlertCircle className="h-4 w-4" />
+          {fetchError}
+        </p>
+      )}
+      <div className="rounded-xl border border-gray-200 overflow-hidden">
+        <div className="max-h-64 overflow-y-auto">
+          {filtered.length === 0 && !loading && (
+            <p className="p-4 text-sm text-gray-500 text-center">
+              {errors.length === 0 ? "No persisted errors. Run a job that fails to see entries here." : "No entries match the filter."}
+            </p>
+          )}
+          {filtered.map((entry) => (
+            <div
+              key={entry.id}
+              className="flex items-start gap-2 p-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50"
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-xs font-medium text-gray-800 truncate">{entry.filename}</span>
+                  <span className="text-xs text-gray-500">{entry.completed_at || entry.created_at}</span>
+                </div>
+                <p className="mt-1 text-sm text-red-700 break-all">{entry.error}</p>
+                <p className="text-xs text-gray-400 mt-0.5">Session: {entry.session_id} · Packet: {entry.id}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(entry.error, entry.id)}
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+                title="Copy error message"
+              >
+                {copiedId === entry.id ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <p className="text-xs text-gray-500">
+        Errors are persisted when a packet fails (e.g. split/extract error). Admin → Logs shows recent activity; this view shows only failed packets with messages.
+      </p>
+    </div>
+  );
+}
+
+function LogsObservability() {
+  return (
+    <div className="space-y-3">
+      <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
+        <li><strong>Browser:</strong> Open DevTools → Console. All API calls and client errors log here. Network tab shows request/response for each proxy call.</li>
+        <li><strong>Server:</strong> Stdout logs each request (method, path, status, duration). Run with <code className="bg-gray-100 px-1 rounded font-mono text-xs">node server.js</code> or your process manager to capture logs.</li>
+        <li><strong>Admin → Logs:</strong> In-app activity log (recent packet completions and status). Use for quick triage without leaving the app.</li>
+        <li><strong>Help → Technical Reference → Error log viewer:</strong> Persisted failed packets (filename, error message, session). Use for debugging recurring failures.</li>
+      </ul>
+      <p className="text-sm text-gray-500">
+        For production, consider shipping server logs to your logging backend (e.g. JSON to stdout and a log aggregator). API key is never logged.
+      </p>
+    </div>
+  );
+}
+
+// ============================================================================
+// SECURITY (Technical Reference for engineers)
+// ============================================================================
+
+function SecurityOverview() {
+  const hardening = [
+    { area: "Security headers", detail: "Helmet: X-Content-Type-Options nosniff, X-Frame-Options sameorigin, Referrer-Policy strict-origin-when-cross-origin. CSP disabled for SPA/Mermaid; tighten in production if needed." },
+    { area: "CORS", detail: "Set CORS_ORIGIN in production to your frontend origin. Default * logs a warning in production." },
+    { area: "Rate limiting", detail: "General /api/*: 120 req/min (prod), 300/min (dev). Proxy/debug: 60 req/min (prod), 120/min (dev)." },
+    { area: "Debug routes", detail: "/api/debug/status and /api/debug/errors return 404 in production (NODE_ENV=production)." },
+    { area: "Secrets", detail: "Api-Key forwarded from client to Retab; request/response bodies and headers are not logged (only method, path, status, duration)." },
+  ];
+  const apiKey = [
+    { where: "Client", detail: "Retab API key in localStorage (retab_api_key). Key only sent to your proxy and Retab." },
+    { where: "Proxy", detail: "Server does not store the key; forwards Api-Key header per request and does not log it." },
+    { where: "Production", detail: "Prefer same-origin app and API; if adding server-side key injection, avoid key in client bundle." },
+  ];
+  const prodChecklist = [
+    "Set NODE_ENV=production",
+    "Set CORS_ORIGIN to your frontend origin (avoid *)",
+    "Use HTTPS (reverse proxy with TLS)",
+    "Restrict DB_PATH filesystem permissions",
+    "Keep dependencies updated (npm audit, npm update)",
+    "Debug routes are disabled automatically when NODE_ENV=production",
+  ];
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-gray-600">
+        Hardening and security practices for CORTEX. See also <code className="bg-gray-100 px-1 rounded font-mono text-xs">SECURITY.md</code> in the repo.
+      </p>
+
+      <div>
+        <h4 className="text-sm font-medium text-gray-800 mb-2">Server hardening (implemented)</h4>
+        <div className="overflow-x-auto rounded-xl border border-gray-200">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="text-left">
+                <th className="px-4 py-2 font-medium text-gray-700">Area</th>
+                <th className="px-4 py-2 font-medium text-gray-700">Detail</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {hardening.map((row, i) => (
+                <tr key={i} className="hover:bg-gray-50/50">
+                  <td className="px-4 py-2 font-medium text-gray-700 w-36">{row.area}</td>
+                  <td className="px-4 py-2 text-gray-600">{row.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-sm font-medium text-gray-800 mb-2">API key handling</h4>
+        <div className="overflow-x-auto rounded-xl border border-gray-200">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="text-left">
+                <th className="px-4 py-2 font-medium text-gray-700">Where</th>
+                <th className="px-4 py-2 font-medium text-gray-700">Detail</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {apiKey.map((row, i) => (
+                <tr key={i} className="hover:bg-gray-50/50">
+                  <td className="px-4 py-2 font-medium text-gray-700 w-28">{row.where}</td>
+                  <td className="px-4 py-2 text-gray-600">{row.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-sm font-medium text-gray-800 mb-2">Database</h4>
+        <p className="text-sm text-gray-600 mb-2">
+          SQLite at <code className="bg-gray-100 px-1 rounded font-mono text-xs">DB_PATH/sail-idp.db</code> (default <code className="bg-gray-100 px-1 rounded font-mono text-xs">./data</code>). All queries use parameterized statements. Restrict filesystem access so only the app can read/write <code className="bg-gray-100 px-1 rounded font-mono text-xs">DB_PATH</code>.
+        </p>
+      </div>
+
+      <div>
+        <h4 className="text-sm font-medium text-gray-800 mb-2">Production checklist</h4>
+        <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
+          {prodChecklist.map((item, i) => (
+            <li key={i}>{item}</li>
+          ))}
+        </ul>
+      </div>
+
+      <p className="text-xs text-gray-500">
+        Report security-sensitive bugs to your internal security or SAIL team, not in public issue trackers.
+      </p>
+    </div>
+  );
+}
+
+function TechnicalReferenceContent() {
+  const [activeSub, setActiveSub] = useState("architecture");
+  const subs = [
+    { id: "architecture", label: "Architecture", icon: Database },
+    { id: "api", label: "API reference", icon: FileCode },
+    { id: "env", label: "Environment", icon: Settings },
+    { id: "errors", label: "Error codes", icon: AlertTriangle },
+    { id: "debug", label: "Debug tools", icon: Bug },
+    { id: "logs", label: "Logs & observability", icon: Terminal },
+    { id: "security", label: "Security", icon: Shield },
+  ];
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-2">
+        {subs.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setActiveSub(s.id)}
+            className={cn(
+              "inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors",
+              activeSub === s.id ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+            )}
+          >
+            <s.icon className="h-4 w-4" />
+            {s.label}
+          </button>
+        ))}
+      </div>
+      {activeSub === "architecture" && <ArchitectureOverview />}
+      {activeSub === "api" && <APIReferenceTable />}
+      {activeSub === "env" && <EnvAndConfig />}
+      {activeSub === "errors" && <ErrorCodesTable />}
+      {activeSub === "debug" && (
+        <div className="space-y-6">
+          <div>
+            <h4 className="text-sm font-medium text-gray-800 mb-2">Connectivity check</h4>
+            <ConnectivityCheck />
+          </div>
+          <div>
+            <h4 className="text-sm font-medium text-gray-800 mb-2">Error log viewer</h4>
+            <ErrorLogViewer />
+          </div>
+        </div>
+      )}
+      {activeSub === "logs" && <LogsObservability />}
+      {activeSub === "security" && <SecurityOverview />}
     </div>
   );
 }
@@ -783,7 +1376,7 @@ export function HelpDocumentation({ onClose }) {
   return (
     <div className="h-full flex flex-col bg-gray-100">
       {/* Header */}
-      <div className="px-6 py-5 bg-white border-b flex items-center justify-between">
+      <div className="px-6 py-5 bg-white flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Help & Documentation</h1>
           <p className="text-sm text-gray-500 mt-0.5">
@@ -831,6 +1424,11 @@ export function HelpDocumentation({ onClose }) {
         {/* Best Practices */}
         <Section icon={Shield} title="Best Practices" badge="From Retab Docs">
           <BestPractices />
+        </Section>
+        
+        {/* Technical Reference (enterprise architects & senior engineers) */}
+        <Section icon={Terminal} title="Technical Reference" badge="Engineers">
+          <TechnicalReferenceContent />
         </Section>
         
         {/* FAQ */}
