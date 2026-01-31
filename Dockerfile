@@ -46,16 +46,16 @@ RUN mkdir -p /app/data && chown -R node:node /app/data
 
 # Environment defaults
 ENV NODE_ENV=production
-ENV PORT=3001
+ENV PORT=3005
 ENV DB_PATH=/app/data
 ENV CORS_ORIGIN=*
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3005/health || exit 1
 
 # Run as non-root user
 USER node
-EXPOSE 3001
+EXPOSE 3005
 
 CMD ["node", "server.js"]

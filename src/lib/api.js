@@ -5,7 +5,7 @@
 
 import { getExtractionData } from "./utils";
 
-export const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
+export const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3005";
 
 /**
  * Generic fetch wrapper with error handling

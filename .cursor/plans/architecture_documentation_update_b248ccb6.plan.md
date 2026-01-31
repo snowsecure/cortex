@@ -249,11 +249,11 @@ Update the `TechnicalReferenceContent` component with:
 
 ### Environment Variables
 
-- `PORT` (default: 3001)
+- `PORT` (default: 3005)
 - `NODE_ENV` (default: development)
 - `DB_PATH` (default: ./data)
 - `CORS_ORIGIN` (default: *)
-- `VITE_API_URL` (default: [http://localhost:3001](http://localhost:3001))
+- `VITE_API_URL` (default: [http://localhost:3005](http://localhost:3005))
 
 ### localStorage Keys
 

@@ -953,7 +953,7 @@ function ArchitectureOverview() {
         <div className="flex items-center gap-2 text-gray-700 dark:text-neutral-300">
           <span className="font-semibold">Browser</span>
           <ArrowRight className="h-4 w-4 text-gray-400 dark:text-neutral-500" />
-          <span className="font-semibold">Express Server (:3001)</span>
+          <span className="font-semibold">Express Server (:3005)</span>
           <ArrowRight className="h-4 w-4 text-gray-400 dark:text-neutral-500" />
           <span className="font-semibold">Retab API</span>
         </div>
@@ -1011,7 +1011,7 @@ function APIReferenceTable() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-600 dark:text-neutral-400">
-        Base URL: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">http://localhost:3001</code>. Internal endpoints require no authentication. Retab proxy endpoints require <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">Api-Key</code> header.
+        Base URL: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">http://localhost:3005</code>. Internal endpoints require no authentication. Retab proxy endpoints require <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded font-mono text-xs">Api-Key</code> header.
       </p>
       
       {/* Section Toggle */}
@@ -1481,11 +1481,11 @@ function DocumentLifecycle() {
 
 function EnvAndConfig() {
   const envVars = [
-    { name: "PORT", default: "3001", description: "Proxy server port" },
+    { name: "PORT", default: "3005", description: "Proxy server port" },
     { name: "NODE_ENV", default: "development", description: "development | production" },
     { name: "DB_PATH", default: "./data", description: "Directory for SQLite DB file" },
     { name: "CORS_ORIGIN", default: "*", description: "Allowed origin for CORS (set in production)" },
-    { name: "VITE_API_URL", default: "http://localhost:3001", description: "API base URL for frontend" },
+    { name: "VITE_API_URL", default: "http://localhost:3005", description: "API base URL for frontend" },
   ];
   
   const localStorageKeys = [
@@ -1713,7 +1713,7 @@ function ConnectivityCheck() {
         const isHtml = /^\s*<(!doctype|html)/i.test(text);
         throw new Error(
           isHtml
-            ? "Server returned HTML instead of JSON. Is the API running on the correct port (e.g. 3001)?"
+            ? "Server returned HTML instead of JSON. Is the API running on the correct port (e.g. 3005)?"
             : `Invalid JSON: ${text.slice(0, 80)}${text.length > 80 ? "…" : ""}`
         );
       }
@@ -1780,7 +1780,7 @@ function ErrorLogViewer() {
         const isHtml = /^\s*<(!doctype|html)/i.test(text);
         setFetchError(
           isHtml
-            ? "Server returned HTML instead of JSON. Is the API running on the correct port (e.g. 3001)?"
+            ? "Server returned HTML instead of JSON. Is the API running on the correct port (e.g. 3005)?"
             : "Invalid response from server."
         );
         setErrors([]);

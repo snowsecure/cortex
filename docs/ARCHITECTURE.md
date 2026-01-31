@@ -88,7 +88,7 @@ Retab API          - https://api.retab.com/v1
 │         │                │                │         │  - Settings         │ │
 │         └────────────────┼────────────────┘         └─────────────────────┘ │
 └─────────────────────────────┼───────────────────────────────────────────────┘
-                              │ HTTP (localhost:3001)
+                              │ HTTP (localhost:3005)
 ┌─────────────────────────────┼───────────────────────────────────────────────┐
 │                     Node.js Express Server                                   │
 │  ┌─────────────┐  ┌────────┴────────┐  ┌─────────────────────────────────┐  │
@@ -337,7 +337,7 @@ Saved export configurations.
 ### Base URL
 
 ```
-Development: http://localhost:3001
+Development: http://localhost:3005
 Production:  https://your-domain.com
 ```
 
@@ -768,11 +768,11 @@ Get recent failed packets.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3001` | Server port |
+| `PORT` | `3005` | Server port |
 | `NODE_ENV` | `development` | Environment (development/production) |
 | `DB_PATH` | `./data` | Directory for SQLite database |
 | `CORS_ORIGIN` | `*` | Allowed CORS origins (comma-separated) |
-| `VITE_API_URL` | `http://localhost:3001` | API base URL for frontend |
+| `VITE_API_URL` | `http://localhost:3005` | API base URL for frontend |
 
 ### localStorage Keys
 
@@ -873,7 +873,7 @@ docker build -t cortex .
 
 # Run container
 docker run -d \
-  -p 3001:3001 \
+  -p 3005:3005 \
   -v $(pwd)/data:/app/data \
   -e NODE_ENV=production \
   -e CORS_ORIGIN=https://your-domain.com \
@@ -888,7 +888,7 @@ services:
   cortex:
     build: .
     ports:
-      - "3001:3001"
+      - "3005:3005"
     volumes:
       - ./data:/app/data
     environment:
@@ -928,10 +928,10 @@ NODE_ENV=production node server.js
 
 ```bash
 # Health check
-curl http://localhost:3001/health
+curl http://localhost:3005/health
 
 # Status with metrics
-curl http://localhost:3001/api/status
+curl http://localhost:3005/api/status
 ```
 
 ---

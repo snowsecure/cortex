@@ -491,7 +491,7 @@ function App() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const response = await fetch('http://localhost:3001/api/status');
+        const response = await fetch('http://localhost:3005/api/status');
         if (response.ok) {
           const data = await response.json();
           setHealthStatus({

@@ -35,12 +35,12 @@ npm start
 ```
 
 - **Frontend:** [http://localhost:5173](http://localhost:5173)  
-- **Backend:** [http://localhost:3001](http://localhost:3001)
+- **Backend:** [http://localhost:3005](http://localhost:3005)
 
 Run them separately if you prefer:
 
 ```bash
-npm run server   # Backend only → http://localhost:3001
+npm run server   # Backend only → http://localhost:3005
 npm run dev      # Frontend only → http://localhost:5173
 ```
 
@@ -53,7 +53,7 @@ npm run build
 NODE_ENV=production node server.js
 ```
 
-Serves the built app from the same server at port 3001.
+Serves the built app from the same server at port 3005.
 
 ---
 
@@ -77,7 +77,7 @@ Docker runs CORTEX in a container so you don’t need Node.js installed. One URL
 
 4. **Open your browser** to:
    ```
-   http://localhost:3001
+   http://localhost:3005
    ```
    That’s the app. No separate frontend URL.
 
@@ -100,17 +100,17 @@ If you prefer not to use Compose:
 
 ```bash
 docker build -t cortex .
-docker run -d -p 3001:3001 -v cortex-data:/app/data --name cortex cortex
+docker run -d -p 3005:3005 -v cortex-data:/app/data --name cortex cortex
 ```
 
-Open **http://localhost:3001**. To stop: `docker stop cortex`. Data is in the `cortex-data` volume.
+Open **http://localhost:3005**. To stop: `docker stop cortex`. Data is in the `cortex-data` volume.
 
 ### Troubleshooting
 
-- **“Port 3001 is already in use”**  
-  Something else is using 3001. Stop that app, or set a different port:  
-  `PORT=3002 docker-compose up -d`  
-  Then open http://localhost:3002.
+- **“Port 3005 is already in use”**  
+  Something else is using 3005. Stop that app, or set a different port:  
+  `PORT=3007 docker-compose up -d`  
+  Then open http://localhost:3007.
 
 - **Where is my data?**  
   In a Docker volume named `cortex-data`. It persists across restarts. To wipe it: `docker-compose down -v`.
@@ -168,11 +168,11 @@ See the source (e.g. `server.js`) for request/response shapes and detailed behav
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `3001` | Backend port |
+| `PORT` | `3005` | Backend port |
 | `NODE_ENV` | `development` | `development` or `production` |
 | `DB_PATH` | `./data` | Directory for SQLite DB |
 | `CORS_ORIGIN` | `*` | Allowed CORS origin(s) |
-| `VITE_API_URL` | `http://localhost:3001` | Backend URL used by frontend build |
+| `VITE_API_URL` | `http://localhost:3005` | Backend URL used by frontend build |
 
 Database file: `./data/sail-idp.db` (WAL mode). In Docker, persist `/app/data`.
 

@@ -13,7 +13,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "docker:build": "docker build -t sail-idp .",
-    "docker:run": "docker run -p 3001:3001 -v sail-idp-data:/app/data sail-idp",
+    "docker:run": "docker run -p 3005:3005 -v sail-idp-data:/app/data sail-idp",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "docker:logs": "docker-compose logs -f"

@@ -4,7 +4,7 @@
  * Uses local proxy server to avoid CORS issues
  */
 
-const RETAB_API_BASE = "http://localhost:3001/api";
+const RETAB_API_BASE = "http://localhost:3005/api";
 
 /**
  * Get API key from localStorage
