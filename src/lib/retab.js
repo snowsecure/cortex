@@ -4,7 +4,8 @@
  * Uses local proxy server to avoid CORS issues
  */
 
-const RETAB_API_BASE = "http://localhost:3005/api";
+// Use nullish coalescing (??) so empty string from Docker builds works for relative URLs
+const RETAB_API_BASE = `${import.meta.env.VITE_API_URL ?? "http://localhost:3005"}/api`;
 
 /**
  * Get API key from localStorage

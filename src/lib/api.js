@@ -5,7 +5,8 @@
 
 import { getExtractionData } from "./utils";
 
-export const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3005";
+// Use nullish coalescing (??) so empty string from Docker builds works for relative URLs
+export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3005";
 
 /**
  * Generic fetch wrapper with error handling
