@@ -52,6 +52,13 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
 
   const current = reviewItems[currentIndex];
 
+  // Clamp currentIndex when reviewItems changes (e.g., after approval/rejection)
+  useEffect(() => {
+    if (reviewItems.length > 0 && currentIndex >= reviewItems.length) {
+      setCurrentIndex(reviewItems.length - 1);
+    }
+  }, [reviewItems.length, currentIndex]);
+
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
 
