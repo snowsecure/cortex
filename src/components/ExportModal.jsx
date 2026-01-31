@@ -24,7 +24,7 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
-import { cn } from "../lib/utils";
+import { cn, getExtractionData } from "../lib/utils";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName, DOCUMENT_CATEGORIES } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
@@ -490,7 +490,7 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     
     for (const packet of filteredPackets) {
       for (const doc of packet.documents || []) {
-        const data = doc.extraction?.choices?.[0]?.message?.parsed || {};
+        const { data } = getExtractionData(doc.extraction);
         Object.keys(data).forEach(key => fieldSet.add(key));
       }
     }
@@ -504,8 +504,7 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     
     for (const packet of filteredPackets) {
       for (const doc of packet.documents || []) {
-        const extractedData = doc.extraction?.choices?.[0]?.message?.parsed || {};
-        const likelihoods = doc.extraction?.likelihoods || {};
+        const { data: extractedData, likelihoods } = getExtractionData(doc.extraction);
         
         const row = {
           packet_id: packet.id,

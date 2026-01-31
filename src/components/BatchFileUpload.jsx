@@ -266,76 +266,60 @@ export function BatchFileUpload({
   // Show file list if files are selected
   if (selectedFiles.length > 0) {
     return (
-      <div className="space-y-4">
-        {/* Summary header */}
-        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-[#9e2339]/10 rounded-lg">
-              <Files className="h-6 w-6 text-[#9e2339]" />
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">
-                {selectedFiles.length} PDF packet{selectedFiles.length !== 1 ? "s" : ""} selected
-              </p>
-              <p className="text-sm text-gray-500">
-                Total size: {formatFileSize(totalSize)}
-              </p>
-            </div>
+      <div className="space-y-3">
+        {/* Summary row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Files className="h-5 w-5 text-[#9e2339]" />
+            <span className="font-medium text-gray-900">
+              {selectedFiles.length} file{selectedFiles.length !== 1 ? "s" : ""}
+            </span>
+            <span className="text-sm text-gray-400">
+              ({formatFileSize(totalSize)})
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled || isProcessing}
+              className="text-sm text-gray-600 hover:text-gray-900 disabled:opacity-50"
             >
-              <Upload className="h-4 w-4 mr-1" />
-              Add More
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
+              + Add more
+            </button>
+            <span className="text-gray-300">|</span>
+            <button
               onClick={onClearAll}
               disabled={disabled || isProcessing}
-              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
             >
-              Clear All
-            </Button>
+              Clear all
+            </button>
           </div>
         </div>
 
-        {/* File list */}
-        <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+        {/* File list - compact */}
+        <div className="space-y-1">
           {selectedFiles.map((fileData) => (
             <div
               key={fileData.id}
-              className="flex items-center justify-between p-3 hover:bg-gray-50"
+              className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg group"
             >
-              <div className="flex items-center gap-3 min-w-0">
-                <FileText className="h-5 w-5 text-gray-400 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">
-                    {fileData.name}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {formatFileSize(fileData.size)}
-                    {fileData.path !== fileData.name && (
-                      <span className="ml-2 text-gray-400">
-                        {fileData.path}
-                      </span>
-                    )}
-                  </p>
-                </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="h-4 w-4 text-gray-400 shrink-0" />
+                <span className="text-sm text-gray-600 truncate">
+                  {formatFileSize(fileData.size)}
+                </span>
+                <span className="text-sm text-gray-800 truncate">
+                  {fileData.name}
+                </span>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
+              <button
                 onClick={() => onRemoveFile(fileData.id)}
                 disabled={disabled || isProcessing}
-                className="h-8 w-8 shrink-0"
+                className="p-1 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
               >
                 <X className="h-4 w-4" />
-              </Button>
+              </button>
             </div>
           ))}
         </div>

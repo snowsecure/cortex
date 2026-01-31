@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { cn } from "../lib/utils";
+import { cn, getExtractionData } from "../lib/utils";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
@@ -170,10 +170,8 @@ function getPriorityFields(category) {
  * Document row within a packet - expandable to show extracted data
  */
 function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
-  const data = document.extraction?.choices?.[0]?.message?.parsed || 
-               document.extraction?.data || 
-               {};
-  const likelihoods = document.extraction?.likelihoods || {};
+  // Extract data from Retab API response
+  const { data, likelihoods } = getExtractionData(document.extraction);
   
   // Get display name - prefer split type, fallback to category
   const splitType = document.splitType || document.classification?.splitType;
@@ -326,6 +324,14 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
       {/* Expanded data view */}
       {expanded && (
         <div className="bg-white border-t border-gray-100 px-4 py-3 ml-7">
+          {/* Show error if document failed */}
+          {document.error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-md mb-3">
+              <p className="text-sm font-medium text-red-800">Extraction Error</p>
+              <p className="text-xs text-red-600 mt-1">{document.error}</p>
+            </div>
+          )}
+          
           {extractedFields.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
               {extractedFields.slice(0, 12).map(({ key, value, likelihood }) => (
@@ -351,9 +357,9 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
                 </div>
               ))}
             </div>
-          ) : (
+          ) : !document.error ? (
             <p className="text-sm text-gray-500 italic">No extracted data available</p>
-          )}
+          ) : null}
           
           {extractedFields.length > 12 && (
             <div className="mt-2 pt-2 border-t border-gray-100">
@@ -535,23 +541,7 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
         <div className="bg-gray-50">
           {/* Document controls */}
           <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-gray-100">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs text-gray-500 h-6"
-              onClick={expandAllDocs}
-            >
-              Expand All
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs text-gray-500 h-6"
-              onClick={collapseAllDocs}
-            >
-              Collapse All
-            </Button>
-          </div>
+            </div>
           {/* Document list */}
           <div className="divide-y divide-gray-100">
             {packet.documents.map((doc) => (
@@ -675,84 +665,41 @@ export function PacketResultsView({
   }
 
   return (
-    <div className="space-y-4">
-      {/* Stats summary */}
-      <div className="flex flex-wrap items-center gap-4 p-4 bg-gray-50 rounded-lg">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-700">Total:</span>
-          <Badge variant="secondary">{stats.total}</Badge>
-        </div>
-        {stats.processing > 0 && (
-          <div className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-            <span className="text-sm text-gray-600">{stats.processing} processing</span>
-          </div>
-        )}
-        {stats.queued > 0 && (
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-gray-400" />
-            <span className="text-sm text-gray-600">{stats.queued} queued</span>
-          </div>
-        )}
-        {stats.completed > 0 && (
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 text-green-500" />
-            <span className="text-sm text-gray-600">{stats.completed} completed</span>
-          </div>
-        )}
-        {stats.needsReview > 0 && (
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
-            <span className="text-sm text-gray-600">{stats.needsReview} needs review</span>
-          </div>
-        )}
-        {stats.failed > 0 && (
-          <div className="flex items-center gap-2">
-            <XCircle className="h-4 w-4 text-red-500" />
-            <span className="text-sm text-gray-600">{stats.failed} failed</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onRetryAllFailed}
-              className="text-xs"
-            >
-              <RotateCcw className="h-3 w-3 mr-1" />
-              Retry All
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Controls */}
+    <div className="space-y-3">
+      {/* Minimal filter bar */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-gray-400" />
-          <div className="flex gap-1">
-            {FILTER_OPTIONS.map(option => (
-              <Button
-                key={option.value}
-                variant={filter === option.value ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setFilter(option.value)}
-                className="text-xs"
-              >
-                {option.label}
-              </Button>
-            ))}
-          </div>
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+          {FILTER_OPTIONS.map(option => (
+            <button
+              key={option.value}
+              onClick={() => setFilter(option.value)}
+              className={cn(
+                "px-3 py-1 text-xs font-medium rounded-md transition-colors",
+                filter === option.value
+                  ? "bg-white text-gray-900 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={expandAll} className="text-xs">
-            Expand All
+        
+        {stats.failed > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRetryAllFailed}
+            className="text-xs text-red-600 hover:text-red-700"
+          >
+            <RotateCcw className="h-3 w-3 mr-1" />
+            Retry failed
           </Button>
-          <Button variant="ghost" size="sm" onClick={collapseAll} className="text-xs">
-            Collapse All
-          </Button>
-        </div>
+        )}
       </div>
 
       {/* Packet list */}
-      <div className="space-y-3">
+      <div className="space-y-2">
         {filteredPackets.map((packet) => (
           <PacketRow
             key={packet.id}
@@ -767,8 +714,8 @@ export function PacketResultsView({
       </div>
 
       {filteredPackets.length === 0 && packets.length > 0 && (
-        <div className="text-center py-8 text-gray-500">
-          <p>No packets match the selected filter</p>
+        <div className="text-center py-8 text-gray-500 text-sm">
+          No packets match filter
         </div>
       )}
     </div>

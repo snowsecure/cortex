@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { getExtractionData } from "../lib/utils";
 
 const STORAGE_KEY = "stewart_processing_history";
 const MAX_HISTORY_ITEMS = 100;
@@ -53,15 +54,18 @@ export function useProcessingHistory() {
         status: packet.status,
         processedAt: packet.completedAt,
         documentCount: packet.documents?.length || 0,
-        documents: packet.documents?.map(doc => ({
-          id: doc.id,
-          documentType: doc.classification?.category,
-          confidence: doc.classification?.confidence,
-          needsReview: doc.needsReview,
-          reviewReasons: doc.reviewReasons,
-          extractedData: doc.extraction?.choices?.[0]?.message?.parsed || {},
-          likelihoods: doc.extraction?.likelihoods || {},
-        })) || [],
+        documents: packet.documents?.map(doc => {
+          const { data, likelihoods } = getExtractionData(doc.extraction);
+          return {
+            id: doc.id,
+            documentType: doc.classification?.category,
+            confidence: doc.classification?.confidence,
+            needsReview: doc.needsReview,
+            reviewReasons: doc.reviewReasons,
+            extractedData: data,
+            likelihoods,
+          };
+        }) || [],
       })),
       stats: {
         totalPackets: batchData.stats.total,

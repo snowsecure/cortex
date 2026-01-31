@@ -37,7 +37,7 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
-import { cn } from "../lib/utils";
+import { cn, getExtractionData } from "../lib/utils";
 import { 
   generateRetabResponse, 
   RETAB_CONCEPTS, 
@@ -507,7 +507,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, onClose }) 
     const fieldConfidences = {};
     
     completedDocs.forEach(doc => {
-      const likelihoods = doc.extraction?.likelihoods || {};
+      const { likelihoods } = getExtractionData(doc.extraction);
       Object.entries(likelihoods).forEach(([field, conf]) => {
         if (typeof conf === "number") {
           allConfidences.push(conf);

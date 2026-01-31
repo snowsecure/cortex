@@ -1,13 +1,17 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { BatchFileUpload } from "./components/BatchFileUpload";
 import { PacketResultsView } from "./components/PacketResultsView";
 import { ReviewQueue } from "./components/ReviewQueue";
+import { ToastProvider, useToast } from "./components/ui/toast";
+import { ConfirmDialog } from "./components/ui/confirm-dialog";
 import { BatchExport } from "./components/BatchExport";
 import { ExportModal } from "./components/ExportModal";
 import { HistoryLog, HistoryButton } from "./components/HistoryLog";
 import { DocumentDetailModal } from "./components/DocumentDetailModal";
 import { AdminDashboard } from "./components/AdminDashboard";
+import { HelpDocumentation } from "./components/HelpDocumentation";
 import { RetabSettingsPanel, BatchConfigOverride, QuickSettingsBadge } from "./components/RetabSettings";
+import { SchemaExplorer } from "./components/SchemaExplorer";
 import { saveSettings, RETAB_MODELS } from "./lib/retabConfig";
 import { useBatchQueue, BatchStatus } from "./hooks/useBatchQueue";
 import { useProcessingHistory } from "./hooks/useProcessingHistory";
@@ -44,6 +48,7 @@ import {
   Eye,
   HelpCircle,
   LogOut,
+  BrainCircuit,
   Trash2,
   Clock,
   CheckCircle,
@@ -51,19 +56,216 @@ import {
   BarChart3,
   Sliders,
   Zap,
+  BookOpen,
+  Mail,
 } from "lucide-react";
 
 /**
  * View modes for the application
  */
 const ViewMode = {
+  DASHBOARD: "dashboard",
   UPLOAD: "upload",
   PROCESSING: "processing",
   RESULTS: "results",
   REVIEW: "review",
   HISTORY: "history",
   ADMIN: "admin",
+  HELP: "help",
 };
+
+/**
+ * Welcome Dashboard Component
+ */
+function WelcomeDashboard({ 
+  onUpload, 
+  onViewHistory, 
+  onViewHelp, 
+  onViewAdmin,
+  history,
+  usage,
+  currentStats 
+}) {
+  // Calculate aggregate stats from history
+  const totalStats = React.useMemo(() => {
+    let totalDocs = 0;
+    let totalCompleted = 0;
+    let totalFailed = 0;
+    let totalReview = 0;
+    
+    for (const entry of history) {
+      if (entry.stats) {
+        totalDocs += entry.stats.total || 0;
+        totalCompleted += entry.stats.completed || 0;
+        totalFailed += entry.stats.failed || 0;
+        totalReview += entry.stats.needsReview || 0;
+      }
+    }
+    
+    // Add current batch if any
+    if (currentStats?.total > 0) {
+      totalDocs += currentStats.total;
+      totalCompleted += currentStats.completed || 0;
+      totalFailed += currentStats.failed || 0;
+      totalReview += currentStats.needsReview || 0;
+    }
+    
+    const successRate = totalDocs > 0 ? Math.round((totalCompleted / totalDocs) * 100) : 0;
+    
+    return { totalDocs, totalCompleted, totalFailed, totalReview, successRate };
+  }, [history, currentStats]);
+
+  const hasStats = totalStats.totalDocs > 0 || usage?.totalCost > 0;
+
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-8">
+      <div className="max-w-4xl w-full">
+        {/* Hero Section */}
+        <div className="text-center mb-8">
+          <h1 className="text-6xl tracking-tight text-gray-900 mb-2" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>
+            CORTEX
+          </h1>
+          <p className="text-sm text-gray-400 tracking-widest uppercase" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+            Structured Data, On Demand
+          </p>
+        </div>
+
+        {/* Stats Row */}
+        {hasStats && (
+          <div className="flex items-center justify-center gap-8 mb-10 py-4 px-6 bg-white rounded-xl border border-gray-100 shadow-sm">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-gray-900">{totalStats.totalDocs}</p>
+              <p className="text-xs text-gray-500">Documents</p>
+            </div>
+            <div className="w-px h-8 bg-gray-200" />
+            <div className="text-center">
+              <p className="text-2xl font-bold text-green-600">{totalStats.successRate}%</p>
+              <p className="text-xs text-gray-500">Success Rate</p>
+            </div>
+            <div className="w-px h-8 bg-gray-200" />
+            <div className="text-center">
+              <p className="text-2xl font-bold text-gray-900">{history.length}</p>
+              <p className="text-xs text-gray-500">Batches</p>
+            </div>
+            {usage?.totalCost > 0 && (
+              <>
+                <div className="w-px h-8 bg-gray-200" />
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-emerald-600">${usage.totalCost.toFixed(2)}</p>
+                  <p className="text-xs text-gray-500">Total Spent</p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Quick Actions */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
+          <button
+            onClick={onUpload}
+            className="group p-6 bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all text-left"
+          >
+            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center mb-4 group-hover:bg-gray-200 transition-colors">
+              <Upload className="h-5 w-5 text-gray-600" />
+            </div>
+            <h3 className="font-semibold text-gray-900 mb-1">Upload Documents</h3>
+            <p className="text-sm text-gray-500">
+              Process new PDF packets
+            </p>
+          </button>
+
+          <button
+            onClick={onViewHistory}
+            className="group p-6 bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all text-left"
+          >
+            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center mb-4 group-hover:bg-gray-200 transition-colors">
+              <History className="h-5 w-5 text-gray-600" />
+            </div>
+            <h3 className="font-semibold text-gray-900 mb-1">
+              View History
+              {history.length > 0 && (
+                <span className="ml-2 text-xs font-normal text-gray-400">
+                  ({history.length})
+                </span>
+              )}
+            </h3>
+            <p className="text-sm text-gray-500">
+              Previously processed documents
+            </p>
+          </button>
+
+          <button
+            onClick={onViewHelp}
+            className="group p-6 bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all text-left"
+          >
+            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center mb-4 group-hover:bg-gray-200 transition-colors">
+              <HelpCircle className="h-5 w-5 text-gray-600" />
+            </div>
+            <h3 className="font-semibold text-gray-900 mb-1">Help & Docs</h3>
+            <p className="text-sm text-gray-500">
+              Learn how CORTEX works
+            </p>
+          </button>
+        </div>
+
+        {/* Workflow Steps - Interactive */}
+        <div className="flex items-center justify-center gap-3 text-sm">
+          <button
+            onClick={onUpload}
+            className="group flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:scale-105 transition-all"
+          >
+            <span className="w-6 h-6 rounded-full bg-gray-900 group-hover:bg-gray-800 text-white flex items-center justify-center text-xs font-bold transition-colors">1</span>
+            <span className="text-gray-700 font-medium">Upload</span>
+          </button>
+          <div className="w-8 h-px bg-gradient-to-r from-gray-300 to-gray-200" />
+          <button
+            onClick={onViewHelp}
+            className="group flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:scale-105 transition-all"
+            title="AI identifies document boundaries"
+          >
+            <span className="w-6 h-6 rounded-full bg-gray-900 group-hover:bg-gray-800 text-white flex items-center justify-center text-xs font-bold transition-colors">2</span>
+            <span className="text-gray-700 font-medium">Split</span>
+          </button>
+          <div className="w-8 h-px bg-gradient-to-r from-gray-200 to-gray-300" />
+          <button
+            onClick={onViewHelp}
+            className="group flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:scale-105 transition-all"
+            title="Data extracted using custom schemas"
+          >
+            <span className="w-6 h-6 rounded-full bg-gray-900 group-hover:bg-gray-800 text-white flex items-center justify-center text-xs font-bold transition-colors">3</span>
+            <span className="text-gray-700 font-medium">Extract</span>
+          </button>
+          <div className="w-8 h-px bg-gradient-to-r from-gray-300 to-gray-200" />
+          <button
+            onClick={onViewHelp}
+            className="group flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:scale-105 transition-all"
+            title="Export to JSON, CSV, or TPS"
+          >
+            <span className="w-6 h-6 rounded-full bg-gray-900 group-hover:bg-gray-800 text-white flex items-center justify-center text-xs font-bold transition-colors">4</span>
+            <span className="text-gray-700 font-medium">Export</span>
+          </button>
+        </div>
+
+        {/* Bottom Links */}
+        <div className="flex items-center justify-center gap-4 mt-8 text-sm text-gray-500">
+          <button 
+            onClick={onViewAdmin}
+            className="hover:text-gray-700 transition-colors"
+          >
+            Admin
+          </button>
+          <span className="text-gray-300">·</span>
+          <a 
+            href="mailto:philip.snowden@stewart.com?subject=SAIL%20Inquiry%20from%20CORTEX"
+            className="hover:text-gray-700 transition-colors"
+          >
+            Contact
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function App() {
   // API Key state
@@ -71,13 +273,69 @@ function App() {
   const [apiKeyConfigured, setApiKeyConfigured] = useState(hasApiKey());
   const [showApiKeyWarning, setShowApiKeyWarning] = useState(false);
 
-  // View state
-  const [viewMode, setViewMode] = useState(ViewMode.UPLOAD);
+  // View state with browser history support
+  const [viewMode, setViewModeState] = useState(() => {
+    // Initialize from URL hash if present
+    const hash = window.location.hash.slice(1);
+    if (hash && Object.values(ViewMode).includes(hash)) {
+      return hash;
+    }
+    return ViewMode.DASHBOARD;
+  });
+  
+  // Wrapper to update both state and browser history
+  const setViewMode = useCallback((newMode, replaceState = false) => {
+    setViewModeState(newMode);
+    const url = `#${newMode}`;
+    if (replaceState) {
+      window.history.replaceState({ viewMode: newMode }, '', url);
+    } else {
+      window.history.pushState({ viewMode: newMode }, '', url);
+    }
+  }, []);
+  
+  // Handle browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = (event) => {
+      if (event.state?.viewMode) {
+        setViewModeState(event.state.viewMode);
+      } else {
+        // Fallback to hash
+        const hash = window.location.hash.slice(1);
+        if (hash && Object.values(ViewMode).includes(hash)) {
+          setViewModeState(hash);
+        } else {
+          setViewModeState(ViewMode.DASHBOARD);
+        }
+      }
+    };
+    
+    window.addEventListener('popstate', handlePopState);
+    
+    // Set initial history state
+    if (!window.history.state?.viewMode) {
+      window.history.replaceState({ viewMode }, '', `#${viewMode}`);
+    }
+    
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+  
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
   const [showSessionRestoredBanner, setShowSessionRestoredBanner] = useState(false);
   const [batchConfig, setBatchConfig] = useState(null); // Per-batch override
+  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, action: null });
+  
+  // Health status
+  const [healthStatus, setHealthStatus] = useState({
+    server: 'checking',
+    database: 'checking',
+    retabApi: 'unknown',
+    lastCheck: null,
+    error: null
+  });
 
   // Batch queue hook
   const {
@@ -144,6 +402,44 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, []); // Only run on mount
+
+  // Health check - runs on mount and every 30 seconds
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/api/status');
+        if (response.ok) {
+          const data = await response.json();
+          setHealthStatus({
+            server: 'online',
+            database: data.database === 'connected' ? 'online' : 'error',
+            retabApi: apiKeyConfigured ? 'configured' : 'not_configured',
+            lastCheck: new Date().toISOString(),
+            error: null
+          });
+        } else {
+          setHealthStatus(prev => ({
+            ...prev,
+            server: 'error',
+            lastCheck: new Date().toISOString(),
+            error: `Server returned ${response.status}`
+          }));
+        }
+      } catch (err) {
+        setHealthStatus({
+          server: 'offline',
+          database: 'unknown',
+          retabApi: apiKeyConfigured ? 'configured' : 'not_configured',
+          lastCheck: new Date().toISOString(),
+          error: 'Cannot connect to server'
+        });
+      }
+    };
+    
+    checkHealth();
+    const interval = setInterval(checkHealth, 30000);
+    return () => clearInterval(interval);
+  }, [apiKeyConfigured]);
 
   // Handle API key save
   const handleSaveApiKey = () => {
@@ -249,9 +545,9 @@ function App() {
   const handleCloseHistory = useCallback(() => {
     // Go back to appropriate view
     if (hasPackets) {
-      setViewMode(ViewMode.PROCESSING);
+      setViewMode(ViewMode.RESULTS);
     } else {
-      setViewMode(ViewMode.UPLOAD);
+      setViewMode(ViewMode.DASHBOARD);
     }
   }, [hasPackets]);
 
@@ -265,100 +561,133 @@ function App() {
       {/* Header */}
       <header className="bg-white border-b border-gray-200 shrink-0">
         <div className="max-w-7xl mx-auto px-4">
-          {/* Top row - Logo and actions */}
-          <div className="flex items-center justify-between py-3">
+          <div className="flex items-center justify-between h-14">
+            {/* Left: Logo */}
             <button 
-              onClick={() => setViewMode(ViewMode.UPLOAD)}
-              className="flex items-center gap-3 hover:opacity-80 transition-opacity text-left"
+              onClick={() => setViewMode(ViewMode.DASHBOARD)}
+              className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"
             >
-              <img 
-                src="/stewart-logo.png" 
-                alt="Stewart" 
-                className="h-11 w-11 rounded-full"
-              />
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">
-                  SAIL - IDP <span className="text-sm font-normal text-gray-400">v0.2</span>
-                </h1>
-                <div className="flex items-center gap-3 text-xs">
-                  {apiKeyConfigured ? (
-                    <>
-                      <span className="flex items-center gap-1 text-green-600">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                        API Connected
-                      </span>
-                      <span className="text-gray-300">|</span>
-                      <span className={dbConnected ? "text-green-600" : "text-amber-600"}>
-                        {dbConnected ? "DB Connected" : "Local Storage"}
-                      </span>
-                      <span className="text-gray-300">|</span>
-                      <span className="text-gray-500">
-                        Retab Engine Ready
-                      </span>
-                      {hasPackets && (
-                        <>
-                          <span className="text-gray-300">|</span>
-                          <span className={isProcessing ? "text-blue-600" : "text-gray-500"}>
-                            {isProcessing ? "Processing..." : "Idle"}
-                          </span>
-                          {usage.totalCredits > 0 && (
-                            <>
-                              <span className="text-gray-300">|</span>
-                              <span className="text-emerald-600 font-medium" title={`${usage.totalCredits.toFixed(1)} credits × $0.01`}>
-                                ${usage.totalCost.toFixed(2)} spent
-                              </span>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <span className="flex items-center gap-1 text-amber-600">
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                      API Key Required
-                    </span>
-                  )}
-                </div>
+              {/* Stewart logo with health dot */}
+              <div className="relative">
+                <img 
+                  src="/stewart-logo.png" 
+                  alt="Stewart" 
+                  className="h-8 w-8 rounded-full"
+                />
+                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-white" />
               </div>
+              
+              {/* Brand text */}
+              <div className="flex flex-col -space-y-0.5">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-xl tracking-wide text-gray-900" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
+                  <span className="text-[10px] text-gray-400">v0.2</span>
+                </div>
+                <span className="text-[9px] tracking-wider text-gray-400" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
+              </div>
+              
+              {!apiKeyConfigured && (
+                <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded ml-2">
+                  API Key Required
+                </span>
+              )}
             </button>
             
+            {/* Center: Navigation */}
             {apiKeyConfigured && (
-              <div className="flex items-center gap-2">
-                {/* Quick stats */}
-                {hasPackets && (
-                  <div className="hidden sm:flex items-center gap-3 mr-4 text-sm">
-                    {stats.processing > 0 && (
-                      <span className="flex items-center gap-1 text-blue-600">
-                        <Clock className="h-4 w-4 animate-pulse" />
-                        {stats.processing} processing
-                      </span>
+              <nav className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setViewMode(ViewMode.DASHBOARD)}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                      viewMode === ViewMode.DASHBOARD
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Home
+                  </button>
+                  
+                  <button
+                    onClick={() => setViewMode(ViewMode.UPLOAD)}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                      viewMode === ViewMode.UPLOAD
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Upload
+                  </button>
+                  
+                  <button
+                    onClick={() => setViewMode(ViewMode.RESULTS)}
+                    disabled={!hasPackets}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                      viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : hasPackets 
+                          ? "text-gray-600 hover:text-gray-900" 
+                          : "text-gray-400 cursor-not-allowed"
+                    }`}
+                  >
+                    Results
+                  </button>
+                  
+                  <button
+                    onClick={() => setViewMode(ViewMode.REVIEW)}
+                    disabled={!hasNeedsReview}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5 ${
+                      viewMode === ViewMode.REVIEW
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : hasNeedsReview 
+                          ? "text-gray-600 hover:text-gray-900" 
+                          : "text-gray-400 cursor-not-allowed"
+                    }`}
+                  >
+                    Review
+                    {hasNeedsReview && (
+                      <span className="w-2 h-2 bg-amber-500 rounded-full" />
                     )}
-                    {stats.completed > 0 && (
-                      <span className="flex items-center gap-1 text-green-600">
-                        <CheckCircle className="h-4 w-4" />
-                        {stats.completed}
-                      </span>
-                    )}
-                    {stats.needsReview > 0 && (
-                      <span className="flex items-center gap-1 text-amber-600">
-                        <AlertTriangle className="h-4 w-4" />
-                        {stats.needsReview}
+                  </button>
+                  
+                  <button
+                    onClick={() => setViewMode(ViewMode.HISTORY)}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                      viewMode === ViewMode.HISTORY
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    History
+                  </button>
+                </nav>
+            )}
+            
+            {/* Right: Actions */}
+            {apiKeyConfigured && (
+              <div className="flex items-center gap-3">
+                {/* Cost tracker */}
+                {usage.totalCost > 0 && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-emerald-50 to-green-50 rounded-md border border-emerald-100">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span className="text-xs font-semibold text-emerald-700">
+                      ${usage.totalCost.toFixed(2)}
+                    </span>
+                    {usage.totalCredits > 0 && (
+                      <span className="text-[10px] text-emerald-500">
+                        ({usage.totalCredits} cr)
                       </span>
                     )}
                   </div>
                 )}
                 
-                {/* Quick settings badge */}
                 <QuickSettingsBadge 
                   config={retabConfig} 
                   onClick={() => setShowSettingsPanel(true)} 
                 />
                 
-                {/* Settings dropdown */}
                 <div className="relative group">
-                  <Button variant="ghost" size="sm" className="text-gray-500">
-                    <Settings className="h-4 w-4 mr-1" />
-                    <ChevronDown className="h-3 w-3" />
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500">
+                    <Menu className="h-4 w-4" />
                   </Button>
                   <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                     <button
@@ -366,119 +695,64 @@ function App() {
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
                     >
                       <Sliders className="h-4 w-4" />
-                      Retab Settings
+                      Settings
+                    </button>
+                    <button
+                      onClick={() => setShowSchemaExplorer(true)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <BookOpen className="h-4 w-4" />
+                      Schemas
                     </button>
                     <button
                       onClick={() => setViewMode(ViewMode.ADMIN)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
                     >
                       <BarChart3 className="h-4 w-4" />
-                      Admin Dashboard
+                      Admin
                     </button>
+                    <button
+                      onClick={() => setViewMode(ViewMode.HELP)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <HelpCircle className="h-4 w-4" />
+                      Help & Docs
+                    </button>
+                    <a
+                      href="mailto:philip.snowden@stewart.com?subject=SAIL%20Inquiry%20from%20CORTEX"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#9e2339] hover:bg-red-50"
+                    >
+                      <Mail className="h-4 w-4" />
+                      Contact SAIL
+                    </a>
                     <div className="border-t border-gray-100 my-1" />
                     <button
                       onClick={handleClearApiKey}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
                     >
                       <Key className="h-4 w-4" />
-                      Change API Key
+                      API Key
                     </button>
                     <button
-                      onClick={() => setShowExportModal(true)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                      disabled={stats.completed + stats.needsReview === 0}
-                    >
-                      <Download className="h-4 w-4" />
-                      Export Data
-                    </button>
-                    <div className="border-t border-gray-100 my-1" />
-                    <button
-                      onClick={() => {
-                        if (confirm("Clear all data and start fresh?")) {
+                      onClick={() => setConfirmDialog({
+                        isOpen: true,
+                        title: "Clear All Data",
+                        message: "This will remove all packets, results, and processing data. This action cannot be undone.",
+                        action: () => {
                           clearAll();
-                          setViewMode(ViewMode.UPLOAD);
+                          setViewMode(ViewMode.DASHBOARD);
                         }
-                      }}
+                      })}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
                     >
                       <Trash2 className="h-4 w-4" />
-                      Clear All Data
+                      Clear Data
                     </button>
                   </div>
                 </div>
               </div>
             )}
           </div>
-          
-          {/* Navigation tabs */}
-          {apiKeyConfigured && (
-            <nav className="flex items-center gap-1 -mb-px">
-              <button
-                onClick={() => setViewMode(ViewMode.UPLOAD)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                  viewMode === ViewMode.UPLOAD
-                    ? "border-[#9e2339] text-[#9e2339]"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                }`}
-              >
-                <Upload className="h-4 w-4" />
-                Upload
-              </button>
-              
-              {hasPackets && (
-                <button
-                  onClick={() => setViewMode(ViewMode.RESULTS)}
-                  className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                    viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS
-                      ? "border-[#9e2339] text-[#9e2339]"
-                      : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                  }`}
-                >
-                  <FolderOpen className="h-4 w-4" />
-                  Results
-                  {stats.total > 0 && (
-                    <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600">
-                      {stats.total}
-                    </span>
-                  )}
-                </button>
-              )}
-              
-              {hasNeedsReview && (
-                <button
-                  onClick={() => setViewMode(ViewMode.REVIEW)}
-                  className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                    viewMode === ViewMode.REVIEW
-                      ? "border-[#9e2339] text-[#9e2339]"
-                      : "border-transparent text-amber-600 hover:text-amber-700 hover:border-amber-300"
-                  }`}
-                >
-                  <Eye className="h-4 w-4" />
-                  Review
-                  <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-amber-100 text-amber-700">
-                    {stats.needsReview}
-                  </span>
-                </button>
-              )}
-              
-              <button
-                onClick={handleViewHistory}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                  viewMode === ViewMode.HISTORY
-                    ? "border-[#9e2339] text-[#9e2339]"
-                    : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                }`}
-              >
-                <History className="h-4 w-4" />
-                History
-                {history.length > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600">
-                    {history.length}
-                  </span>
-                )}
-              </button>
-            </nav>
-          )}
         </div>
       </header>
 
@@ -507,7 +781,7 @@ function App() {
                 onClick={() => {
                   clearAll();
                   setShowSessionRestoredBanner(false);
-                  setViewMode(ViewMode.UPLOAD);
+                  setViewMode(ViewMode.DASHBOARD);
                 }}
                 className="text-blue-700 border-blue-300 hover:bg-blue-100"
               >
@@ -591,6 +865,19 @@ function App() {
           </div>
         )}
 
+        {/* Dashboard view */}
+        {apiKeyConfigured && viewMode === ViewMode.DASHBOARD && (
+          <WelcomeDashboard
+            onUpload={() => setViewMode(ViewMode.UPLOAD)}
+            onViewHistory={() => setViewMode(ViewMode.HISTORY)}
+            onViewHelp={() => setViewMode(ViewMode.HELP)}
+            onViewAdmin={() => setViewMode(ViewMode.ADMIN)}
+            history={history}
+            usage={usage}
+            currentStats={stats}
+          />
+        )}
+
         {/* Upload view */}
         {apiKeyConfigured && viewMode === ViewMode.UPLOAD && (
           <div className="max-w-4xl mx-auto px-4 py-8 w-full">
@@ -640,57 +927,34 @@ function App() {
         {/* Processing/Results view */}
         {apiKeyConfigured && (viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS) && (
           <div className="flex-1 flex flex-col p-4 max-w-7xl mx-auto w-full min-h-0">
-            {/* Processing controls */}
-            <div className="flex items-center justify-between mb-4 shrink-0">
-              <div className="flex items-center gap-4">
-                <h2 className="text-lg font-semibold text-gray-900">
-                  {isComplete ? "Processing Results" : "Processing..."}
-                </h2>
-                
-                {/* Processing controls */}
-                {(isProcessing || isPaused) && (
-                  <div className="flex items-center gap-2">
-                    {isProcessing ? (
-                      <Button variant="outline" size="sm" onClick={pause}>
-                        <Pause className="h-4 w-4 mr-1" />
-                        Pause
-                      </Button>
-                    ) : (
-                      <Button variant="outline" size="sm" onClick={resume}>
-                        <Play className="h-4 w-4 mr-1" />
-                        Resume
-                      </Button>
-                    )}
-                  </div>
+            {/* Minimal toolbar */}
+            <div className="flex items-center justify-between mb-3 shrink-0">
+              <div className="flex items-center gap-3">
+                {isProcessing && (
+                  <>
+                    <span className="text-sm text-gray-500">Processing</span>
+                    <Button variant="ghost" size="sm" onClick={pause} className="h-7 px-2 text-gray-500">
+                      <Pause className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                )}
+                {isPaused && (
+                  <>
+                    <span className="text-sm text-amber-600">Paused</span>
+                    <Button variant="ghost" size="sm" onClick={resume} className="h-7 px-2 text-gray-500">
+                      <Play className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                )}
+                {isComplete && !isProcessing && !isPaused && (
+                  <span className="text-sm text-gray-500">
+                    {stats.total} document{stats.total !== 1 ? 's' : ''}
+                  </span>
                 )}
               </div>
 
-              <div className="flex items-center gap-3">
-                {/* Review queue button */}
-                {hasNeedsReview && (
-                  <Button
-                    variant="outline"
-                    onClick={handleOpenReview}
-                    className="text-amber-600 border-amber-300 hover:bg-amber-50"
-                  >
-                    <AlertTriangle className="h-4 w-4 mr-2" />
-                    Review Queue ({stats.needsReview})
-                  </Button>
-                )}
-
-                {/* Export buttons */}
-                <div className="flex items-center gap-2">
-                  <BatchExport packets={packets} stats={stats} />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowExportModal(true)}
-                    disabled={stats.completed + stats.needsReview === 0}
-                  >
-                    <Settings2 className="h-4 w-4 mr-1" />
-                    Custom Export
-                  </Button>
-                </div>
+              <div className="flex items-center gap-2">
+                <BatchExport packets={packets} stats={stats} />
               </div>
             </div>
 
@@ -786,20 +1050,137 @@ function App() {
               stats={stats}
               usage={usage}
               retabConfig={retabConfig}
-              onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.UPLOAD)}
+              onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.DASHBOARD)}
+            />
+          </div>
+        )}
+
+        {/* Help Documentation view */}
+        {viewMode === ViewMode.HELP && (
+          <div className="flex-1 min-h-0">
+            <HelpDocumentation
+              onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.DASHBOARD)}
             />
           </div>
         )}
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 bg-white shrink-0">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-center text-sm text-gray-500">
-            <p>
-              POWERED BY{" "}
+      <footer className="border-t border-gray-100 bg-gradient-to-r from-gray-50 via-white to-gray-50 shrink-0">
+        <div className="max-w-7xl mx-auto px-4 py-2.5">
+          <div className="flex items-center justify-between">
+            {/* Left: Health + Processing Stats */}
+            <div className="flex items-center gap-3 min-w-[200px]">
+              {/* Health Status */}
+              <div 
+                className="flex items-center gap-1.5 text-[10px] cursor-help"
+                title={
+                  healthStatus.server === 'online' && healthStatus.database === 'online'
+                    ? `Server: Online\nDatabase: Connected\nRetab API: ${apiKeyConfigured ? 'Configured' : 'Not configured'}\nLast check: ${healthStatus.lastCheck ? new Date(healthStatus.lastCheck).toLocaleTimeString() : 'Never'}`
+                    : healthStatus.server === 'checking'
+                    ? 'Checking connection to Retab extraction engine...'
+                    : `Server: ${healthStatus.server === 'offline' ? 'Offline' : 'Error'}\nDatabase: ${healthStatus.database === 'online' ? 'Connected' : healthStatus.database}\n${healthStatus.error ? `Error: ${healthStatus.error}` : ''}`
+                }
+              >
+                {healthStatus.server === 'online' && healthStatus.database === 'online' ? (
+                  <>
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                    <span className="text-gray-400">Retab Online</span>
+                  </>
+                ) : healthStatus.server === 'checking' ? (
+                  <>
+                    <div className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse" />
+                    <span className="text-gray-400">Connecting to Retab...</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                    <span className="text-red-500">
+                      {healthStatus.server === 'offline' ? 'Retab Offline' : 
+                       healthStatus.database !== 'online' ? 'DB Error' : 'Retab Error'}
+                    </span>
+                  </>
+                )}
+              </div>
+              
+              {/* Separator */}
+              {hasPackets && <div className="w-px h-3 bg-gray-200" />}
+              
+              {/* Processing Stats */}
+              {hasPackets && (
+                <>
+                  {stats.processing > 0 ? (
+                    <div className="flex items-center gap-1.5 cursor-help" title={`Currently processing ${stats.processing} document${stats.processing > 1 ? 's' : ''}`}>
+                      <div className="relative">
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping absolute" />
+                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                      </div>
+                      <span className="text-[11px] font-medium text-blue-600">
+                        {stats.processing} processing
+                      </span>
+                    </div>
+                  ) : isComplete ? (
+                    <div className="flex items-center gap-1 cursor-help" title="All documents have been processed">
+                      <CheckCircle className="w-3 h-3 text-green-500" />
+                      <span className="text-[11px] font-medium text-green-600">Complete</span>
+                    </div>
+                  ) : null}
+                  
+                  {stats.completed > 0 && (
+                    <span className="text-[11px] text-gray-500 cursor-help" title={`${stats.completed} document${stats.completed > 1 ? 's' : ''} successfully extracted`}>
+                      {stats.completed} <span className="text-green-500">✓</span>
+                    </span>
+                  )}
+                  {stats.needsReview > 0 && (
+                    <span className="text-[11px] text-amber-600 cursor-help" title={`${stats.needsReview} document${stats.needsReview > 1 ? 's' : ''} flagged for human review due to low confidence`}>
+                      {stats.needsReview} review
+                    </span>
+                  )}
+                  {stats.failed > 0 && (
+                    <span className="text-[11px] text-red-500 cursor-help" title={`${stats.failed} document${stats.failed > 1 ? 's' : ''} failed to process - click to retry`}>
+                      {stats.failed} failed
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+            
+            {/* Center: Branding */}
+            <div className="flex items-center gap-1.5 text-[11px] cursor-help" title="Stewart AI Lab - Intelligent Document Processing">
+              <span className="text-gray-400">POWERED BY</span>
               <span className="font-semibold text-[#9e2339]">SAIL</span>
-            </p>
+            </div>
+            
+            {/* Right: Cost & Progress */}
+            <div className="flex items-center gap-3 min-w-[200px] justify-end">
+              {hasPackets && stats.total > 0 && (
+                <div 
+                  className="flex items-center gap-1.5 cursor-help" 
+                  title={`Progress: ${stats.completed} of ${stats.total} documents completed (${Math.round((stats.completed / stats.total) * 100)}%)`}
+                >
+                  <div className="w-20 h-1 bg-gray-200 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-[#9e2339] to-[#c13350] transition-all duration-500"
+                      style={{ width: `${Math.round((stats.completed / stats.total) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-gray-400 font-medium w-8">
+                    {Math.round((stats.completed / stats.total) * 100)}%
+                  </span>
+                </div>
+              )}
+              {usage.totalCost > 0 && (
+                <div 
+                  className="flex items-center gap-1 text-[11px] cursor-help" 
+                  title={`Retab API Usage\nTotal Cost: $${usage.totalCost.toFixed(4)}\nCredits: ${usage.totalCredits}\nPages Processed: ${usage.totalPages || 'N/A'}\nAPI Calls: ${usage.totalCalls || 'N/A'}`}
+                >
+                  <span className="text-emerald-600 font-semibold">${usage.totalCost.toFixed(2)}</span>
+                  {usage.totalCredits > 0 && (
+                    <span className="text-gray-400">({usage.totalCredits} cr)</span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </footer>
@@ -823,8 +1204,8 @@ function App() {
       
       {/* Retab Settings Panel */}
       {showSettingsPanel && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-lg shadow-xl w-[700px] max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
             <RetabSettingsPanel
               onClose={() => setShowSettingsPanel(false)}
               onSave={(newSettings) => {
@@ -836,8 +1217,37 @@ function App() {
           </div>
         </div>
       )}
+      
+      {/* Schema Explorer */}
+      {showSchemaExplorer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl w-[95vw] max-w-6xl h-[90vh] flex flex-col overflow-hidden">
+            <SchemaExplorer onClose={() => setShowSchemaExplorer(false)} />
+          </div>
+        </div>
+      )}
+      
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ isOpen: false, action: null })}
+        onConfirm={() => confirmDialog.action?.()}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText="Clear Data"
+        variant="danger"
+      />
     </div>
   );
 }
 
-export default App;
+// Wrap App with ToastProvider
+function AppWithProviders() {
+  return (
+    <ToastProvider>
+      <App />
+    </ToastProvider>
+  );
+}
+
+export default AppWithProviders;

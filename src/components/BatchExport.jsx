@@ -3,6 +3,7 @@ import { Download, FileJson, FileSpreadsheet, Check, Loader2 } from "lucide-reac
 import { Button } from "./ui/button";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
+import { getExtractionData } from "../lib/utils";
 
 /**
  * Flatten nested object for CSV export
@@ -101,18 +102,21 @@ export function BatchExport({ packets, stats }) {
           filename: packet.filename,
           status: packet.status,
           processed_at: packet.completedAt,
-          documents: (packet.documents || []).map(doc => ({
-            document_id: doc.id,
-            document_type: doc.classification?.category,
-            document_type_display: getCategoryDisplayName(doc.classification?.category),
-            pages: doc.pages,
-            classification_confidence: doc.classification?.confidence,
-            classification_reasoning: doc.classification?.reasoning,
-            needs_review: doc.needsReview,
-            review_reasons: doc.reviewReasons,
-            extracted_data: doc.extraction?.choices?.[0]?.message?.parsed || {},
-            likelihoods: doc.extraction?.likelihoods || {},
-          })),
+          documents: (packet.documents || []).map(doc => {
+            const { data, likelihoods } = getExtractionData(doc.extraction);
+            return {
+              document_id: doc.id,
+              document_type: doc.classification?.category,
+              document_type_display: getCategoryDisplayName(doc.classification?.category),
+              pages: doc.pages,
+              classification_confidence: doc.classification?.confidence,
+              classification_reasoning: doc.classification?.reasoning,
+              needs_review: doc.needsReview,
+              review_reasons: doc.reviewReasons,
+              extracted_data: data,
+              likelihoods,
+            };
+          }),
         })),
       };
 
@@ -152,8 +156,8 @@ export function BatchExport({ packets, stats }) {
       // First pass: collect all columns
       for (const packet of exportablePackets) {
         for (const doc of packet.documents || []) {
-          const extractedData = doc.extraction?.choices?.[0]?.message?.parsed || {};
-          const flattened = flattenObject(extractedData, "data");
+          const { data } = getExtractionData(doc.extraction);
+          const flattened = flattenObject(data, "data");
           Object.keys(flattened).forEach(key => columnSet.add(key));
         }
       }
@@ -163,8 +167,8 @@ export function BatchExport({ packets, stats }) {
       // Second pass: create rows
       for (const packet of exportablePackets) {
         for (const doc of packet.documents || []) {
-          const extractedData = doc.extraction?.choices?.[0]?.message?.parsed || {};
-          const flattened = flattenObject(extractedData, "data");
+          const { data } = getExtractionData(doc.extraction);
+          const flattened = flattenObject(data, "data");
           
           const row = {
             packet_id: packet.id,
@@ -217,7 +221,7 @@ export function BatchExport({ packets, stats }) {
           const deeds = packet.documents?.filter(d => 
             d.classification?.category === "recorded_transfer_deed"
           ) || [];
-          const firstDeed = deeds[0]?.extraction?.choices?.[0]?.message?.parsed;
+          const { data: firstDeed } = getExtractionData(deeds[0]?.extraction);
           
           return {
             transaction_id: packet.id,
@@ -234,7 +238,7 @@ export function BatchExport({ packets, stats }) {
               prior_owner: firstDeed?.grantor_name || null,
             },
             documents: (packet.documents || []).map(doc => {
-              const data = doc.extraction?.choices?.[0]?.message?.parsed || {};
+              const { data } = getExtractionData(doc.extraction);
               return {
                 doc_type: doc.classification?.category,
                 confidence: doc.classification?.confidence,
@@ -324,7 +328,7 @@ export function BatchExport({ packets, stats }) {
         ) : (
           <Download className="h-4 w-4 mr-1" />
         )}
-        Export TPS
+        TPS Export
       </Button>
     </div>
   );

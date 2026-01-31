@@ -63,23 +63,30 @@ export async function extractDocument({
     throw new Error("API key not configured");
   }
 
+  // Build request body - only include optional params when not default
+  const requestBody = {
+    document: {
+      filename: filename,
+      url: document,  // Data URL (data:application/pdf;base64,...)
+    },
+    model,
+    json_schema: jsonSchema,
+    temperature,
+    image_resolution_dpi: imageDpi,
+  };
+  
+  // Only include n_consensus if > 1 (API default is 1)
+  if (nConsensus > 1) {
+    requestBody.n_consensus = nConsensus;
+  }
+
   const response = await fetch(`${RETAB_API_BASE}/documents/extract`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Api-Key": apiKey,
     },
-    body: JSON.stringify({
-      document: {
-        filename: filename,
-        url: document,  // Data URL (data:application/pdf;base64,...)
-      },
-      model,
-      json_schema: jsonSchema,
-      temperature,
-      n_consensus: nConsensus,
-      image_resolution_dpi: imageDpi,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
@@ -158,6 +165,22 @@ export async function createExtractionJob({
     throw new Error("API key not configured");
   }
 
+  // Build extraction body - only include optional params when not default
+  const extractionBody = {
+    document: {
+      filename: filename,
+      url: document,
+    },
+    model,
+    json_schema: jsonSchema,
+    temperature,
+  };
+  
+  // Only include n_consensus if > 1 (API default is 1)
+  if (nConsensus > 1) {
+    extractionBody.n_consensus = nConsensus;
+  }
+
   const response = await fetch(`${RETAB_API_BASE}/jobs`, {
     method: "POST",
     headers: {
@@ -166,16 +189,7 @@ export async function createExtractionJob({
     },
     body: JSON.stringify({
       endpoint: "/v1/documents/extract",
-      body: {
-        document: {
-          filename: filename,
-          url: document,
-        },
-        model,
-        json_schema: jsonSchema,
-        temperature,
-        n_consensus: nConsensus,
-      },
+      body: extractionBody,
     }),
   });
 

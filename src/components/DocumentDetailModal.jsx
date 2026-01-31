@@ -16,6 +16,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
 import { getCategoryDisplayName } from "../lib/documentCategories";
+import { getExtractionData } from "../lib/utils";
 
 /**
  * PDF Preview Component
@@ -167,13 +168,8 @@ export function DocumentDetailModal({ document, packet, onClose }) {
   
   if (!document) return null;
   
-  // Get extracted data
-  const extractedData = document.extraction?.choices?.[0]?.message?.parsed || 
-                        document.extraction?.data || 
-                        {};
-  
-  // Get likelihoods for field confidence
-  const likelihoods = document.extraction?.likelihoods || {};
+  // Get extracted data and likelihoods
+  const { data: extractedData, likelihoods } = getExtractionData(document.extraction);
   
   // Get display name
   const splitType = document.splitType || document.classification?.splitType;

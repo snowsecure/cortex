@@ -376,6 +376,42 @@ export const SPLIT_TO_CATEGORY_MAP = {
 };
 
 /**
+ * Convert snake_case field name to friendly Title Case
+ * e.g., "tenant_name" -> "Tenant Name", "lease_term" -> "Lease Term"
+ */
+export function toFriendlyFieldName(fieldName) {
+  if (!fieldName) return fieldName;
+  
+  // Special case mappings for better readability
+  const specialMappings = {
+    'grantor_name': 'Grantor (Seller)',
+    'grantee_name': 'Grantee (Buyer)',
+    'trustor_or_borrower_name': 'Borrower Name',
+    'grantor_signature_present': 'Grantor Signature',
+    'notary_signature_present': 'Notary Signature',
+    'surveyor_signature_present': 'Surveyor Signature',
+    'surveyor_seal_present': 'Surveyor Seal',
+    'principal_signature_present': 'Principal Signature',
+    'affiant_signature_present': 'Affiant Signature',
+    'requires_visual_verification': 'Visual Verification Required',
+    'parcel_identification_number': 'Parcel ID (PIN)',
+    'ccr_restrictions': 'CC&R Restrictions',
+    'hoa_lien': 'HOA Lien',
+    'ucc_filing': 'UCC Filing',
+  };
+  
+  if (specialMappings[fieldName]) {
+    return specialMappings[fieldName];
+  }
+  
+  // Convert snake_case to Title Case
+  return fieldName
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
  * Critical fields by document type that trigger review if missing
  */
 export const CRITICAL_FIELDS = {
@@ -426,43 +462,46 @@ export function checkNeedsReview(extraction, documentType) {
   const reasons = [];
   
   if (!extraction) {
-    reasons.push("No extraction data");
+    reasons.push("Document could not be processed — try re-uploading");
     return { needsReview: true, reasons };
   }
   
+  // Handle wrapped response: { content: { ... }, error: null }
+  const content = extraction.content || extraction;
+  
   // Flag unclassified/other documents for human review
   if (documentType === "other_recorded" || documentType === "other") {
-    reasons.push("Document type could not be classified - requires human verification");
+    reasons.push("Unrecognized document type — please identify and categorize manually");
   }
   
-  if (extraction.requires_human_review) {
-    reasons.push("API flagged for review (possible OCR/handwriting issues)");
+  if (content.requires_human_review) {
+    reasons.push("Possible OCR issues detected — check handwritten or faded text");
   }
   
-  const likelihoods = extraction.likelihoods || {};
+  const likelihoods = content.likelihoods || {};
   const likelihoodValues = Object.values(likelihoods).filter(v => typeof v === 'number');
   
   if (likelihoodValues.length > 0) {
     const avgLikelihood = likelihoodValues.reduce((sum, v) => sum + v, 0) / likelihoodValues.length;
     if (avgLikelihood < REVIEW_CONFIDENCE_THRESHOLD) {
-      reasons.push(`Low average confidence (${(avgLikelihood * 100).toFixed(0)}%)`);
+      reasons.push(`Overall extraction confidence is low (${(avgLikelihood * 100).toFixed(0)}%) — review all fields`);
     }
     
     const lowConfFields = Object.entries(likelihoods)
       .filter(([_, v]) => typeof v === 'number' && v < 0.5)
-      .map(([k, v]) => `${k}: ${(v * 100).toFixed(0)}%`);
+      .map(([k, v]) => `${toFriendlyFieldName(k)} (${(v * 100).toFixed(0)}%)`);
     if (lowConfFields.length > 0 && lowConfFields.length <= 3) {
-      reasons.push(`Very low confidence fields: ${lowConfFields.join(", ")}`);
+      reasons.push(`Verify these uncertain fields: ${lowConfFields.join(", ")}`);
     } else if (lowConfFields.length > 3) {
-      reasons.push(`${lowConfFields.length} fields with low confidence`);
+      reasons.push(`${lowConfFields.length} fields need verification due to low confidence`);
     }
   }
   
   const criticalFields = CRITICAL_FIELDS[documentType] || [];
-  let parsedData = extraction.data || 
-                   extraction.choices?.[0]?.message?.parsed ||
-                   extraction.choices?.[0]?.message?.content ||
-                   extraction.result ||
+  let parsedData = content.data || 
+                   content.choices?.[0]?.message?.parsed ||
+                   content.choices?.[0]?.message?.content ||
+                   content.result ||
                    {};
   
   if (typeof parsedData === "string") {
@@ -479,7 +518,8 @@ export function checkNeedsReview(extraction, documentType) {
   });
   
   if (missingCritical.length > 0) {
-    reasons.push(`Missing critical fields: ${missingCritical.join(", ")}`);
+    const friendlyNames = missingCritical.map(f => toFriendlyFieldName(f));
+    reasons.push(`Missing required fields: ${friendlyNames.join(", ")}`);
   }
   
   return {
@@ -544,6 +584,7 @@ export default {
   SPLIT_TO_CATEGORY_MAP,
   CRITICAL_FIELDS,
   REVIEW_CONFIDENCE_THRESHOLD,
+  toFriendlyFieldName,
   checkNeedsReview,
   getSchemaForCategory,
   getCategoryDisplayName,

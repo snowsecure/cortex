@@ -3,6 +3,8 @@
  * Handles communication with the backend for persistent storage
  */
 
+import { getExtractionData } from "./utils";
+
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 /**
@@ -154,21 +156,24 @@ export async function createDocuments(sessionId, packetId, documents) {
   return apiRequest("/api/documents", {
     method: "POST",
     body: {
-      documents: documents.map(d => ({
-        id: d.id,
-        packet_id: packetId,
-        session_id: sessionId,
-        document_type: d.documentType || d.category,
-        display_name: d.displayName || d.name,
-        status: d.status,
-        pages: d.pages,
-        extraction_data: d.extraction?.choices?.[0]?.message?.content || d.extraction,
-        likelihoods: d.extraction?.likelihoods || d.likelihoods,
-        extraction_confidence: d.extractionConfidence,
-        needs_review: d.needsReview,
-        review_reasons: d.reviewReasons,
-        credits_used: d.usage?.credits || 0,
-      })),
+      documents: documents.map(d => {
+        const { data, likelihoods } = getExtractionData(d.extraction);
+        return {
+          id: d.id,
+          packet_id: packetId,
+          session_id: sessionId,
+          document_type: d.documentType || d.category,
+          display_name: d.displayName || d.name,
+          status: d.status,
+          pages: d.pages,
+          extraction_data: data,
+          likelihoods: likelihoods,
+          extraction_confidence: d.extractionConfidence,
+          needs_review: d.needsReview,
+          review_reasons: d.reviewReasons,
+          credits_used: d.usage?.credits || 0,
+        };
+      }),
     },
   });
 }

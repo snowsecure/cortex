@@ -10,6 +10,7 @@ import {
   checkNeedsReview,
 } from "../lib/documentCategories";
 import { RETAB_MODELS, DEFAULT_CONFIG } from "../lib/retabConfig";
+import { getExtractionData } from "../lib/utils";
 
 /**
  * Generate unique document ID
@@ -85,6 +86,11 @@ export function usePacketPipeline() {
     };
 
     try {
+      // Check if document data is available
+      if (!packet.base64) {
+        throw new Error("Document data not available. The file needs to be re-uploaded to process.");
+      }
+      
       // Step 1: Split the packet into subdocuments
       let splits;
       
@@ -154,6 +160,11 @@ export function usePacketPipeline() {
         };
 
         try {
+          // Check if we have the document data
+          if (!packet.base64) {
+            throw new Error("Document data not available. Please re-upload the file to retry.");
+          }
+          
           const schema = getSchemaForCategory(category);
           
           if (!schema) {
@@ -182,7 +193,7 @@ export function usePacketPipeline() {
           };
           
           // Calculate extraction confidence
-          const likelihoods = extractionResponse?.likelihoods || {};
+          const { likelihoods } = getExtractionData(extractionResponse);
           const likelihoodValues = Object.values(likelihoods).filter(v => typeof v === 'number');
           if (likelihoodValues.length > 0) {
             documentResult.extractionConfidence = likelihoodValues.reduce((sum, v) => sum + v, 0) / likelihoodValues.length;
