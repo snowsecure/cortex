@@ -270,13 +270,6 @@ function WelcomeDashboard({
 
         {/* Footer */}
         <div className="flex items-center justify-center gap-3 mt-10 pt-6 border-t border-slate-200/50 dark:border-neutral-700/50">
-          <button
-            onClick={onViewAdmin}
-            className="text-xs text-slate-400 dark:text-neutral-500 hover:text-slate-600 dark:hover:text-neutral-300 transition-colors"
-          >
-            Admin
-          </button>
-          <span className="text-slate-300 dark:text-neutral-600 text-xs">·</span>
           <a
             href="mailto:philip.snowden@stewart.com?subject=SAIL%20Inquiry%20from%20CORTEX"
             className="text-xs text-slate-400 dark:text-neutral-500 hover:text-slate-600 dark:hover:text-neutral-300 transition-colors"
