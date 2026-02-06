@@ -15,6 +15,7 @@ import {
   Calendar,
   Layers,
   FileJson,
+  User,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -190,6 +191,12 @@ function HistoryEntry({ entry, onDelete, onExport }) {
               </span>
             </div>
             <p className="text-xs text-gray-500 dark:text-neutral-400">
+              {entry.created_by && (
+                <span className="inline-flex items-center gap-0.5 mr-1.5">
+                  <User className="h-3 w-3" />
+                  {entry.created_by} ·
+                </span>
+              )}
               {entry.stats.totalPackets} packet{entry.stats.totalPackets !== 1 ? "s" : ""} · {entry.stats.totalDocuments} document{entry.stats.totalDocuments !== 1 ? "s" : ""} · {totalFields} fields extracted
             </p>
           </div>

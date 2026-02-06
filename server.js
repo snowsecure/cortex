@@ -24,10 +24,105 @@ const PORT = process.env.PORT || 3005;
 const RETAB_API_BASE = "https://api.retab.com/v1";
 const isProduction = process.env.NODE_ENV === "production";
 
+// ============================================================================
+// FETCH WITH RETRY (exponential backoff + jitter for Retab API calls)
+// ============================================================================
+
+async function fetchWithRetry(url, options, { maxRetries = 2, baseDelay = 1000 } = {}) {
+  // Extract the timeout from the original signal so we can create a fresh one per attempt.
+  // Once an AbortSignal fires it stays aborted — reusing it would make every retry fail instantly.
+  const timeoutMs = options?.signal?.timeout ?? null;
+  const hasTimeoutSignal = options?.signal instanceof AbortSignal && timeoutMs == null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      // Create a fresh signal for each attempt to avoid reusing an already-aborted signal
+      const attemptOptions = { ...options };
+      if (options?.signal) {
+        // If the original signal already aborted (from a prior attempt), make a new one.
+        // AbortSignal.timeout creates a fresh signal each call.
+        if (options.signal.aborted || attempt > 0) {
+          // Re-derive timeout: use 10 minutes as a safe default for Retab API calls
+          attemptOptions.signal = AbortSignal.timeout(600000);
+        }
+      }
+      const response = await fetch(url, attemptOptions);
+
+      // Don't retry on success or client errors (except 429 rate limit)
+      if (response.ok || (response.status >= 400 && response.status < 500 && response.status !== 429)) {
+        return response;
+      }
+
+      // Retriable: 5xx or 429
+      if (attempt < maxRetries) {
+        let delay;
+        if (response.status === 429) {
+          // Honor Retry-After header if present (value in seconds)
+          const retryAfter = response.headers.get("retry-after");
+          delay = retryAfter ? Math.min(parseInt(retryAfter, 10) * 1000, 60000) : baseDelay * Math.pow(2, attempt);
+        } else {
+          delay = baseDelay * Math.pow(2, attempt);
+        }
+        // Add jitter (0-25% of delay)
+        delay += Math.random() * delay * 0.25;
+        console.warn(`Retab API ${response.status} on attempt ${attempt + 1}/${maxRetries + 1}, retrying in ${Math.round(delay)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      // Exhausted retries, return the last response as-is
+      return response;
+    } catch (error) {
+      // Network error (fetch threw) -- retry if attempts remain
+      if (attempt < maxRetries) {
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * baseDelay * 0.25;
+        console.warn(`Retab API network error on attempt ${attempt + 1}/${maxRetries + 1}: ${error.message}, retrying in ${Math.round(delay)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+// ============================================================================
+// INPUT VALIDATION HELPERS
+// ============================================================================
+
+/**
+ * Validate that a value is a non-empty string, optionally within a max length.
+ */
+function isNonEmptyString(val, maxLen = 1000) {
+  return typeof val === "string" && val.trim().length > 0 && val.length <= maxLen;
+}
+
+/**
+ * Validate that a value is a string or nullish (optional field).
+ */
+function isOptionalString(val, maxLen = 1000) {
+  if (val == null || val === "") return true;
+  return typeof val === "string" && val.length <= maxLen;
+}
+
+/**
+ * Sanitize a string: trim and truncate to maxLen.
+ */
+function sanitizeString(val, maxLen = 1000) {
+  if (val == null) return null;
+  return String(val).trim().slice(0, maxLen);
+}
+
+/**
+ * Return a 400 response with a validation error message.
+ */
+function validationError(res, message) {
+  return res.status(400).json({ error: `Validation error: ${message}` });
+}
+
 // Initialize database
 db.initializeDatabase();
 
-// Temp PDF storage (1hr TTL); same base as DB so data/ is one place
+// Temp PDF storage (14-day TTL); same base as DB so data/ is one place
 const DATA_DIR = process.env.DB_PATH || "./data";
 const TEMP_PDF_DIR = path.join(DATA_DIR, "temp-pdfs");
 if (!fs.existsSync(TEMP_PDF_DIR)) {
@@ -139,7 +234,7 @@ app.get("/api/status", (req, res) => {
       database: "connected",
       stats,
       usage,
-      version: "0.2.0",
+      version: "0.3.5",
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -156,7 +251,8 @@ app.get("/api/sessions/active", (req, res) => {
     let session = db.getActiveSession();
     if (!session) {
       const id = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      session = db.createSession(id);
+      const createdBy = sanitizeString(req.query.created_by, 200);
+      session = db.createSession(id, createdBy);
     }
     res.json(session);
   } catch (error) {
@@ -180,8 +276,15 @@ app.get("/api/sessions/:id", (req, res) => {
 // Create new session
 app.post("/api/sessions", (req, res) => {
   try {
-    const id = req.body.id || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const session = db.createSession(id);
+    if (req.body.id != null && !isNonEmptyString(req.body.id, 200)) {
+      return validationError(res, "id must be a non-empty string (max 200 chars)");
+    }
+    if (!isOptionalString(req.body.created_by, 200)) {
+      return validationError(res, "created_by must be a string (max 200 chars)");
+    }
+    const id = sanitizeString(req.body.id, 200) || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const createdBy = sanitizeString(req.body.created_by, 200);
+    const session = db.createSession(id, createdBy);
     res.status(201).json(session);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -191,6 +294,9 @@ app.post("/api/sessions", (req, res) => {
 // Update session
 app.patch("/api/sessions/:id", (req, res) => {
   try {
+    if (!req.body || typeof req.body !== "object" || Object.keys(req.body).length === 0) {
+      return validationError(res, "Request body must be a non-empty object");
+    }
     const session = db.updateSession(req.params.id, req.body);
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
@@ -246,16 +352,57 @@ app.get("/api/sessions/:id/full", (req, res) => {
 // PACKET MANAGEMENT
 // ============================================================================
 
+// Get all packets (cross-session, for global views)
+app.get("/api/packets/all", (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 500, 1000);
+    const packets = db.getAllPackets(limit);
+    // Attach documents and hasServerFile flag for each packet
+    const enriched = packets.map((p) => {
+      const docs = db.getDocumentsByPacket(p.id);
+      const hasServerFile = !!(p.temp_file_path && fs.existsSync(p.temp_file_path));
+      return { ...p, documents: docs, hasServerFile };
+    });
+    res.json(enriched);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Create packet(s)
 app.post("/api/packets", (req, res) => {
   try {
-    const { packets, session_id } = req.body;
+    const { packets, session_id, created_by } = req.body;
+    
+    if (!isNonEmptyString(session_id, 200)) {
+      return validationError(res, "session_id is required (non-empty string, max 200 chars)");
+    }
+    if (!isOptionalString(created_by, 200)) {
+      return validationError(res, "created_by must be a string (max 200 chars)");
+    }
     
     if (Array.isArray(packets)) {
-      const created = db.createPackets(packets.map(p => ({ ...p, session_id })));
+      // Validate each packet in the array has an id and filename
+      for (let i = 0; i < packets.length; i++) {
+        const p = packets[i];
+        if (!isNonEmptyString(p.id, 200)) {
+          return validationError(res, `packets[${i}].id is required (non-empty string)`);
+        }
+        if (!isNonEmptyString(p.filename, 500)) {
+          return validationError(res, `packets[${i}].filename is required (non-empty string)`);
+        }
+      }
+      const sanitizedBy = sanitizeString(created_by, 200);
+      const created = db.createPackets(packets.map(p => ({ ...p, session_id, created_by: sanitizedBy })));
       res.status(201).json(created);
     } else {
-      const packet = db.createPacket({ ...req.body, session_id });
+      if (!isNonEmptyString(req.body.id, 200)) {
+        return validationError(res, "id is required for single packet creation");
+      }
+      if (!isNonEmptyString(req.body.filename, 500)) {
+        return validationError(res, "filename is required for packet creation");
+      }
+      const packet = db.createPacket({ ...req.body, session_id, created_by: sanitizeString(created_by, 200) });
       res.status(201).json(packet);
     }
   } catch (error) {
@@ -298,6 +445,9 @@ app.get("/api/sessions/:sessionId/packets", (req, res) => {
 // Update packet
 app.patch("/api/packets/:id", (req, res) => {
   try {
+    if (!req.body || typeof req.body !== "object" || Object.keys(req.body).length === 0) {
+      return validationError(res, "Request body must be a non-empty object");
+    }
     const packet = db.updatePacket(req.params.id, req.body);
     if (!packet) {
       return res.status(404).json({ error: "Packet not found" });
@@ -311,6 +461,9 @@ app.patch("/api/packets/:id", (req, res) => {
 // Complete packet with results
 app.post("/api/packets/:id/complete", (req, res) => {
   try {
+    if (!req.body || typeof req.body !== "object") {
+      return validationError(res, "Request body must be an object with result data");
+    }
     const packet = db.completePacket(req.params.id, req.body);
     if (!packet) {
       return res.status(404).json({ error: "Packet not found" });
@@ -349,12 +502,14 @@ app.post("/api/upload", uploadMulter.single("file"), (req, res) => {
     const filename = req.file.originalname || "document.pdf";
     const finalPath = path.join(TEMP_PDF_DIR, `${packetId}.pdf`);
     fs.renameSync(req.file.path, finalPath);
+    const createdBy = req.body.created_by || null;
     const packet = db.createPacket({
       id: packetId,
       session_id: sessionId,
       filename,
       status: "queued",
       temp_file_path: finalPath,
+      created_by: createdBy,
     });
     res.status(201).json(packet);
   } catch (error) {
@@ -393,10 +548,23 @@ app.post("/api/documents", (req, res) => {
   try {
     const { documents } = req.body;
     
+    const validateDoc = (doc, label) => {
+      if (!isNonEmptyString(doc.id, 200)) return `${label}.id is required`;
+      if (!isNonEmptyString(doc.packet_id, 200)) return `${label}.packet_id is required`;
+      if (!isNonEmptyString(doc.session_id, 200)) return `${label}.session_id is required`;
+      return null;
+    };
+    
     if (Array.isArray(documents)) {
+      for (let i = 0; i < documents.length; i++) {
+        const err = validateDoc(documents[i], `documents[${i}]`);
+        if (err) return validationError(res, err);
+      }
       const created = db.createDocuments(documents);
       res.status(201).json(created);
     } else {
+      const err = validateDoc(req.body, "document");
+      if (err) return validationError(res, err);
       const doc = db.createDocument(req.body);
       res.status(201).json(doc);
     }
@@ -438,10 +606,45 @@ app.get("/api/sessions/:sessionId/review-queue", (req, res) => {
   }
 });
 
+// Update document extraction data (e.g., after document-level retry)
+app.patch("/api/documents/:id", (req, res) => {
+  try {
+    if (!req.body || typeof req.body !== "object") {
+      return validationError(res, "Request body must be an object");
+    }
+    const doc = db.updateDocumentExtraction(req.params.id, req.body);
+    if (!doc) {
+      return res.status(404).json({ error: "Document not found" });
+    }
+    res.json(doc);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Review document (approve/reject)
 app.post("/api/documents/:id/review", (req, res) => {
   try {
-    const doc = db.reviewDocument(req.params.id, req.body);
+    const { status, editedFields, reviewerNotes, reviewedBy } = req.body;
+    const validStatuses = ["reviewed", "approved", "rejected"];
+    if (status && !validStatuses.includes(status)) {
+      return validationError(res, `status must be one of: ${validStatuses.join(", ")}`);
+    }
+    if (editedFields != null && typeof editedFields !== "object") {
+      return validationError(res, "editedFields must be an object");
+    }
+    if (!isOptionalString(reviewerNotes, 2000)) {
+      return validationError(res, "reviewerNotes must be a string (max 2000 chars)");
+    }
+    if (!isOptionalString(reviewedBy, 200)) {
+      return validationError(res, "reviewedBy must be a string (max 200 chars)");
+    }
+    const doc = db.reviewDocument(req.params.id, {
+      status,
+      editedFields,
+      reviewerNotes: sanitizeString(reviewerNotes, 2000),
+      reviewedBy: sanitizeString(reviewedBy, 200),
+    });
     if (!doc) {
       return res.status(404).json({ error: "Document not found" });
     }
@@ -469,8 +672,18 @@ app.get("/api/history", (req, res) => {
 // Create history entry
 app.post("/api/history", (req, res) => {
   try {
-    const id = req.body.id || `history_${Date.now()}`;
-    const entry = db.createHistoryEntry({ ...req.body, id });
+    if (!req.body || typeof req.body !== "object") {
+      return validationError(res, "Request body must be an object");
+    }
+    if (!isOptionalString(req.body.created_by, 200)) {
+      return validationError(res, "created_by must be a string (max 200 chars)");
+    }
+    const id = sanitizeString(req.body.id, 200) || `history_${Date.now()}`;
+    const entry = db.createHistoryEntry({
+      ...req.body,
+      id,
+      created_by: sanitizeString(req.body.created_by, 200),
+    });
     res.status(201).json(entry);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -514,7 +727,10 @@ app.get("/api/admin/metrics", (req, res) => {
 const ADMIN_CLEAR_PASSWORD = "stewart";
 
 app.post("/api/admin/clear-database", (req, res) => {
-  const password = (req.body && req.body.password) != null ? String(req.body.password).trim() : "";
+  if (!req.body || typeof req.body.password !== "string") {
+    return validationError(res, "password is required (string)");
+  }
+  const password = req.body.password.trim().slice(0, 100);
   if (password !== ADMIN_CLEAR_PASSWORD) {
     return res.status(403).json({ error: "Invalid password" });
   }
@@ -566,6 +782,12 @@ app.get("/api/export-templates", (req, res) => {
 
 app.post("/api/export-templates", (req, res) => {
   try {
+    if (!isNonEmptyString(req.body.name, 200)) {
+      return validationError(res, "name is required (non-empty string, max 200 chars)");
+    }
+    if (!req.body.config || typeof req.body.config !== "object") {
+      return validationError(res, "config is required and must be an object");
+    }
     const template = db.saveExportTemplate(req.body);
     res.status(201).json(template);
   } catch (error) {
@@ -600,7 +822,7 @@ app.post("/api/documents/extract", async (req, res) => {
       body.temperature = 0.1;
     }
 
-    const response = await fetch(`${RETAB_API_BASE}/documents/extract`, {
+    const response = await fetchWithRetry(`${RETAB_API_BASE}/documents/extract`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -635,7 +857,7 @@ app.post("/api/schemas/generate", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    const response = await fetch(`${RETAB_API_BASE}/schemas/generate`, {
+    const response = await fetchWithRetry(`${RETAB_API_BASE}/schemas/generate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -666,7 +888,7 @@ app.post("/api/jobs", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    const response = await fetch(`${RETAB_API_BASE}/jobs`, {
+    const response = await fetchWithRetry(`${RETAB_API_BASE}/jobs`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -728,7 +950,7 @@ app.post("/api/documents/split", async (req, res) => {
 
     console.log("Split request subdocuments:", req.body.subdocuments?.map(s => s.name));
 
-    const response = await fetch(`${RETAB_API_BASE}/documents/split`, {
+    const response = await fetchWithRetry(`${RETAB_API_BASE}/documents/split`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -762,7 +984,7 @@ app.post("/api/documents/classify", async (req, res) => {
 
     console.log("Classify request categories:", req.body.categories?.map(c => c.name));
 
-    const response = await fetch(`${RETAB_API_BASE}/documents/classify`, {
+    const response = await fetchWithRetry(`${RETAB_API_BASE}/documents/classify`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -794,7 +1016,7 @@ app.post("/api/documents/parse", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    const response = await fetch(`${RETAB_API_BASE}/documents/parse`, {
+    const response = await fetchWithRetry(`${RETAB_API_BASE}/documents/parse`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -832,7 +1054,7 @@ app.get("/api/debug/status", (req, res) => {
       stats,
       usage,
       activeSession: activeSession ? { id: activeSession.id, status: activeSession.status } : null,
-      version: "0.2.0",
+      version: "0.3.5",
       env: process.env.NODE_ENV || "development",
     });
   } catch (error) {
@@ -851,11 +1073,11 @@ app.get("/api/debug/errors", (req, res) => {
 });
 
 // ============================================================================
-// TEMP FILE CLEANUP (1hr TTL)
+// TEMP FILE CLEANUP (14-day TTL)
 // ============================================================================
 
-const TEMP_FILE_MAX_AGE_SECONDS = 60 * 60; // 1 hour
-const CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // every 15 min
+const TEMP_FILE_MAX_AGE_SECONDS = 14 * 24 * 60 * 60; // 14 days
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // every 1 hour
 
 function runTempFileCleanup() {
   try {
@@ -902,7 +1124,7 @@ app.listen(PORT, () => {
   const dbPath = process.env.DB_PATH || "./data";
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║  SAIL-IDP Backend Server v0.2.0                              ║
+║  SAIL-IDP Backend Server v0.3.5                              ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Mode:          ${isProduction ? "Production" : "Development"}                                    ║
 ║  API Server:    http://localhost:${PORT}                        ║

@@ -72,6 +72,15 @@ export function initializeDatabase() {
     if (!/duplicate column name/i.test(e.message)) throw e;
   }
 
+  // Migration: add created_by column to all main tables
+  for (const table of ["history", "sessions", "packets", "documents"]) {
+    try {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN created_by TEXT`);
+    } catch (e) {
+      if (!/duplicate column name/i.test(e.message)) throw e;
+    }
+  }
+
   // Documents table - individual documents extracted from packets
   db.exec(`
     CREATE TABLE IF NOT EXISTS documents (
@@ -158,11 +167,11 @@ export function initializeDatabase() {
 // SESSION OPERATIONS
 // ============================================================================
 
-export function createSession(id) {
+export function createSession(id, createdBy) {
   const stmt = db.prepare(`
-    INSERT INTO sessions (id) VALUES (?)
+    INSERT INTO sessions (id, created_by) VALUES (?, ?)
   `);
-  stmt.run(id);
+  stmt.run(id, createdBy || null);
   return getSession(id);
 }
 
@@ -181,15 +190,32 @@ export function getActiveSession() {
   return stmt.get();
 }
 
+// Whitelist of columns that can be updated via the generic update functions.
+// This prevents SQL injection through dynamic column names.
+const SESSION_UPDATABLE_COLUMNS = new Set([
+  "status", "total_packets", "completed_packets", "failed_packets",
+  "needs_review_packets", "total_credits", "total_cost", "total_pages",
+  "api_calls", "created_by",
+]);
+
+const PACKET_UPDATABLE_COLUMNS = new Set([
+  "status", "filename", "started_at", "completed_at", "retry_count",
+  "error", "total_documents", "completed_documents", "needs_review_documents",
+  "failed_documents", "total_credits", "total_cost", "temp_file_path", "created_by",
+]);
+
 export function updateSession(id, data) {
   const fields = [];
   const values = [];
   
   for (const [key, value] of Object.entries(data)) {
-    if (key !== "id") {
-      fields.push(`${key} = ?`);
-      values.push(value);
+    if (key === "id" || key === "updated_at") continue;
+    if (!SESSION_UPDATABLE_COLUMNS.has(key)) {
+      console.warn(`[DB] updateSession: ignoring unknown column "${key}"`);
+      continue;
     }
+    fields.push(`${key} = ?`);
+    values.push(value);
   }
   
   fields.push("updated_at = CURRENT_TIMESTAMP");
@@ -212,15 +238,16 @@ export function closeSession(id) {
 
 export function createPacket(packet) {
   const stmt = db.prepare(`
-    INSERT INTO packets (id, session_id, filename, status, temp_file_path)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO packets (id, session_id, filename, status, temp_file_path, created_by)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     packet.id,
     packet.session_id,
     packet.filename,
     packet.status || "queued",
-    packet.temp_file_path ?? null
+    packet.temp_file_path ?? null,
+    packet.created_by || null
   );
   
   // Update session packet count
@@ -234,13 +261,13 @@ export function createPacket(packet) {
 
 export function createPackets(packets) {
   const insert = db.prepare(`
-    INSERT INTO packets (id, session_id, filename, status, temp_file_path)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO packets (id, session_id, filename, status, temp_file_path, created_by)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   
   const insertMany = db.transaction((packets) => {
     for (const p of packets) {
-      insert.run(p.id, p.session_id, p.filename, p.status || "queued", p.temp_file_path ?? null);
+      insert.run(p.id, p.session_id, p.filename, p.status || "queued", p.temp_file_path ?? null, p.created_by || null);
     }
     
     // Update session packet count
@@ -300,10 +327,13 @@ export function updatePacket(id, data) {
   const values = [];
   
   for (const [key, value] of Object.entries(data)) {
-    if (key !== "id" && key !== "session_id") {
-      fields.push(`${key} = ?`);
-      values.push(value);
+    if (key === "id" || key === "session_id") continue;
+    if (!PACKET_UPDATABLE_COLUMNS.has(key)) {
+      console.warn(`[DB] updatePacket: ignoring unknown column "${key}"`);
+      continue;
     }
+    fields.push(`${key} = ?`);
+    values.push(value);
   }
   
   if (fields.length === 0) return getPacket(id);
@@ -408,6 +438,32 @@ export function deletePacket(id) {
   `).run(packet.session_id);
   
   return true;
+}
+
+// ============================================================================
+// GLOBAL QUERIES (cross-session)
+// ============================================================================
+
+export function getAllPackets(limit = 500) {
+  const stmt = db.prepare(`
+    SELECT * FROM packets ORDER BY created_at DESC LIMIT ?
+  `);
+  return stmt.all(limit);
+}
+
+export function getAllDocuments(limit = 5000) {
+  const stmt = db.prepare(`
+    SELECT * FROM documents ORDER BY created_at DESC LIMIT ?
+  `);
+  return stmt.all(limit).map(doc => {
+    doc.pages = JSON.parse(doc.pages || "[]");
+    doc.extraction_data = JSON.parse(doc.extraction_data || "{}");
+    doc.likelihoods = JSON.parse(doc.likelihoods || "{}");
+    doc.review_reasons = JSON.parse(doc.review_reasons || "[]");
+    doc.edited_fields = doc.edited_fields ? JSON.parse(doc.edited_fields) : null;
+    doc.needs_review = !!doc.needs_review;
+    return doc;
+  });
 }
 
 // ============================================================================
@@ -536,6 +592,41 @@ export function getDocumentsNeedingReview(sessionId) {
   });
 }
 
+/**
+ * Update a document's extraction data (e.g., after a document-level retry).
+ */
+export function updateDocumentExtraction(id, { status, extractionData, likelihoods, extractionConfidence, needsReview, reviewReasons, creditsUsed }) {
+  const stmt = db.prepare(`
+    UPDATE documents SET
+      status = ?,
+      extraction_data = ?,
+      likelihoods = ?,
+      extraction_confidence = ?,
+      needs_review = ?,
+      review_reasons = ?,
+      credits_used = credits_used + ?,
+      reviewed_at = NULL,
+      reviewed_by = NULL,
+      reviewer_notes = NULL,
+      edited_fields = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+
+  stmt.run(
+    status || "completed",
+    JSON.stringify(extractionData || {}),
+    JSON.stringify(likelihoods || {}),
+    extractionConfidence ?? null,
+    needsReview ? 1 : 0,
+    JSON.stringify(reviewReasons || []),
+    creditsUsed || 0,
+    id
+  );
+
+  return getDocument(id);
+}
+
 export function reviewDocument(id, { status, reviewerNotes, editedFields, reviewedBy }) {
   const stmt = db.prepare(`
     UPDATE documents SET
@@ -568,8 +659,8 @@ export function createHistoryEntry(entry) {
   const stmt = db.prepare(`
     INSERT INTO history (
       id, session_id, total_packets, total_documents,
-      completed, needs_review, failed, total_credits, total_cost, summary
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      completed, needs_review, failed, total_credits, total_cost, summary, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
@@ -582,7 +673,8 @@ export function createHistoryEntry(entry) {
     entry.failed || 0,
     entry.total_credits || 0,
     entry.total_cost || 0,
-    JSON.stringify(entry.summary || {})
+    JSON.stringify(entry.summary || {}),
+    entry.created_by || null
   );
   
   return getHistoryEntry(entry.id);

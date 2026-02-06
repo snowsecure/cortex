@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle } from "lucide-react";
 import { Button } from "./ui/button";
-import { getExtractionData } from "../lib/utils";
+import { getMergedExtractionData } from "../lib/utils";
 import { PDFPreview } from "./DocumentDetailModal";
 import * as api from "../lib/api";
 
@@ -58,6 +58,11 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
       setCurrentIndex(reviewItems.length - 1);
     }
   }, [reviewItems.length, currentIndex]);
+
+  // Initialize editedFields from existing document corrections when switching items
+  useEffect(() => {
+    setEditedFields(current?.document?.editedFields || {});
+  }, [currentIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState(null);
@@ -192,8 +197,7 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
     );
   }
 
-  const { likelihoods } = getExtractionData(current.document.extraction);
-  const data = getExtractionData(current.document.extraction).data;
+  const { data, likelihoods } = getMergedExtractionData(current.document);
   const displayName = current.document.splitType || current.document.classification?.category || "Document";
   const REVIEW_THRESHOLD = 0.75;
   const LOW_THRESHOLD = 0.5;

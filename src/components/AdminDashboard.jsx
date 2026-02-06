@@ -39,6 +39,7 @@ import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { cn, getExtractionData, formatDateTimeCST } from "../lib/utils";
 import { getAdminMetrics, clearDatabase } from "../lib/api";
+import { useToast } from "./ui/toast";
 import { 
   generateRetabResponse, 
   RETAB_CONCEPTS, 
@@ -645,6 +646,7 @@ function AIAssistant({ metrics, retabConfig, onSuggestionApply }) {
 // ============================================================================
 
 export function AdminDashboard({ packets, stats, usage, retabConfig, history = [], dbConnected = false, onClose }) {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState("overview");
   const [refreshing, setRefreshing] = useState(false);
   const [serverMetrics, setServerMetrics] = useState(null);
@@ -865,6 +867,35 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
     }
     setTimeout(() => setRefreshing(false), 1000);
   }, [dbConnected, fetchServerMetrics]);
+
+  const handleExportLogs = useCallback(() => {
+    try {
+      if (activityLogs.length === 0) {
+        toast.warning("No logs to export");
+        return;
+      }
+      const header = ["Timestamp", "Type", "Message", "Status"].join(",");
+      const rows = activityLogs.map(log =>
+        [log.timestamp, log.type, log.message, log.status || ""]
+          .map(v => `"${String(v ?? "").replace(/"/g, '""')}"`)
+          .join(",")
+      );
+      const csv = [header, ...rows].join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cortex-logs-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${activityLogs.length} log entries`);
+    } catch (err) {
+      console.error("Failed to export logs:", err);
+      toast.error("Failed to export logs: " + err.message);
+    }
+  }, [activityLogs, toast]);
   
   const tabs = [
     { id: "overview", label: "Overview", icon: BarChart3 },
@@ -1238,7 +1269,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-base">Processing Logs</CardTitle>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" onClick={handleExportLogs}>
                     <Download className="h-4 w-4 mr-2" />
                     Export Logs
                   </Button>

@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { Download, FileJson, FileSpreadsheet, Check, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
+import { useToast } from "./ui/toast";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getExtractionData } from "../lib/utils";
@@ -68,6 +69,7 @@ function downloadFile(content, filename, type) {
  * Export component for packets and stats
  */
 export function BatchExport({ packets, stats }) {
+  const toast = useToast();
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(null);
 
@@ -84,7 +86,7 @@ export function BatchExport({ packets, stats }) {
   /**
    * Export as JSON (hierarchical structure)
    */
-  const exportJSON = useCallback(() => {
+  const exportJSON = useCallback(async () => {
     setIsExporting(true);
     
     try {
@@ -140,15 +142,19 @@ export function BatchExport({ packets, stats }) {
         })),
       };
 
+      // Yield to main thread before heavy serialization for large datasets
+      const docCount = exportablePackets.reduce((s, p) => s + (p.documents?.length || 0), 0);
+      if (docCount > 500) await new Promise(r => setTimeout(r, 0));
       const content = JSON.stringify(exportData, null, 2);
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       downloadFile(content, `stewart-extraction-${timestamp}.json`, "application/json");
       
       setExportSuccess("json");
+      toast.success("JSON export complete");
       setTimeout(() => setExportSuccess(null), 2000);
     } catch (error) {
       console.error("JSON export failed:", error);
-      alert("Export failed: " + error.message);
+      toast.error("Export failed: " + error.message);
     } finally {
       setIsExporting(false);
     }
@@ -157,7 +163,7 @@ export function BatchExport({ packets, stats }) {
   /**
    * Export as CSV (flattened, one row per document)
    */
-  const exportCSV = useCallback(() => {
+  const exportCSV = useCallback(async () => {
     setIsExporting(true);
     
     try {
@@ -233,15 +239,18 @@ export function BatchExport({ packets, stats }) {
         }
       }
 
+      // Yield before heavy CSV generation for large datasets
+      if (rows.length > 500) await new Promise(r => setTimeout(r, 0));
       const csv = convertToCSV(rows, columns);
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       downloadFile(csv, `stewart-extraction-${timestamp}.csv`, "text/csv");
       
       setExportSuccess("csv");
+      toast.success("CSV export complete");
       setTimeout(() => setExportSuccess(null), 2000);
     } catch (error) {
       console.error("CSV export failed:", error);
-      alert("Export failed: " + error.message);
+      toast.error("Export failed: " + error.message);
     } finally {
       setIsExporting(false);
     }
@@ -250,7 +259,7 @@ export function BatchExport({ packets, stats }) {
   /**
    * Export TPS format (Stewart Title specific)
    */
-  const exportTPS = useCallback(() => {
+  const exportTPS = useCallback(async () => {
     setIsExporting(true);
     
     try {
@@ -317,10 +326,11 @@ export function BatchExport({ packets, stats }) {
       downloadFile(content, `tps-export-${timestamp}.json`, "application/json");
       
       setExportSuccess("tps");
+      toast.success("TPS export complete");
       setTimeout(() => setExportSuccess(null), 2000);
     } catch (error) {
       console.error("TPS export failed:", error);
-      alert("Export failed: " + error.message);
+      toast.error("Export failed: " + error.message);
     } finally {
       setIsExporting(false);
     }

@@ -29,6 +29,33 @@ export function hasApiKey() {
   return !!getApiKey();
 }
 
+// ============================================================================
+// USERNAME (stored in localStorage, like API key)
+// ============================================================================
+
+const USERNAME_KEY = "cortex_username";
+
+/**
+ * Get username from localStorage
+ */
+export function getUsername() {
+  return localStorage.getItem(USERNAME_KEY) || "";
+}
+
+/**
+ * Set username in localStorage
+ */
+export function setUsername(name) {
+  localStorage.setItem(USERNAME_KEY, name);
+}
+
+/**
+ * Check if username is configured
+ */
+export function hasUsername() {
+  return !!localStorage.getItem(USERNAME_KEY);
+}
+
 /**
  * Convert file to base64 data URL
  */

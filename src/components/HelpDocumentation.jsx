@@ -978,7 +978,7 @@ function ArchitectureOverview() {
         </div>
         <div className="p-3 rounded-lg border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-800">
           <div className="flex items-center gap-2 text-gray-700 dark:text-neutral-300 font-medium mb-1"><FileText className="h-4 w-4" /> Temp Storage</div>
-          <p className="text-gray-500 dark:text-neutral-400 text-xs">PDFs stored in ./data/temp-pdfs/. Auto-cleanup after 1 hour. Max 100MB per file.</p>
+          <p className="text-gray-500 dark:text-neutral-400 text-xs">PDFs stored in ./data/temp-pdfs/. Auto-cleanup after 14 days. Max 100MB per file.</p>
         </div>
       </div>
     </div>

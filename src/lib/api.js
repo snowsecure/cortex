@@ -67,18 +67,19 @@ export async function getUsageStats(days = 30) {
 // SESSIONS
 // ============================================================================
 
-export async function getActiveSession() {
-  return apiRequest("/api/sessions/active");
+export async function getActiveSession(created_by) {
+  const params = created_by ? `?created_by=${encodeURIComponent(created_by)}` : "";
+  return apiRequest(`/api/sessions/active${params}`);
 }
 
 export async function getSession(id) {
   return apiRequest(`/api/sessions/${id}`);
 }
 
-export async function createSession(id) {
+export async function createSession(id, created_by) {
   return apiRequest("/api/sessions", {
     method: "POST",
-    body: { id },
+    body: { id, created_by },
   });
 }
 
@@ -103,11 +104,16 @@ export async function getFullSession(id) {
 // PACKETS
 // ============================================================================
 
-export async function createPackets(sessionId, packets) {
+export async function getAllPackets(limit = 500) {
+  return apiRequest(`/api/packets/all?limit=${limit}`);
+}
+
+export async function createPackets(sessionId, packets, created_by) {
   return apiRequest("/api/packets", {
     method: "POST",
     body: {
       session_id: sessionId,
+      created_by: created_by || undefined,
       packets: packets.map(p => ({
         id: p.id,
         filename: p.filename || p.name,
@@ -154,11 +160,12 @@ export async function deletePacket(id) {
  * Upload a PDF for a packet (store on server so work continues if user leaves).
  * Returns the created packet { id, filename, temp_file_path, ... }.
  */
-export async function uploadPacketFile(sessionId, file) {
+export async function uploadPacketFile(sessionId, file, created_by) {
   const url = `${API_BASE}/api/upload`;
   const form = new FormData();
   form.append("session_id", sessionId);
   form.append("file", file);
+  if (created_by) form.append("created_by", created_by);
   const response = await fetch(url, {
     method: "POST",
     body: form,
@@ -246,6 +253,25 @@ export async function reviewDocument(id, data) {
   return apiRequest(`/api/documents/${id}/review`, {
     method: "POST",
     body: data,
+  });
+}
+
+/**
+ * Sync a retried document's new extraction data to the database.
+ */
+export async function syncRetryDocumentResult(documentId, result) {
+  const { data, likelihoods } = getExtractionData(result.extraction);
+  return apiRequest(`/api/documents/${documentId}`, {
+    method: "PATCH",
+    body: {
+      status: result.status,
+      extractionData: data,
+      likelihoods: likelihoods || {},
+      extractionConfidence: result.extractionConfidence,
+      needsReview: result.needsReview,
+      reviewReasons: result.reviewReasons,
+      creditsUsed: result.usage?.credits || 0,
+    },
   });
 }
 
@@ -363,6 +389,7 @@ export default {
   updateSession,
   closeSession,
   getFullSession,
+  getAllPackets,
   createPackets,
   getPacket,
   getPacketsBySession,
@@ -376,6 +403,7 @@ export default {
   getDocumentsByPacket,
   getReviewQueue,
   reviewDocument,
+  syncRetryDocumentResult,
   getHistory,
   createHistoryEntry,
   deleteHistoryEntry,

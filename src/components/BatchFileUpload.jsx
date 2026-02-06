@@ -1,13 +1,15 @@
 import React, { useCallback, useState, useRef } from "react";
 import { Upload, FolderOpen, FileText, X, AlertCircle, Files } from "lucide-react";
 import { Button } from "./ui/button";
+import { useToast } from "./ui/toast";
 import { cn } from "../lib/utils";
-import { fileToBase64 } from "../lib/retab";
+import { fileToBase64, getUsername } from "../lib/retab";
 import { getPdfPageCount } from "../lib/pdfUtils";
 import { estimateCost } from "../lib/retabConfig";
 import * as api from "../lib/api";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB per file
+const LARGE_FILE_WARNING_SIZE = 75 * 1024 * 1024; // 75MB — base64 inflates ~33%, nearing 100MB JSON limit
 const SUPPORTED_TYPES = ["application/pdf"];
 
 /**
@@ -106,6 +108,7 @@ export function BatchFileUpload({
   initialFilesToProcess = null,
   onInitialFilesProcessed = null,
 }) {
+  const toast = useToast();
   const [isDragActive, setIsDragActive] = useState(false);
   const [isDragReject, setIsDragReject] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -123,6 +126,25 @@ export function BatchFileUpload({
   const processFiles = useCallback(async (fileItems) => {
     setIsScanning(true);
     setError(null);
+    
+    // Warn about duplicate files (same name + size as already-selected files)
+    const existingKeys = new Set(
+      selectedFiles.map(f => `${(f.name ?? f.filename ?? "").toLowerCase()}::${f.size ?? 0}`)
+    );
+    const duplicateNames = [];
+    for (const item of fileItems) {
+      const key = `${item.file.name.toLowerCase()}::${item.file.size}`;
+      if (existingKeys.has(key)) {
+        duplicateNames.push(item.file.name);
+      }
+    }
+    if (duplicateNames.length > 0) {
+      toast.warning(
+        `${duplicateNames.length} file${duplicateNames.length > 1 ? "s" : ""} already uploaded: ${duplicateNames.slice(0, 3).join(", ")}${duplicateNames.length > 3 ? ` and ${duplicateNames.length - 3} more` : ""}. Re-processing anyway.`,
+        6000
+      );
+    }
+
     setProcessingProgress({ current: 0, total: fileItems.length });
     
     const uploadToServer = sessionId && dbConnected;
@@ -139,7 +161,7 @@ export function BatchFileUpload({
           const pageCount = await getPdfPageCount(file);
           if (uploadToServer) {
             try {
-              const packet = await api.uploadPacketFile(sessionId, file);
+              const packet = await api.uploadPacketFile(sessionId, file, getUsername());
               processedFiles.push({
                 id: packet.id,
                 name: packet.filename || file.name,
@@ -147,6 +169,7 @@ export function BatchFileUpload({
                 size: file.size,
                 pageCount: pageCount ?? undefined,
                 hasServerFile: true,
+                createdBy: getUsername() || null,
                 addedAt: new Date().toISOString(),
               });
             } catch (uploadErr) {
@@ -161,6 +184,7 @@ export function BatchFileUpload({
                 size: file.size,
                 pageCount: pageCount ?? undefined,
                 base64,
+                createdBy: getUsername() || null,
                 addedAt: new Date().toISOString(),
               });
             }
@@ -174,6 +198,7 @@ export function BatchFileUpload({
               size: file.size,
               pageCount: pageCount ?? undefined,
               base64,
+              createdBy: getUsername() || null,
               addedAt: new Date().toISOString(),
             });
           }
@@ -184,23 +209,35 @@ export function BatchFileUpload({
       }
       
       if (processedFiles.length > 0) {
+        // Warn about large files that may fail during extraction due to base64 inflation
+        const largeFiles = processedFiles.filter(f => f.size >= LARGE_FILE_WARNING_SIZE);
+        if (largeFiles.length > 0) {
+          const names = largeFiles.map(f => f.name).join(", ");
+          toast.warning(
+            `${largeFiles.length === 1 ? `"${names}" is` : `${largeFiles.length} files are`} over 75 MB. ` +
+            `Base64 encoding inflates files ~33%, which may cause extraction to fail. Consider splitting large PDFs before uploading.`,
+            8000
+          );
+        }
         onFilesSelected(processedFiles);
       }
       
       if (failedReasons.length > 0) {
         const firstReason = failedReasons[0];
-        setError(
-          `${failedReasons.length} file(s) could not be processed${firstReason ? `: ${firstReason}` : ""}`
-        );
+        const msg = `${failedReasons.length} file(s) could not be processed${firstReason ? `: ${firstReason}` : ""}`;
+        setError(msg);
+        toast.warning(msg);
       }
     } catch (err) {
-      setError(`Failed to process files: ${err.message || "Please try again."}`);
+      const msg = `Failed to process files: ${err.message || "Please try again."}`;
+      setError(msg);
+      toast.error(msg);
       console.error("File processing error:", err);
     } finally {
       setIsScanning(false);
       setProcessingProgress({ current: 0, total: 0 });
     }
-  }, [onFilesSelected, sessionId, dbConnected]);
+  }, [onFilesSelected, sessionId, dbConnected, selectedFiles]);
 
   // Process initial files (e.g. dropped on dashboard) once when provided
   React.useEffect(() => {
@@ -269,6 +306,7 @@ export function BatchFileUpload({
       await processFiles(fileItems);
     } catch (err) {
       setError("Failed to scan dropped items. Please try again.");
+      toast.error("Failed to scan dropped items. Please try again.");
       console.error("Drop handling error:", err);
       setIsScanning(false);
     }
@@ -502,7 +540,7 @@ export function BatchFileUpload({
                 </div>
                 
                 <p className="text-xs text-gray-400">
-                  PDF files up to 100MB each
+                  PDF files up to 100 MB each (75 MB+ may fail due to base64 encoding overhead)
                 </p>
               </>
             )}

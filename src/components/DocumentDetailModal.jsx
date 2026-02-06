@@ -13,11 +13,12 @@ import {
   Maximize2,
   Loader2,
 } from "lucide-react";
+import { useToast } from "./ui/toast";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
 import { getCategoryDisplayName } from "../lib/documentCategories";
-import { getExtractionData } from "../lib/utils";
+import { getMergedExtractionData } from "../lib/utils";
 import * as api from "../lib/api";
 
 /**
@@ -179,6 +180,7 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
  * Modal for viewing document extraction details with PDF preview
  */
 export function DocumentDetailModal({ document, packet, onClose }) {
+  const toast = useToast();
   const [copied, setCopied] = useState(false);
   const [fetchedBase64, setFetchedBase64] = useState(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
@@ -215,8 +217,8 @@ export function DocumentDetailModal({ document, packet, onClose }) {
 
   if (!document) return null;
   
-  // Get extracted data and likelihoods
-  const { data: extractedData, likelihoods } = getExtractionData(document.extraction);
+  // Get extracted data and likelihoods (with corrections merged in)
+  const { data: extractedData, likelihoods, editedFields } = getMergedExtractionData(document);
   
   // Get display name
   const splitType = document.splitType || document.classification?.splitType;
@@ -238,9 +240,11 @@ export function DocumentDetailModal({ document, packet, onClose }) {
     try {
       await navigator.clipboard.writeText(JSON.stringify(extractedData, null, 2));
       setCopied(true);
+      toast.success("Copied to clipboard");
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error("Failed to copy:", err);
+      toast.error("Failed to copy to clipboard");
     }
   };
   
@@ -289,6 +293,11 @@ export function DocumentDetailModal({ document, packet, onClose }) {
               <Badge variant="warning" className="flex items-center gap-1">
                 <AlertTriangle className="h-3 w-3" />
                 Needs Review
+              </Badge>
+            ) : document.status === "reviewed" ? (
+              <Badge variant="success" className="flex items-center gap-1">
+                <CheckCircle className="h-3 w-3" />
+                Reviewed
               </Badge>
             ) : (
               <Badge variant="success" className="flex items-center gap-1">
@@ -360,21 +369,29 @@ export function DocumentDetailModal({ document, packet, onClose }) {
                   {sortedFields.map(([key, value]) => {
                     const confidence = likelihoods[key];
                     const hasConfidence = confidence !== undefined;
+                    const isCorrected = editedFields && key in editedFields;
                     
                     return (
                       <div 
                         key={key} 
-                        className="flex items-start justify-between py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600"
+                        className={`flex items-start justify-between py-2 px-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 ${
+                          isCorrected ? "bg-blue-50 dark:bg-blue-900/20 ring-1 ring-blue-200 dark:ring-blue-800" : "bg-gray-50 dark:bg-gray-700"
+                        }`}
                       >
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
                             {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                            {isCorrected && (
+                              <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded">corrected</span>
+                            )}
                           </p>
-                          <p className="text-sm text-gray-900 dark:text-gray-100 break-words whitespace-pre-wrap">
+                          <p className={`text-sm break-words whitespace-pre-wrap ${
+                            isCorrected ? "text-blue-700 dark:text-blue-300 font-medium" : "text-gray-900 dark:text-gray-100"
+                          }`}>
                             {formatValue(value)}
                           </p>
                         </div>
-                        {hasConfidence && (
+                        {!isCorrected && hasConfidence && (
                           <span className={`text-xs font-medium ml-2 shrink-0 ${getConfidenceColor(confidence)}`}>
                             {Math.round(confidence * 100)}%
                           </span>

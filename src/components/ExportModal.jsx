@@ -24,7 +24,8 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
-import { cn, getExtractionData, formatDateTimeCST } from "../lib/utils";
+import { cn, getMergedExtractionData, formatDateTimeCST } from "../lib/utils";
+import { useToast } from "./ui/toast";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName, DOCUMENT_CATEGORIES } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
@@ -449,6 +450,8 @@ function TemplateManager({ templates, activeTemplate, onSelect, onSave, onDelete
  * Main export modal component
  */
 export function ExportModal({ packets, stats, isOpen, onClose }) {
+  const toast = useToast();
+
   // State
   const [format, setFormat] = useState("csv");
   const [filter, setFilter] = useState("all");
@@ -490,7 +493,7 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     
     for (const packet of filteredPackets) {
       for (const doc of packet.documents || []) {
-        const { data } = getExtractionData(doc.extraction);
+        const { data } = getMergedExtractionData(doc);
         Object.keys(data).forEach(key => fieldSet.add(key));
       }
     }
@@ -504,7 +507,7 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     
     for (const packet of filteredPackets) {
       for (const doc of packet.documents || []) {
-        const { data: extractedData, likelihoods } = getExtractionData(doc.extraction);
+        const { data: extractedData, likelihoods, editedFields } = getMergedExtractionData(doc);
         
         const row = {
           packet_id: packet.id,
@@ -518,8 +521,9 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
           classification_confidence: doc.classification?.confidence,
           needs_review: doc.needsReview,
           review_reasons: (doc.reviewReasons || []).join("; "),
-          review_status: doc.reviewStatus || "pending",
+          review_status: doc.status === "reviewed" ? "reviewed" : doc.status === "rejected" ? "rejected" : doc.reviewStatus || "pending",
           reviewer_notes: doc.reviewerNotes || "",
+          corrected_fields: Object.keys(editedFields).length > 0 ? Object.keys(editedFields).join("; ") : "",
         };
         
         // Add selected extracted fields
@@ -540,6 +544,17 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     
     return rows;
   }, [filteredPackets, includeAllExtracted, includeConfidenceScores]);
+
+  // Estimate export size (rough: avg ~200 bytes per field per row for CSV, ~400 for JSON)
+  const estimatedSize = useMemo(() => {
+    if (exportData.length === 0) return null;
+    const colCount = Object.keys(exportData[0] || {}).length || 1;
+    const avgBytesPerRow = format === "json" ? colCount * 400 : colCount * 200;
+    const totalBytes = exportData.length * avgBytesPerRow;
+    if (totalBytes < 1024) return `~${totalBytes} B`;
+    if (totalBytes < 1024 * 1024) return `~${(totalBytes / 1024).toFixed(0)} KB`;
+    return `~${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+  }, [exportData, format]);
 
   // Document count by type
   const documentCounts = useMemo(() => {
@@ -598,13 +613,16 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     }
   }, [templates, activeTemplate]);
 
-  // Execute export
-  const handleExport = useCallback(() => {
+  // Execute export — uses requestAnimationFrame yielding for large datasets to keep UI responsive
+  const handleExport = useCallback(async () => {
     setIsExporting(true);
     
     try {
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      
+
+      // Helper: yield to the main thread periodically for large datasets
+      const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
+
       if (format === "json") {
         const jsonData = {
           export_date: new Date().toISOString(),
@@ -617,21 +635,44 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
           },
           documents: exportData,
         };
-        downloadFile(JSON.stringify(jsonData, null, 2), `stewart-export-${timestamp}.json`, "application/json");
+        // Yield before heavy serialization for large datasets
+        if (exportData.length > 500) await yieldToMain();
+        const content = JSON.stringify(jsonData, null, 2);
+        downloadFile(content, `stewart-export-${timestamp}.json`, "application/json");
       } 
       else if (format === "csv") {
-        // Determine columns to include
         let columns = [...selectedFields];
         if (includeAllExtracted) {
           const extractedCols = allExtractedFields.map(f => f.id);
           columns = [...columns, ...extractedCols.filter(c => !columns.includes(c))];
         }
         
-        const csv = convertToCSV(exportData, columns);
-        downloadFile(csv, `stewart-export-${timestamp}.csv`, "text/csv");
+        // For large datasets, build CSV in chunks to avoid blocking
+        if (exportData.length > 1000) {
+          await yieldToMain();
+          const CHUNK = 500;
+          const header = columns.map(col => `"${col.replace(/"/g, '""')}"`).join(",");
+          const parts = [header];
+          for (let i = 0; i < exportData.length; i += CHUNK) {
+            const slice = exportData.slice(i, i + CHUNK);
+            const csvChunk = slice.map(row =>
+              columns.map(col => {
+                const value = row[col];
+                if (value === null || value === undefined) return "";
+                const s = String(value);
+                return `"${s.replace(/"/g, '""')}"`;
+              }).join(",")
+            ).join("\n");
+            parts.push(csvChunk);
+            if (i + CHUNK < exportData.length) await yieldToMain();
+          }
+          downloadFile(parts.join("\n"), `stewart-export-${timestamp}.csv`, "text/csv");
+        } else {
+          const csv = convertToCSV(exportData, columns);
+          downloadFile(csv, `stewart-export-${timestamp}.csv`, "text/csv");
+        }
       }
       else if (format === "csv_grouped") {
-        // Export separate CSV for each document type
         const byType = {};
         exportData.forEach(row => {
           const type = row.document_type || "other";
@@ -639,15 +680,14 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
           byType[type].push(row);
         });
         
-        // Create a zip-like structure (multiple downloads)
-        Object.entries(byType).forEach(([type, rows]) => {
+        for (const [type, rows] of Object.entries(byType)) {
           const columns = Object.keys(rows[0] || {});
           const csv = convertToCSV(rows, columns);
           downloadFile(csv, `stewart-${type}-${timestamp}.csv`, "text/csv");
-        });
+          await yieldToMain(); // Yield between file downloads
+        }
       }
       else if (format === "summary") {
-        // Generate human-readable summary
         let summary = `STEWART INGESTION ENGINE - EXPORT SUMMARY\n`;
         summary += `Generated: ${formatDateTimeCST(new Date())} CST\n`;
         summary += `${"=".repeat(60)}\n\n`;
@@ -676,16 +716,17 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
         downloadFile(summary, `stewart-summary-${timestamp}.txt`, "text/plain");
       }
       
+      toast.success("Export complete");
       setTimeout(() => {
         setIsExporting(false);
         onClose();
       }, 500);
     } catch (error) {
       console.error("Export failed:", error);
-      alert("Export failed: " + error.message);
+      toast.error("Export failed: " + error.message);
       setIsExporting(false);
     }
-  }, [format, filter, selectedFields, includeAllExtracted, includeConfidenceScores, exportData, filteredPackets, documentCounts, allExtractedFields, onClose]);
+  }, [format, filter, selectedFields, includeAllExtracted, includeConfidenceScores, exportData, filteredPackets, documentCounts, allExtractedFields, onClose, toast]);
 
   if (!isOpen) return null;
 
@@ -900,7 +941,13 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t bg-gray-50">
           <div className="text-sm text-gray-500">
-            {exportData.length} documents will be exported
+            <span>{exportData.length} documents will be exported</span>
+            {estimatedSize && (
+              <span className="ml-2 text-gray-400">({estimatedSize})</span>
+            )}
+            {exportData.length > 5000 && (
+              <span className="ml-2 text-amber-600 font-medium">Large export — may take a moment</span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <Button variant="outline" onClick={onClose}>

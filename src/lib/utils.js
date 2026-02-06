@@ -122,3 +122,16 @@ export function getExtractionData(extraction) {
 
   return { data, likelihoods };
 }
+
+/**
+ * Get extraction data with user corrections (editedFields) merged in.
+ * This is the single source of truth for "final data" after human review.
+ * @param {Object} document - A document object with .extraction and optional .editedFields
+ * @returns {{ data: Object, likelihoods: Object, originalData: Object, editedFields: Object }}
+ */
+export function getMergedExtractionData(document) {
+  const { data, likelihoods } = getExtractionData(document?.extraction);
+  const editedFields = document?.editedFields || {};
+  const mergedData = { ...data, ...editedFields };
+  return { data: mergedData, likelihoods, originalData: data, editedFields };
+}

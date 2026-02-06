@@ -12,10 +12,11 @@ import {
   RotateCcw,
   Trash2,
   Filter,
+  User,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { cn, getExtractionData } from "../lib/utils";
+import { cn, getMergedExtractionData } from "../lib/utils";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
@@ -27,6 +28,7 @@ function getStatusVariant(status) {
   switch (status) {
     case PacketStatus.COMPLETED:
     case "completed":
+    case "reviewed":
       return "success";
     case PacketStatus.NEEDS_REVIEW:
     case "needs_review":
@@ -38,7 +40,10 @@ function getStatusVariant(status) {
     case PacketStatus.CLASSIFYING:
     case PacketStatus.EXTRACTING:
     case "processing":
+    case "retrying":
       return "default";
+    case "pending":
+      return "secondary";
     default:
       return "secondary";
   }
@@ -60,6 +65,8 @@ function getStatusText(status) {
     case PacketStatus.COMPLETED:
     case "completed":
       return "Completed";
+    case "reviewed":
+      return "Reviewed";
     case PacketStatus.NEEDS_REVIEW:
     case "needs_review":
       return "Needs Review";
@@ -67,7 +74,12 @@ function getStatusText(status) {
     case "failed":
       return "Failed";
     case PacketStatus.RETRYING:
+    case "retrying":
       return "Retrying...";
+    case "pending":
+      return "Pending";
+    case "processing":
+      return "Extracting...";
     default:
       return status;
   }
@@ -82,6 +94,8 @@ function StatusIcon({ status, className }) {
     PacketStatus.CLASSIFYING,
     PacketStatus.EXTRACTING,
     PacketStatus.RETRYING,
+    "retrying",
+    "processing",
   ].includes(status);
 
   if (isProcessing) {
@@ -99,6 +113,7 @@ function StatusIcon({ status, className }) {
     case "failed":
       return <XCircle className={cn("text-red-500", className)} />;
     case PacketStatus.QUEUED:
+    case "pending":
       return <Clock className={cn("text-gray-400", className)} />;
     default:
       return <FileText className={cn("text-gray-400", className)} />;
@@ -109,6 +124,7 @@ function StatusIcon({ status, className }) {
  * Format file size
  */
 function formatFileSize(bytes) {
+  if (bytes == null || isNaN(bytes)) return "";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -172,9 +188,9 @@ function getPriorityFields(category) {
 /**
  * Document row within a packet - expandable to show extracted data
  */
-function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
-  // Extract data from Retab API response
-  const { data, likelihoods } = getExtractionData(document.extraction);
+function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expanded, onToggle }) {
+  // Extract data from Retab API response (with corrections merged in)
+  const { data, likelihoods, editedFields } = getMergedExtractionData(document);
   
   // Get display name - prefer split type, fallback to category
   const splitType = document.splitType || document.classification?.splitType;
@@ -251,6 +267,7 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
   // Count fields
   const fieldCount = extractedFields.length;
   const lowConfCount = extractedFields.filter(f => f.likelihood !== undefined && f.likelihood < 0.7).length;
+  const correctedCount = editedFields ? Object.keys(editedFields).length : 0;
 
   return (
     <div className="border-l-2 border-gray-200 dark:border-neutral-700 ml-4">
@@ -295,10 +312,20 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
                 {document.reviewReasons[0]}
               </p>
             )}
+            {document.status === "reviewed" && (document.reviewedBy || document.reviewed_by) && (
+              <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                Reviewed by {document.reviewedBy || document.reviewed_by}
+              </p>
+            )}
           </div>
         </div>
         
         <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
+          {correctedCount > 0 && (
+            <Badge variant="default" className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+              {correctedCount} corrected
+            </Badge>
+          )}
           {lowConfCount > 0 && (
             <Badge variant="warning" className="text-xs">
               {lowConfCount} low conf
@@ -333,6 +360,23 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
               </span>
             );
           })()}
+          {document.status === "failed" && onRetryDocument && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetryDocument(packet.id, document.id);
+              }}
+              title="Retry this document"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {document.status === "retrying" && (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -354,18 +398,39 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
           {/* Show error if document failed */}
           {document.error && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md mb-3">
-              <p className="text-sm font-medium text-red-800 dark:text-red-300">Extraction Error</p>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-red-800 dark:text-red-300">Extraction Error</p>
+                {onRetryDocument && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-red-600 hover:text-red-700 dark:text-red-400"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRetryDocument(packet.id, document.id);
+                    }}
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Retry
+                  </Button>
+                )}
+              </div>
               <p className="text-xs text-red-600 dark:text-red-400 mt-1">{document.error}</p>
             </div>
           )}
           
           {extractedFields.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
-              {extractedFields.slice(0, 12).map(({ key, value, likelihood }) => (
+              {extractedFields.slice(0, 12).map(({ key, value, likelihood }) => {
+                const isCorrected = editedFields && key in editedFields;
+                return (
                 <div key={key} className="flex flex-col">
                   <span className="text-xs text-gray-500 dark:text-neutral-400 flex items-center gap-1">
                     {formatFieldName(key)}
-                    {likelihood !== undefined && (
+                    {isCorrected && (
+                      <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">corrected</span>
+                    )}
+                    {!isCorrected && likelihood !== undefined && (
                       <span className={cn(
                         "text-[10px]",
                         likelihood >= 0.7 ? "text-green-600 dark:text-green-400" : 
@@ -377,12 +442,14 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
                   </span>
                   <span className={cn(
                     "text-sm truncate",
+                    isCorrected ? "text-blue-700 dark:text-blue-300 font-medium" :
                     likelihood !== undefined && likelihood < 0.5 ? "text-red-700 dark:text-red-400 font-medium" : "text-gray-900 dark:text-neutral-100"
                   )} title={String(value)}>
                     {formatValue(value)}
                   </span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           ) : !document.error ? (
             <p className="text-sm text-gray-500 dark:text-neutral-400 italic">No extracted data available</p>
@@ -424,7 +491,7 @@ function DocumentRow({ document, packet, onViewDocument, expanded, onToggle }) {
 /**
  * Single packet row with expandable documents
  */
-function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onToggle }) {
+function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove, expanded, onToggle }) {
   const [expandedDocs, setExpandedDocs] = useState(new Set());
   
   const isProcessing = [
@@ -490,13 +557,26 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
               {packet.filename}
             </p>
             <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-              <span>{formatFileSize(packet.size)}</span>
-              {docStats.total > 0 && (
-                <>
-                  <span>•</span>
-                  <span>{docStats.total} document{docStats.total !== 1 ? "s" : ""}</span>
-                </>
+              {packet.createdBy && (
+                <span className="flex items-center gap-1">
+                  <User className="h-3 w-3" />
+                  {packet.createdBy}
+                </span>
               )}
+              {packet.createdBy && formatFileSize(packet.size) && <span>•</span>}
+              {formatFileSize(packet.size) && <span>{formatFileSize(packet.size)}</span>}
+              {(() => {
+                // During extraction, show the total from progress (split count), not partial documents array
+                const displayTotal = isProcessing && packet.progress?.totalDocs > 0
+                  ? packet.progress.totalDocs
+                  : docStats.total;
+                return displayTotal > 0 ? (
+                  <>
+                    <span>•</span>
+                    <span>{displayTotal} document{displayTotal !== 1 ? "s" : ""}</span>
+                  </>
+                ) : null;
+              })()}
               {isProcessing && (() => {
                 const prog = packet.progress;
                 if (packet.status === PacketStatus.SPLITTING) {
@@ -583,6 +663,7 @@ function PacketRow({ packet, onViewDocument, onRetry, onRemove, expanded, onTogg
                 document={doc}
                 packet={packet}
                 onViewDocument={onViewDocument}
+                onRetryDocument={onRetryDocument}
                 expanded={expandedDocs.has(doc.id)}
                 onToggle={() => toggleDoc(doc.id)}
               />
@@ -627,6 +708,7 @@ export function PacketResultsView({
   stats,
   onViewDocument,
   onRetryPacket,
+  onRetryDocument,
   onRemovePacket,
   onRetryAllFailed,
 }) {
@@ -748,6 +830,7 @@ export function PacketResultsView({
             expanded={expandedPackets.has(packet.id)}
             onToggle={() => togglePacket(packet.id)}
             onViewDocument={onViewDocument}
+            onRetryDocument={onRetryDocument}
             onRetry={onRetryPacket}
             onRemove={onRemovePacket}
           />

@@ -1,49 +1,42 @@
 import { useState, useCallback, useEffect } from "react";
 import { getExtractionData } from "../lib/utils";
+import { getUsername } from "../lib/retab";
 import * as api from "../lib/api";
 
-const STORAGE_KEY = "stewart_processing_history";
 const MAX_HISTORY_ITEMS = 100;
 
 /**
- * Get history from localStorage
- */
-function loadHistory() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch (e) {
-    console.error("Failed to load history:", e);
-  }
-  return [];
-}
-
-/**
- * Save history to localStorage
- */
-function saveHistory(history) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  } catch (e) {
-    console.error("Failed to save history:", e);
-  }
-}
-
-/**
  * Hook for managing processing history
+ * All data is read from / written to the server database (global across users).
  */
 export function useProcessingHistory() {
-  const [history, setHistory] = useState(() => loadHistory());
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // Save to localStorage when history changes
+  // Fetch history from server on mount
   useEffect(() => {
-    saveHistory(history);
-  }, [history]);
+    let cancelled = false;
+    setLoading(true);
+    api.getHistory(MAX_HISTORY_ITEMS)
+      .then((entries) => {
+        if (cancelled) return;
+        // Server returns rows with { id, session_id, timestamp/created_at, total_packets, total_documents, completed, needs_review, failed, total_credits, total_cost, summary, created_by }
+        // Normalise into the shape the UI expects
+        const normalised = (entries || []).map(normaliseServerEntry);
+        setHistory(normalised);
+      })
+      .catch((err) => {
+        console.warn("Failed to load history from server, starting empty:", err);
+        if (!cancelled) setHistory([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   /**
-   * Add a completed run to history (localStorage + server when sessionId/usage provided)
+   * Add a completed run to history (server-first)
    */
   const addToHistory = useCallback((runData) => {
     const totalDocuments = runData.packets.reduce(
@@ -79,8 +72,10 @@ export function useProcessingHistory() {
         failed: runData.stats.failed,
         totalDocuments,
       },
+      created_by: getUsername(),
     };
 
+    // Optimistically update local state
     setHistory(prev => {
       const updated = [historyEntry, ...prev];
       if (updated.length > MAX_HISTORY_ITEMS) {
@@ -89,7 +84,7 @@ export function useProcessingHistory() {
       return updated;
     });
 
-    // Persist run summary to server so admin panel has full data (fire-and-forget)
+    // Build server payload
     const sessionId = runData.sessionId ?? null;
     const usage = runData.usage ?? {};
     const fromPackets = runData.packets.reduce(
@@ -103,6 +98,7 @@ export function useProcessingHistory() {
     );
     const totalCredits = usage?.totalCredits ?? fromPackets.credits;
     const totalCost = usage?.totalCost ?? fromPackets.cost;
+
     api.createHistoryEntry({
       id: historyEntry.id,
       session_id: sessionId,
@@ -114,23 +110,42 @@ export function useProcessingHistory() {
       total_credits: totalCredits ?? 0,
       total_cost: totalCost ?? 0,
       summary: { packets: historyEntry.packets, stats: historyEntry.stats },
+      created_by: getUsername(),
     }).catch((err) => console.warn("Failed to save run to server history:", err));
 
     return historyEntry;
   }, []);
 
   /**
-   * Remove a single history entry
+   * Remove a single history entry (server + local)
    */
   const removeFromHistory = useCallback((historyId) => {
+    // Optimistic local update
     setHistory(prev => prev.filter(entry => entry.id !== historyId));
+    // Delete from server
+    api.deleteHistoryEntry(historyId)
+      .catch((err) => console.warn("Failed to delete history entry from server:", err));
   }, []);
 
   /**
-   * Clear all history
+   * Clear all history (server + local)
    */
   const clearHistory = useCallback(() => {
     setHistory([]);
+    api.clearHistory()
+      .catch((err) => console.warn("Failed to clear history on server:", err));
+  }, []);
+
+  /**
+   * Refresh history from server
+   */
+  const refreshHistory = useCallback(() => {
+    api.getHistory(MAX_HISTORY_ITEMS)
+      .then((entries) => {
+        const normalised = (entries || []).map(normaliseServerEntry);
+        setHistory(normalised);
+      })
+      .catch((err) => console.warn("Failed to refresh history:", err));
   }, []);
 
   /**
@@ -142,11 +157,43 @@ export function useProcessingHistory() {
 
   return {
     history,
+    loading,
     addToHistory,
     removeFromHistory,
     clearHistory,
+    refreshHistory,
     getHistoryEntry,
     hasHistory: history.length > 0,
+  };
+}
+
+/**
+ * Normalise a server history row into the shape the UI expects.
+ * Server rows have: id, session_id, created_at, total_packets, total_documents,
+ * completed, needs_review, failed, total_credits, total_cost, summary (JSON string), created_by
+ */
+function normaliseServerEntry(row) {
+  let summary = {};
+  if (typeof row.summary === "string") {
+    try { summary = JSON.parse(row.summary); } catch { /* ignore */ }
+  } else if (row.summary && typeof row.summary === "object") {
+    summary = row.summary;
+  }
+
+  return {
+    id: row.id,
+    timestamp: row.created_at || row.timestamp,
+    packets: summary.packets || [],
+    stats: summary.stats || {
+      totalPackets: row.total_packets ?? 0,
+      completed: row.completed ?? 0,
+      needsReview: row.needs_review ?? 0,
+      failed: row.failed ?? 0,
+      totalDocuments: row.total_documents ?? 0,
+    },
+    total_credits: row.total_credits,
+    total_cost: row.total_cost,
+    created_by: row.created_by || "",
   };
 }
 

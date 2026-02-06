@@ -2,6 +2,7 @@ import { useReducer, useCallback, useRef, useEffect, useState } from "react";
 import { usePacketPipeline, PipelineStatus } from "./usePacketPipeline";
 import * as api from "../lib/api";
 import { loadSettings, DEFAULT_CONFIG as RETAB_DEFAULT_CONFIG } from "../lib/retabConfig";
+import { getUsername } from "../lib/retab";
 
 /**
  * Batch processing status constants
@@ -37,15 +38,21 @@ const ActionTypes = {
   RESUME_PROCESSING: "RESUME_PROCESSING",
   UPDATE_PACKET_STATUS: "UPDATE_PACKET_STATUS",
   UPDATE_DOCUMENT: "UPDATE_DOCUMENT",
+  SET_PENDING_DOCUMENTS: "SET_PENDING_DOCUMENTS",
   PACKET_DOCUMENT_PROCESSED: "PACKET_DOCUMENT_PROCESSED",
   PACKET_COMPLETED: "PACKET_COMPLETED",
   PACKET_FAILED: "PACKET_FAILED",
   RETRY_PACKET: "RETRY_PACKET",
+  RETRY_DOCUMENT_START: "RETRY_DOCUMENT_START",
+  RETRY_DOCUMENT_SUCCESS: "RETRY_DOCUMENT_SUCCESS",
+  RETRY_DOCUMENT_FAIL: "RETRY_DOCUMENT_FAIL",
   REMOVE_PACKET: "REMOVE_PACKET",
   CLEAR_ALL: "CLEAR_ALL",
   SET_CONFIG: "SET_CONFIG",
   SET_RETAB_CONFIG: "SET_RETAB_CONFIG",
   SET_SESSION_ID: "SET_SESSION_ID",
+  RESTORE_FROM_DB: "RESTORE_FROM_DB",
+  RESTORE_FROM_STORAGE: "RESTORE_FROM_STORAGE",
 };
 
 // Storage key for persistence (fallback)
@@ -91,10 +98,10 @@ function loadFromStorage() {
     
     const data = JSON.parse(saved);
     
-    // Check if data is too old (24 hours)
+    // Check if data is too old (14 days)
     const savedAt = new Date(data.savedAt);
     const hoursSinceSave = (Date.now() - savedAt.getTime()) / (1000 * 60 * 60);
-    if (hoursSinceSave > 24) {
+    if (hoursSinceSave > 336) { // 14 days
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
@@ -107,12 +114,11 @@ function loadFromStorage() {
 }
 
 /**
- * Build initial state, optionally restoring from storage
+ * Build initial state — always starts empty.
+ * Data is restored asynchronously: DB first (authoritative), localStorage as fallback.
  */
 function getInitialState() {
-  const saved = loadFromStorage();
-  
-  const baseState = {
+  return {
     sessionId: null, // Will be set by database on init
     packets: new Map(),
     queue: [],
@@ -139,30 +145,6 @@ function getInitialState() {
     retabConfig: loadSettings(), // Retab API settings (model, consensus, etc.)
     dbConnected: false, // Track if database is available
   };
-  
-  if (saved && saved.packets && saved.packets.length > 0) {
-    // Restore packets
-    for (const packet of saved.packets) {
-      baseState.packets.set(packet.id, packet);
-    }
-    
-    // Recalculate stats
-    baseState.stats = {
-      total: saved.packets.length,
-      queued: 0,
-      processing: 0,
-      completed: saved.packets.filter(p => p.status === PacketStatus.COMPLETED).length,
-      needsReview: saved.packets.filter(p => p.status === PacketStatus.NEEDS_REVIEW).length,
-      failed: saved.packets.filter(p => p.status === PacketStatus.FAILED).length,
-    };
-    
-    // Set status based on what we have
-    if (baseState.stats.total > 0) {
-      baseState.batchStatus = BatchStatus.COMPLETED;
-    }
-  }
-  
-  return baseState;
 }
 
 /**
@@ -188,6 +170,7 @@ function batchQueueReducer(state, action) {
           pageCount: file.pageCount ?? null,
           base64: file.base64 ?? null,
           hasServerFile: file.hasServerFile ?? false,
+          createdBy: file.createdBy ?? null,
           status: PacketStatus.QUEUED,
           progress: { stage: null, docIndex: 0, totalDocs: 0 },
           documents: [],
@@ -288,17 +271,41 @@ function batchQueueReducer(state, action) {
       };
     }
     
+    case ActionTypes.SET_PENDING_DOCUMENTS: {
+      const packet = state.packets.get(action.packetId);
+      if (!packet) return state;
+      
+      const newPackets = new Map(state.packets);
+      newPackets.set(action.packetId, {
+        ...packet,
+        documents: action.documents,
+        progress: { ...packet.progress, totalDocs: action.documents.length },
+      });
+      
+      return { ...state, packets: newPackets };
+    }
+
     case ActionTypes.PACKET_DOCUMENT_PROCESSED: {
       const packet = state.packets.get(action.packetId);
       if (!packet) return state;
       
       const newPackets = new Map(state.packets);
-      const newDocs = [...packet.documents, action.document];
+      // Replace the pending placeholder with the completed document (matched by ID)
+      const existingIndex = packet.documents.findIndex(d => d.id === action.document.id);
+      let newDocs;
+      if (existingIndex >= 0) {
+        newDocs = [...packet.documents];
+        newDocs[existingIndex] = action.document;
+      } else {
+        newDocs = [...packet.documents, action.document];
+      }
+      
+      const completedCount = newDocs.filter(d => d.status !== "pending" && d.status !== "processing").length;
       
       newPackets.set(action.packetId, {
         ...packet,
         documents: newDocs,
-        progress: { ...packet.progress, docIndex: newDocs.length },
+        progress: { ...packet.progress, docIndex: completedCount },
       });
       
       return { ...state, packets: newPackets };
@@ -544,26 +551,295 @@ function batchQueueReducer(state, action) {
         }
       }
       
+      // Promote packet status when no more docs need human review
+      let packetStatus = packet.status;
+      const totalDocs = updatedDocs?.length || 0;
+      if (totalDocs > 0 && docStats.needsReview === 0) {
+        // No docs need review: mark COMPLETED (even if some failed — those are final)
+        packetStatus = PacketStatus.COMPLETED;
+      }
+
       newPackets.set(packetId, {
         ...packet,
+        status: packetStatus,
         documents: updatedDocs,
         completedDocuments: docStats.completed,
         needsReviewDocuments: docStats.needsReview,
         failedDocuments: docStats.failed,
       });
       
-      // Update global stats
+      // Recalculate global stats across all packets
       const statsUpdate = { ...state.stats };
-      // Recalculate needs_review count across all packets
       let totalNeedsReview = 0;
+      let totalCompleted = 0;
+      let totalFailed = 0;
       for (const [, p] of newPackets) {
         totalNeedsReview += p.needsReviewDocuments || 0;
+        if (p.status === PacketStatus.COMPLETED || p.status === "completed") totalCompleted++;
+        else if (p.status === PacketStatus.FAILED || p.status === "failed") totalFailed++;
       }
       statsUpdate.needsReview = totalNeedsReview;
+      statsUpdate.completed = totalCompleted;
+      statsUpdate.failed = totalFailed;
       
       return { ...state, packets: newPackets, stats: statsUpdate };
     }
     
+    case ActionTypes.RETRY_DOCUMENT_START: {
+      // Mark a single document as "retrying" within its packet
+      const { packetId, documentId } = action;
+      const pkt = state.packets.get(packetId);
+      if (!pkt) return state;
+
+      const newPackets = new Map(state.packets);
+      const updatedDocs = pkt.documents.map(d =>
+        d.id === documentId ? { ...d, status: "retrying", error: null } : d
+      );
+      newPackets.set(packetId, { ...pkt, documents: updatedDocs });
+      return { ...state, packets: newPackets };
+    }
+
+    case ActionTypes.RETRY_DOCUMENT_SUCCESS: {
+      // Replace the retried document with the successful result
+      const { packetId, documentId, result } = action;
+      const pkt = state.packets.get(packetId);
+      if (!pkt) return state;
+
+      const newPackets = new Map(state.packets);
+      const updatedDocs = pkt.documents.map(d => {
+        if (d.id !== documentId) return d;
+        return {
+          ...d,
+          extraction: result.extraction,
+          extractionConfidence: result.extractionConfidence,
+          status: result.status,
+          needsReview: result.needsReview,
+          reviewReasons: result.reviewReasons,
+          error: null,
+          usage: result.usage,
+        };
+      });
+
+      // Recalculate packet status from updated documents
+      let completed = 0, needsReview = 0, failed = 0;
+      for (const doc of updatedDocs) {
+        if (doc.status === "completed" || doc.status === "reviewed") completed++;
+        else if (doc.status === "needs_review" && doc.needsReview !== false) needsReview++;
+        else if (doc.status === "failed" || doc.status === "rejected") failed++;
+      }
+
+      let packetStatus = pkt.status;
+      if (needsReview > 0) {
+        packetStatus = PacketStatus.NEEDS_REVIEW;
+      } else if (failed === 0) {
+        packetStatus = PacketStatus.COMPLETED;
+      }
+
+      newPackets.set(packetId, {
+        ...pkt,
+        status: packetStatus,
+        documents: updatedDocs,
+        completedDocuments: completed,
+        needsReviewDocuments: needsReview,
+        failedDocuments: failed,
+      });
+
+      // Recalculate global stats
+      const statsUpdate = { ...state.stats };
+      let totalCompleted = 0, totalFailed = 0, totalNR = 0;
+      for (const [, p] of newPackets) {
+        if (p.status === PacketStatus.COMPLETED || p.status === "completed") totalCompleted++;
+        else if (p.status === PacketStatus.FAILED || p.status === "failed") totalFailed++;
+        else if (p.status === PacketStatus.NEEDS_REVIEW || p.status === "needs_review") totalNR++;
+      }
+      statsUpdate.completed = totalCompleted;
+      statsUpdate.failed = totalFailed;
+      statsUpdate.needsReview = totalNR;
+
+      // Add usage from the retry
+      const retryUsage = result.usage || {};
+      const usageUpdate = {
+        totalCredits: state.usage.totalCredits + (retryUsage.credits || 0),
+        totalCost: state.usage.totalCost + ((retryUsage.credits || 0) * 0.01),
+        totalPages: state.usage.totalPages + (retryUsage.pages || 0),
+        apiCalls: state.usage.apiCalls + 1,
+      };
+
+      return { ...state, packets: newPackets, stats: statsUpdate, usage: usageUpdate };
+    }
+
+    case ActionTypes.RETRY_DOCUMENT_FAIL: {
+      // Mark the document as failed again with the new error
+      const { packetId, documentId, error } = action;
+      const pkt = state.packets.get(packetId);
+      if (!pkt) return state;
+
+      const newPackets = new Map(state.packets);
+      const updatedDocs = pkt.documents.map(d =>
+        d.id === documentId ? { ...d, status: "failed", error } : d
+      );
+      newPackets.set(packetId, { ...pkt, documents: updatedDocs });
+      return { ...state, packets: newPackets };
+    }
+
+    case ActionTypes.RESTORE_FROM_STORAGE: {
+      // Restore from localStorage — only used when DB is unavailable or empty.
+      const saved = action.saved;
+      if (!saved?.packets?.length) return state;
+
+      const restoredPackets = new Map();
+      for (const packet of saved.packets) {
+        restoredPackets.set(packet.id, packet);
+      }
+
+      return {
+        ...state,
+        packets: restoredPackets,
+        queue: [],
+        processing: new Set(),
+        batchStatus: BatchStatus.COMPLETED,
+        stats: {
+          total: saved.packets.length,
+          queued: 0,
+          processing: 0,
+          completed: saved.packets.filter(p => p.status === PacketStatus.COMPLETED).length,
+          needsReview: saved.packets.filter(p => p.status === PacketStatus.NEEDS_REVIEW).length,
+          failed: saved.packets.filter(p => p.status === PacketStatus.FAILED).length,
+        },
+      };
+    }
+
+    case ActionTypes.RESTORE_FROM_DB: {
+      // DB is authoritative — always replaces any existing state.
+      const newPackets = new Map();
+      const resumeQueue = []; // Interrupted packets to auto-resume
+      const dbPackets = action.packets || [];
+
+      // Non-terminal statuses that indicate interrupted processing
+      const interruptedStatuses = ["queued", "splitting", "classifying", "extracting", "processing"];
+
+      for (const dbPkt of dbPackets) {
+        // Map DB status to internal PacketStatus
+        let status = dbPkt.status;
+        let error = dbPkt.error || null;
+        const hasServerFile = dbPkt.hasServerFile ?? !!dbPkt.temp_file_path;
+
+        if (interruptedStatuses.includes(status)) {
+          if (hasServerFile) {
+            // File still on server — re-queue for automatic resumption
+            status = PacketStatus.QUEUED;
+            error = null;
+            resumeQueue.push(dbPkt.id);
+          } else {
+            // No file available — can't recover
+            status = PacketStatus.FAILED;
+            error = "Processing interrupted and file no longer available. Re-upload to retry.";
+          }
+        } else if (status === "completed") {
+          status = PacketStatus.COMPLETED;
+        } else if (status === "needs_review") {
+          status = PacketStatus.NEEDS_REVIEW;
+        } else if (status === "failed") {
+          status = PacketStatus.FAILED;
+        }
+
+        const documents = (dbPkt.documents || []).map(d => {
+          // Parse JSON fields that may come as strings from the DB
+          const extractedData = d.extracted_data ? (typeof d.extracted_data === "string" ? JSON.parse(d.extracted_data) : d.extracted_data) : (d.extractedData || null);
+          const likelihoods = d.likelihoods ? (typeof d.likelihoods === "string" ? JSON.parse(d.likelihoods) : d.likelihoods) : null;
+          const editedFields = d.edited_fields ? (typeof d.edited_fields === "string" ? JSON.parse(d.edited_fields) : d.edited_fields) : (d.editedFields || null);
+          const reviewReasons = d.review_reasons ? (Array.isArray(d.review_reasons) ? d.review_reasons : (typeof d.review_reasons === "string" ? JSON.parse(d.review_reasons) : [])) : (d.reviewReasons || []);
+          
+          return {
+            ...d,
+            // Map snake_case DB fields to camelCase for frontend consistency
+            extractedData,
+            likelihoods,
+            editedFields,
+            reviewReasons,
+            needsReview: d.needs_review ?? d.needsReview ?? false,
+            extractionConfidence: d.extraction_confidence ?? d.extractionConfidence ?? null,
+            reviewedAt: d.reviewed_at ?? d.reviewedAt ?? null,
+            reviewedBy: d.reviewed_by ?? d.reviewedBy ?? null,
+            reviewerNotes: d.reviewer_notes ?? d.reviewerNotes ?? null,
+            splitType: d.split_type ?? d.splitType ?? null,
+            // Build an extraction object so getMergedExtractionData works correctly
+            extraction: d.extraction || (extractedData ? { data: extractedData, likelihoods: likelihoods || {} } : null),
+            classification: d.classification || (d.document_type ? {
+              category: d.document_type,
+              confidence: d.classification_confidence ?? null,
+            } : null),
+            pages: d.pages ? (typeof d.pages === "string" ? JSON.parse(d.pages) : d.pages) : [],
+          };
+        });
+
+        // Verify packet status against actual document flags:
+        // If DB says needs_review but no documents actually need review, promote to COMPLETED
+        if (status === PacketStatus.NEEDS_REVIEW && documents.length > 0) {
+          const anyNeedsReview = documents.some(d => d.needsReview === true);
+          if (!anyNeedsReview) {
+            status = PacketStatus.COMPLETED;
+          }
+        }
+
+        newPackets.set(dbPkt.id, {
+          id: dbPkt.id,
+          filename: dbPkt.filename,
+          path: null,
+          size: dbPkt.file_size || null,
+          pageCount: dbPkt.page_count || null,
+          base64: null, // Will be fetched from server on demand
+          hasServerFile,
+          createdBy: dbPkt.created_by || null,
+          status,
+          progress: {
+            stage: status === PacketStatus.COMPLETED || status === PacketStatus.NEEDS_REVIEW ? "completed" : null,
+            docIndex: documents.length,
+            totalDocs: documents.length,
+          },
+          documents: status === PacketStatus.QUEUED ? [] : documents, // Clear docs for re-processing
+          result: status === PacketStatus.COMPLETED || status === PacketStatus.NEEDS_REVIEW
+            ? { documents, stats: { completed: documents.length } }
+            : null,
+          error,
+          retryCount: 0,
+          addedAt: dbPkt.created_at || new Date().toISOString(),
+          startedAt: dbPkt.created_at || null,
+          completedAt: dbPkt.completed_at || null,
+        });
+      }
+
+      if (newPackets.size === 0) return state;
+
+      // Calculate stats from restored packets
+      let completed = 0, needsReview = 0, failed = 0, queued = 0;
+      for (const [, p] of newPackets) {
+        if (p.status === PacketStatus.COMPLETED) completed++;
+        else if (p.status === PacketStatus.NEEDS_REVIEW) needsReview++;
+        else if (p.status === PacketStatus.FAILED) failed++;
+        else if (p.status === PacketStatus.QUEUED) queued++;
+      }
+
+      // If there are packets to resume, set status to PROCESSING so the loop picks them up
+      const hasPendingWork = resumeQueue.length > 0;
+
+      return {
+        ...state,
+        packets: newPackets,
+        queue: resumeQueue,
+        processing: new Set(),
+        batchStatus: hasPendingWork ? BatchStatus.PROCESSING : BatchStatus.COMPLETED,
+        stats: {
+          total: newPackets.size,
+          queued,
+          processing: 0,
+          completed,
+          needsReview,
+          failed,
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -574,13 +850,33 @@ function batchQueueReducer(state, action) {
  */
 export function useBatchQueue() {
   const [state, dispatch] = useReducer(batchQueueReducer, initialState);
-  const { processPacket } = usePacketPipeline();
+  const { processPacket, retryDocumentExtraction } = usePacketPipeline();
   
+  /**
+   * Retry an async DB sync operation once before giving up.
+   * Prevents silent data loss when a single network hiccup occurs.
+   */
+  const syncWithRetry = useCallback(async (fn, label) => {
+    try {
+      return await fn();
+    } catch (firstErr) {
+      console.warn(`${label} failed (attempt 1): ${firstErr.message}, retrying in 2s...`);
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        return await fn();
+      } catch (secondErr) {
+        console.error(`${label} failed (attempt 2): ${secondErr.message} — data may be out of sync`);
+        throw secondErr;
+      }
+    }
+  }, []);
+
   // Use refs to track processing state without causing re-renders
   const isProcessingRef = useRef(false);
   const pausedRef = useRef(false);
   const stateRef = useRef(state);
   const dbInitRef = useRef(false);
+  const runProcessingLoopRef = useRef(null); // Set once runProcessingLoop is created
   
   // Keep stateRef in sync
   useEffect(() => {
@@ -588,13 +884,16 @@ export function useBatchQueue() {
   }, [state]);
 
   // Initialize database session on mount
+  // Priority: DB (authoritative) → localStorage (fallback)
   useEffect(() => {
     if (dbInitRef.current) return;
     dbInitRef.current = true;
     
     async function initDbSession() {
+      let dbRestored = false;
+
       try {
-        const session = await api.getActiveSession();
+        const session = await api.getActiveSession(getUsername());
         if (session?.id) {
           dispatch({ 
             type: ActionTypes.SET_SESSION_ID, 
@@ -602,6 +901,47 @@ export function useBatchQueue() {
             dbConnected: true,
           });
           console.log("Database session initialized:", session.id);
+
+          // Always try to restore from database (authoritative source)
+          try {
+            const fullSession = await api.getFullSession(session.id);
+            if (fullSession?.packets?.length > 0) {
+              dispatch({
+                type: ActionTypes.RESTORE_FROM_DB,
+                packets: fullSession.packets,
+              });
+              dbRestored = true;
+
+              // Check if any interrupted packets were re-queued for auto-resume
+              const interruptedStatuses = ["queued", "splitting", "classifying", "extracting", "processing"];
+              const resumable = fullSession.packets.filter(p =>
+                interruptedStatuses.includes(p.status) && (p.hasServerFile ?? !!p.temp_file_path)
+              );
+              if (resumable.length > 0) {
+                console.log(`Auto-resuming ${resumable.length} interrupted packet(s)...`);
+                // Kick off the processing loop after a short delay for state to settle
+                setTimeout(() => {
+                  pausedRef.current = false;
+                  if (runProcessingLoopRef.current) {
+                    runProcessingLoopRef.current();
+                  }
+                }, 500);
+              }
+
+              console.log(`Restored ${fullSession.packets.length} packet(s) from database`);
+            }
+          } catch (restoreError) {
+            console.warn("Failed to restore packets from database:", restoreError.message);
+          }
+
+          // If DB had no packets, fall back to localStorage
+          if (!dbRestored) {
+            const saved = loadFromStorage();
+            if (saved?.packets?.length > 0) {
+              dispatch({ type: ActionTypes.RESTORE_FROM_STORAGE, saved });
+              console.log(`Restored ${saved.packets.length} packet(s) from localStorage (DB empty)`);
+            }
+          }
         }
       } catch (error) {
         console.warn("Database not available, using localStorage fallback:", error.message);
@@ -611,6 +951,13 @@ export function useBatchQueue() {
           sessionId: `local_${Date.now()}`,
           dbConnected: false,
         });
+
+        // Fall back to localStorage when DB is unavailable
+        const saved = loadFromStorage();
+        if (saved?.packets?.length > 0) {
+          dispatch({ type: ActionTypes.RESTORE_FROM_STORAGE, saved });
+          console.log(`Restored ${saved.packets.length} packet(s) from localStorage (DB unavailable)`);
+        }
       }
     }
     
@@ -658,9 +1005,12 @@ export function useBatchQueue() {
         dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: err.message || "File not found or expired" });
         if (stateRef.current.dbConnected && stateRef.current.sessionId) {
           try {
-            await api.updatePacket(packetId, { status: "failed", error: err.message });
-          } catch (syncErr) {
-            console.warn("Failed to sync failed packet:", syncErr.message);
+            await syncWithRetry(
+              () => api.updatePacket(packetId, { status: "failed", error: err.message }),
+              "syncFileNotFoundPacket"
+            );
+          } catch (_) {
+            // Already logged by syncWithRetry
           }
         }
         return;
@@ -679,6 +1029,9 @@ export function useBatchQueue() {
         onStatusChange: (id, status, progress) => {
           dispatch({ type: ActionTypes.UPDATE_PACKET_STATUS, packetId: id, status, progress });
         },
+        onDocumentsDetected: (id, documents) => {
+          dispatch({ type: ActionTypes.SET_PENDING_DOCUMENTS, packetId: id, documents });
+        },
         onDocumentProcessed: (id, document) => {
           dispatch({ type: ActionTypes.PACKET_DOCUMENT_PROCESSED, packetId: id, document });
         },
@@ -687,30 +1040,36 @@ export function useBatchQueue() {
       
       dispatch({ type: ActionTypes.PACKET_COMPLETED, packetId, result });
       
-      // Sync to database if connected
+      // Sync to database if connected (with retry)
       if (stateRef.current.dbConnected && stateRef.current.sessionId) {
         try {
-          await api.syncPacketResult(stateRef.current.sessionId, packetId, result);
-        } catch (error) {
-          console.warn("Failed to sync packet result to database:", error.message);
+          await syncWithRetry(
+            () => api.syncPacketResult(stateRef.current.sessionId, packetId, result),
+            "syncPacketResult"
+          );
+        } catch (_) {
+          // Already logged by syncWithRetry
         }
       }
     } catch (error) {
       dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: error.message });
-      // Persist failed packet to DB so debug/errors and logs show it
+      // Persist failed packet to DB so debug/errors and logs show it (with retry)
       if (stateRef.current.dbConnected && stateRef.current.sessionId) {
         try {
-          await api.updatePacket(packetId, {
-            status: "failed",
-            error: error.message,
-            completed_at: new Date().toISOString(),
-          });
-        } catch (syncErr) {
-          console.warn("Failed to sync failed packet to database:", syncErr.message);
+          await syncWithRetry(
+            () => api.updatePacket(packetId, {
+              status: "failed",
+              error: error.message,
+              completed_at: new Date().toISOString(),
+            }),
+            "syncFailedPacket"
+          );
+        } catch (_) {
+          // Already logged by syncWithRetry
         }
       }
     }
-  }, [processPacket]);
+  }, [processPacket, syncWithRetry]);
 
   /**
    * Main processing loop
@@ -745,6 +1104,9 @@ export function useBatchQueue() {
     
     isProcessingRef.current = false;
   }, [processNextPacket]);
+
+  // Keep the ref in sync so initDbSession can trigger the loop
+  runProcessingLoopRef.current = runProcessingLoop;
 
   /**
    * Start batch processing
@@ -783,9 +1145,12 @@ export function useBatchQueue() {
     const allFromServer = files.every((f) => f.hasServerFile);
     if (stateRef.current.dbConnected && stateRef.current.sessionId && !allFromServer) {
       try {
-        await api.createPackets(stateRef.current.sessionId, files);
-      } catch (error) {
-        console.warn("Failed to sync packets to database:", error.message);
+        await syncWithRetry(
+          () => api.createPackets(stateRef.current.sessionId, files, getUsername()),
+          "syncCreatePackets"
+        );
+      } catch (_) {
+        // Already logged by syncWithRetry
       }
     }
   }, []);
@@ -817,6 +1182,58 @@ export function useBatchQueue() {
       setTimeout(runProcessingLoop, 100);
     }
   }, [start, runProcessingLoop]);
+
+  /**
+   * Retry a single failed document within a packet (no re-split, no re-classify)
+   */
+  const retryDocument = useCallback(async (packetId, documentId) => {
+    const packet = stateRef.current.packets.get(packetId);
+    if (!packet) return;
+
+    const document = packet.documents?.find(d => d.id === documentId);
+    if (!document) return;
+
+    // Resolve base64 from server if needed
+    let packetWithData = packet;
+    if (!packet.base64 && packet.hasServerFile) {
+      try {
+        const base64 = await api.getPacketFileAsBase64(packet.id);
+        packetWithData = { ...packet, base64 };
+      } catch (err) {
+        dispatch({ type: ActionTypes.RETRY_DOCUMENT_FAIL, packetId, documentId, error: err.message || "File not found" });
+        return;
+      }
+    }
+
+    if (!packetWithData.base64) {
+      dispatch({ type: ActionTypes.RETRY_DOCUMENT_FAIL, packetId, documentId, error: "Document data not available. Re-upload the file to retry." });
+      return;
+    }
+
+    dispatch({ type: ActionTypes.RETRY_DOCUMENT_START, packetId, documentId });
+
+    try {
+      const result = await retryDocumentExtraction(packetWithData, document, {
+        retabConfig: stateRef.current.retabConfig,
+      });
+
+      dispatch({ type: ActionTypes.RETRY_DOCUMENT_SUCCESS, packetId, documentId, result });
+
+      // Sync updated document extraction to database (with retry)
+      if (stateRef.current.dbConnected) {
+        try {
+          await syncWithRetry(
+            () => api.syncRetryDocumentResult(documentId, result),
+            "syncRetryDocumentResult"
+          );
+        } catch (_) {
+          // Already logged by syncWithRetry
+        }
+      }
+    } catch (error) {
+      dispatch({ type: ActionTypes.RETRY_DOCUMENT_FAIL, packetId, documentId, error: error.message });
+    }
+  }, [retryDocumentExtraction]);
 
   /**
    * Remove a packet
@@ -892,6 +1309,7 @@ export function useBatchQueue() {
     resume,
     retryPacket,
     retryAllFailed,
+    retryDocument,
     removePacket,
     clearAll,
     setConfig,

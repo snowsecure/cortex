@@ -48,6 +48,7 @@ export function usePacketPipeline() {
     const {
       onStatusChange = () => {},
       onDocumentProcessed = () => {},
+      onDocumentsDetected = () => {},
       skipSplit = false,
       forcedCategory = null,
       retabConfig = {},
@@ -129,6 +130,35 @@ export function usePacketPipeline() {
       }
 
       result.stats.totalDocuments = splits.length;
+
+      // Pre-generate IDs and build placeholder documents so the UI can show all detected docs immediately
+      const docIds = splits.map(() => generateDocId());
+      const pendingDocs = splits.map((split, index) => {
+        const category = forcedCategory || mapSplitTypeToCategory(split.name);
+        return {
+          id: docIds[index],
+          packetId: packet.id,
+          splitIndex: index,
+          splitType: split.name,
+          pages: split.pages,
+          classification: {
+            category,
+            confidence: 0.9,
+            reasoning: `Detected as ${split.name} during packet splitting`,
+            splitType: split.name,
+          },
+          extraction: null,
+          status: "pending",
+          needsReview: false,
+          reviewReasons: [],
+          error: null,
+          extractionConfidence: undefined,
+        };
+      });
+
+      // Send all pending documents to the UI at once
+      onDocumentsDetected?.(packet.id, pendingDocs);
+
       onStatusChange(packet.id, PipelineStatus.EXTRACTING, { 
         docIndex: 0, 
         total: splits.length 
@@ -136,7 +166,7 @@ export function usePacketPipeline() {
 
       // Step 2: Extract all subdocuments in parallel batches
       const extractSingleDoc = async (split, index) => {
-        const docId = generateDocId();
+        const docId = docIds[index];
         const category = forcedCategory || mapSplitTypeToCategory(split.name);
         
         const documentResult = {
@@ -171,15 +201,34 @@ export function usePacketPipeline() {
             throw new Error(`No schema found for category: ${category}`);
           }
 
-          const extractionResponse = await extractDocument({
-            document: packet.base64,
-            filename: packet.name || packet.filename,
-            jsonSchema: schema,
-            model: config.model,
-            nConsensus: config.nConsensus,
-            imageDpi: config.imageDpi,
-            temperature: config.temperature,
-          });
+          // Retry extraction on transient network/server errors
+          const DOC_MAX_RETRIES = 2;
+          const DOC_RETRY_DELAYS = [2000, 4000];
+          const RETRIABLE_PATTERNS = /fetch failed|network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|50[0-9]|529/i;
+
+          let extractionResponse;
+          for (let attempt = 0; attempt <= DOC_MAX_RETRIES; attempt++) {
+            try {
+              extractionResponse = await extractDocument({
+                document: packet.base64,
+                filename: packet.name || packet.filename,
+                jsonSchema: schema,
+                model: config.model,
+                nConsensus: config.nConsensus,
+                imageDpi: config.imageDpi,
+                temperature: config.temperature,
+              });
+              break; // Success -- exit retry loop
+            } catch (retryErr) {
+              const isRetriable = RETRIABLE_PATTERNS.test(retryErr.message);
+              if (isRetriable && attempt < DOC_MAX_RETRIES) {
+                console.warn(`Document ${index + 1} extraction attempt ${attempt + 1} failed (${retryErr.message}), retrying in ${DOC_RETRY_DELAYS[attempt]}ms...`);
+                await new Promise(r => setTimeout(r, DOC_RETRY_DELAYS[attempt]));
+                continue;
+              }
+              throw retryErr; // Non-retriable or exhausted retries
+            }
+          }
           
           documentResult.extraction = extractionResponse;
           
@@ -322,9 +371,103 @@ export function usePacketPipeline() {
     };
   }, []);
 
+  /**
+   * Retry extraction for a single failed document within a packet.
+   * Skips splitting/classification – re-uses the existing split and category info.
+   * Returns the updated document result on success, throws on failure.
+   */
+  const retryDocumentExtraction = useCallback(async (packet, document, options = {}) => {
+    const {
+      onStatusChange = () => {},
+      retabConfig = {},
+    } = options;
+
+    // Merge with defaults
+    const config = {
+      model: retabConfig.model || DEFAULT_CONFIG.model,
+      nConsensus: retabConfig.nConsensus || DEFAULT_CONFIG.nConsensus,
+      imageDpi: retabConfig.imageDpi || DEFAULT_CONFIG.imageDpi,
+      temperature: retabConfig.temperature || DEFAULT_CONFIG.temperature,
+    };
+
+    const modelInfo = RETAB_MODELS[config.model] || RETAB_MODELS["retab-small"];
+
+    if (!packet.base64) {
+      throw new Error("Document data not available. Please re-upload the file to retry.");
+    }
+
+    const category = document.classification?.category
+      || mapSplitTypeToCategory(document.splitType || document.classification?.splitType);
+    const schema = getSchemaForCategory(category);
+
+    if (!schema) {
+      throw new Error(`No schema found for category: ${category}`);
+    }
+
+    onStatusChange(document.id, "retrying");
+
+    // Retry extraction with exponential backoff (same as initial pipeline)
+    const DOC_MAX_RETRIES = 2;
+    const DOC_RETRY_DELAYS = [2000, 4000];
+    const RETRIABLE_PATTERNS = /fetch failed|network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|50[0-9]|529/i;
+
+    let extractionResponse;
+    for (let attempt = 0; attempt <= DOC_MAX_RETRIES; attempt++) {
+      try {
+        extractionResponse = await extractDocument({
+          document: packet.base64,
+          filename: packet.name || packet.filename,
+          jsonSchema: schema,
+          model: config.model,
+          nConsensus: config.nConsensus,
+          imageDpi: config.imageDpi,
+          temperature: config.temperature,
+        });
+        break;
+      } catch (retryErr) {
+        const isRetriable = RETRIABLE_PATTERNS.test(retryErr.message);
+        if (isRetriable && attempt < DOC_MAX_RETRIES) {
+          console.warn(`Document retry attempt ${attempt + 1} failed (${retryErr.message}), retrying in ${DOC_RETRY_DELAYS[attempt]}ms...`);
+          await new Promise(r => setTimeout(r, DOC_RETRY_DELAYS[attempt]));
+          continue;
+        }
+        throw retryErr;
+      }
+    }
+
+    // Calculate extraction confidence
+    const { likelihoods } = getExtractionData(extractionResponse);
+    const likelihoodValues = Object.values(likelihoods || {}).filter(v => typeof v === "number");
+    const extractionConfidence = likelihoodValues.length > 0
+      ? likelihoodValues.reduce((sum, v) => sum + v, 0) / likelihoodValues.length
+      : null;
+
+    // Check if needs review
+    const reviewCheck = checkNeedsReview(extractionResponse, category);
+
+    const docPages = document.pages?.length || 1;
+
+    return {
+      id: document.id,
+      extraction: extractionResponse,
+      extractionConfidence,
+      status: reviewCheck.needsReview ? "needs_review" : "completed",
+      needsReview: reviewCheck.needsReview,
+      reviewReasons: reviewCheck.reasons,
+      error: null,
+      usage: {
+        pages: docPages,
+        credits: docPages * modelInfo.creditsPerPage * config.nConsensus,
+        model: config.model,
+        nConsensus: config.nConsensus,
+      },
+    };
+  }, []);
+
   return {
     processPacket,
     processDocument,
+    retryDocumentExtraction,
     PipelineStatus,
   };
 }

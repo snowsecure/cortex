@@ -110,7 +110,7 @@ Retab API          - https://api.retab.com/v1
         │  Database │           │  ./data/     │     │
         │           │           │  temp-pdfs/  │     │
         │ - sessions│           │              │     │
-        │ - packets │           │  (1hr TTL)   │     │
+        │ - packets │           │ (14-day TTL) │     │
         │ - docs    │           └──────────────┘     │
         │ - history │                                │
         │ - usage   │                                │
@@ -847,7 +847,7 @@ Get recent failed packets.
 
 - API key stored client-side only (never logged)
 - No document data stored on Retab beyond request/response
-- Temp PDF files auto-deleted after 1 hour
+- Temp PDF files auto-deleted after 14 days
 - Parameterized SQL queries (SQLite)
 - Database file permissions: owner-only
 

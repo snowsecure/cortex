@@ -15,7 +15,7 @@ import { SchemaExplorer } from "./components/SchemaExplorer";
 import { RETAB_MODELS } from "./lib/retabConfig";
 import { useBatchQueue, BatchStatus } from "./hooks/useBatchQueue";
 import { useProcessingHistory } from "./hooks/useProcessingHistory";
-import { getApiKey, setApiKey, hasApiKey } from "./lib/retab";
+import { getApiKey, setApiKey, hasApiKey, getUsername, setUsername, hasUsername } from "./lib/retab";
 import { requestPermission, showProcessingComplete, showNeedsReview, isSupported as notificationsSupported } from "./lib/notifications";
 import * as api from "./lib/api";
 import { formatTimeCST } from "./lib/utils";
@@ -283,6 +283,9 @@ function WelcomeDashboard({
 }
 
 function App() {
+  // Toast notifications
+  const toast = useToast();
+
   // Dark mode state
   const [isDark, setIsDark, toggleDarkMode] = useDarkMode();
 
@@ -290,6 +293,13 @@ function App() {
   const [apiKeyInput, setApiKeyInput] = useState(getApiKey());
   const [apiKeyConfigured, setApiKeyConfigured] = useState(hasApiKey());
   const [showApiKeyWarning, setShowApiKeyWarning] = useState(false);
+
+  // Username state (stored in localStorage like API key)
+  const [usernameInput, setUsernameInput] = useState(getUsername());
+  const [usernameConfigured, setUsernameConfigured] = useState(hasUsername());
+
+  // Both API key and username must be set to use the app
+  const isSetupComplete = apiKeyConfigured && usernameConfigured;
 
   // View state with browser history support
   const [viewMode, setViewModeState] = useState(() => {
@@ -341,7 +351,6 @@ function App() {
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
-  const [showSessionRestoredBanner, setShowSessionRestoredBanner] = useState(false);
   const [runConfig, setRunConfig] = useState(null); // Per-run config override
   const [pendingDropFiles, setPendingDropFiles] = useState(null); // Files dropped on homepage
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, action: null });
@@ -371,6 +380,7 @@ function App() {
     resume,
     retryPacket,
     retryAllFailed,
+    retryDocument,
     removePacket,
     clearAll,
     setRetabConfig,
@@ -475,15 +485,10 @@ function App() {
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [stats.needsReview]);
 
-  // Check for restored session on mount
+  // Navigate to results view on mount if we have restored packets
   useEffect(() => {
-    // If we have packets but didn't just upload them, session was restored
     if (packets.length > 0 && batchStatus === BatchStatus.COMPLETED) {
-      setShowSessionRestoredBanner(true);
       setViewMode(ViewMode.RESULTS);
-      // Auto-hide banner after 10 seconds
-      const timer = setTimeout(() => setShowSessionRestoredBanner(false), 10000);
-      return () => clearTimeout(timer);
     }
   }, []); // Only run on mount
 
@@ -525,22 +530,27 @@ function App() {
     return () => clearInterval(interval);
   }, [apiKeyConfigured]);
 
-  // Handle API key save
+  // Handle API key + username save
   const handleSaveApiKey = () => {
-    if (!apiKeyInput.trim()) {
+    if (!apiKeyInput.trim() || !usernameInput.trim()) {
       setShowApiKeyWarning(true);
       return;
     }
     setApiKey(apiKeyInput.trim());
     setApiKeyConfigured(true);
+    setUsername(usernameInput.trim());
+    setUsernameConfigured(true);
     setShowApiKeyWarning(false);
   };
 
-  // Handle API key clear
+  // Handle API key clear (also clears username)
   const handleClearApiKey = () => {
     setApiKey("");
     setApiKeyInput("");
     setApiKeyConfigured(false);
+    setUsername("");
+    setUsernameInput("");
+    setUsernameConfigured(false);
   };
 
   // Handle file selection
@@ -596,7 +606,7 @@ function App() {
         status: "reviewed",
         editedFields: reviewData.editedFields || {},
         reviewerNotes: reviewData.reviewerNotes || null,
-        reviewedBy: "reviewer", // TODO: Add user identification
+        reviewedBy: getUsername() || "reviewer",
       });
       
       // Update local state using UPDATE_DOCUMENT action
@@ -606,17 +616,19 @@ function App() {
         editedFields: reviewData.editedFields || {},
         reviewerNotes: reviewData.reviewerNotes || null,
         reviewedAt: new Date().toISOString(),
+        reviewedBy: getUsername() || "reviewer",
       });
       
+      toast.success("Review saved");
       console.log("Review saved:", document.id, {
         editedFields: reviewData.editedFields,
         status: "reviewed",
       });
     } catch (error) {
       console.error("Failed to save review:", error);
-      // TODO: Show error toast to user
+      toast.error("Failed to save review: " + error.message);
     }
-  }, [updateDocument]);
+  }, [updateDocument, toast]);
 
   // Handle reject review item - mark for re-processing or removal
   const handleRejectReview = useCallback(async (document, packet, reviewData) => {
@@ -626,7 +638,7 @@ function App() {
         status: "rejected",
         editedFields: {},
         reviewerNotes: reviewData.reviewerNotes || "Rejected by reviewer",
-        reviewedBy: "reviewer", // TODO: Add user identification
+        reviewedBy: getUsername() || "reviewer",
       });
       
       // Update local state
@@ -635,13 +647,16 @@ function App() {
         needsReview: false,
         reviewerNotes: reviewData.reviewerNotes || "Rejected by reviewer",
         reviewedAt: new Date().toISOString(),
+        reviewedBy: getUsername() || "reviewer",
       });
       
+      toast.info("Document rejected");
       console.log("Document rejected:", document.id);
     } catch (error) {
       console.error("Failed to save rejection:", error);
+      toast.error("Failed to save rejection: " + error.message);
     }
-  }, [updateDocument]);
+  }, [updateDocument, toast]);
 
   // Handle new upload - go back to upload without clearing results
   const handleNewUpload = useCallback(() => {
@@ -694,12 +709,12 @@ function App() {
               <div className="flex flex-col -space-y-0.5">
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-xl tracking-wide text-gray-900 dark:text-white" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
-                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.2</span>
+                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.3.5</span>
                 </div>
                 <span className="text-[9px] tracking-wider text-gray-400 dark:text-neutral-500" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
               </div>
               
-              {!apiKeyConfigured && (
+              {!isSetupComplete && (
                 <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded ml-2">
                   API Key Required
                 </span>
@@ -707,7 +722,7 @@ function App() {
             </button>
             
             {/* Center: Navigation */}
-            {apiKeyConfigured && (
+            {isSetupComplete && (
               <nav className="flex items-center gap-1 bg-gray-100 dark:bg-neutral-700 rounded-lg p-1">
                   <button
                     onClick={() => setViewMode(ViewMode.DASHBOARD)}
@@ -772,8 +787,10 @@ function App() {
             )}
             
             {/* Right: Actions */}
-            {apiKeyConfigured && (
+            {isSetupComplete && (
               <div className="flex items-center gap-3">
+                {/* Username badge */}
+                <span className="text-xs text-gray-500 dark:text-neutral-400 hidden sm:inline">{getUsername()}</span>
                 <div className="relative group">
                   <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500 dark:text-neutral-400">
                     <Menu className="h-4 w-4" />
@@ -845,63 +862,19 @@ function App() {
         </div>
       </header>
 
-      {/* Session Restored Banner */}
-      {showSessionRestoredBanner && (
-        <div className="bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800/50 px-4 py-3">
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-800/40 flex items-center justify-center">
-                <History className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <p className="text-sm font-medium text-blue-900 dark:text-blue-200">
-                  Previous session restored
-                </p>
-                <p className="text-xs text-blue-700 dark:text-blue-400">
-                  {stats.completed + stats.needsReview} document{stats.completed + stats.needsReview !== 1 ? 's' : ''} from your last session. 
-                  PDFs available for 1 hour; extraction results retained until cleared.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  clearAll();
-                  setShowSessionRestoredBanner(false);
-                  setViewMode(ViewMode.DASHBOARD);
-                }}
-                className="text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700 hover:bg-blue-100 dark:hover:bg-blue-800/40"
-              >
-                Start Fresh
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowSessionRestoredBanner(false)}
-                className="text-blue-500 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-0">
-        {/* API Key Configuration */}
-        {!apiKeyConfigured && (
+        {/* Setup Screen (API Key + Username) */}
+        {!isSetupComplete && (
           <div className="max-w-2xl mx-auto px-4 py-8 w-full">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Key className="h-5 w-5 text-[#9e2339]" />
-                  Configure API Key
+                  Welcome to CORTEX
                 </CardTitle>
                 <CardDescription>
-                  Enter your Retab API key to get started. You can find your API
+                  Enter your name and Retab API key to get started. You can find your API
                   key in the{" "}
                   <a
                     href="https://retab.com/dashboard"
@@ -916,6 +889,20 @@ function App() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="username">Your Name</Label>
+                    <Input
+                      id="username"
+                      type="text"
+                      placeholder="Enter your name (e.g. Philip)"
+                      value={usernameInput}
+                      onChange={(e) => {
+                        setUsernameInput(e.target.value);
+                        setShowApiKeyWarning(false);
+                      }}
+                      onKeyDown={(e) => e.key === "Enter" && handleSaveApiKey()}
+                    />
+                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="api-key">API Key</Label>
                     <Input
@@ -934,7 +921,7 @@ function App() {
                     <Alert variant="warning">
                       <AlertCircle className="h-4 w-4" />
                       <AlertDescription>
-                        Please enter a valid API key
+                        Please enter your name and a valid API key
                       </AlertDescription>
                     </Alert>
                   )}
@@ -942,11 +929,11 @@ function App() {
                     <AlertCircle className="h-4 w-4" />
                     <AlertTitle>Security Note</AlertTitle>
                     <AlertDescription>
-                      Your API key is stored locally in your browser.
+                      Your name and API key are stored locally in your browser.
                     </AlertDescription>
                   </Alert>
                   <Button onClick={handleSaveApiKey} className="w-full">
-                    Save API Key
+                    Get Started
                   </Button>
                 </div>
               </CardContent>
@@ -955,7 +942,7 @@ function App() {
         )}
 
         {/* Dashboard view (home) */}
-        {apiKeyConfigured && viewMode === ViewMode.DASHBOARD && (
+        {isSetupComplete && viewMode === ViewMode.DASHBOARD && (
           <WelcomeDashboard
             onUpload={() => setViewMode(ViewMode.UPLOAD)}
             onFilesDropped={(files) => {
@@ -981,7 +968,7 @@ function App() {
         )}
 
         {/* Upload view */}
-        {apiKeyConfigured && viewMode === ViewMode.UPLOAD && (
+        {isSetupComplete && viewMode === ViewMode.UPLOAD && (
           <div className="max-w-4xl mx-auto px-4 py-8 w-full">
             <Card>
               <CardHeader>
@@ -1030,7 +1017,7 @@ function App() {
         )}
 
         {/* Processing/Results view */}
-        {apiKeyConfigured && (viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS) && (
+        {isSetupComplete && (viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS) && (
           <div className="flex-1 flex flex-col p-4 max-w-7xl mx-auto w-full min-h-0">
             {/* Minimal toolbar */}
             <div className="flex items-center justify-between mb-3 shrink-0">
@@ -1072,6 +1059,7 @@ function App() {
                 stats={stats}
                 onViewDocument={handleViewDocument}
                 onRetryPacket={retryPacket}
+                onRetryDocument={retryDocument}
                 onRemovePacket={removePacket}
                 onRetryAllFailed={retryAllFailed}
               />
@@ -1095,6 +1083,25 @@ function App() {
                         {stats.failed > 0 && `, ${stats.failed} failed`}
                         {currentRunSaved && " • Saved to history"}
                       </p>
+                      {(usage.totalCredits > 0 || usage.totalPages > 0) && (
+                        <div className="flex items-center gap-3 mt-1 text-xs text-green-600 dark:text-green-400">
+                          {usage.totalPages > 0 && (
+                            <span>{usage.totalPages} page{usage.totalPages !== 1 ? "s" : ""} processed</span>
+                          )}
+                          {usage.totalCredits > 0 && (
+                            <span>• {usage.totalCredits.toFixed(1)} credits</span>
+                          )}
+                          {usage.totalCost > 0 && (
+                            <span>• ${usage.totalCost.toFixed(2)}</span>
+                          )}
+                          {usage.apiCalls > 0 && (
+                            <span>• {usage.apiCalls} API call{usage.apiCalls !== 1 ? "s" : ""}</span>
+                          )}
+                          {retabConfig?.model && (
+                            <span className="text-green-500 dark:text-green-500">• {retabConfig.model}{retabConfig.nConsensus > 1 ? ` × ${retabConfig.nConsensus} consensus` : ""}</span>
+                          )}
+                        </div>
+                      )}
                       {stats.needsReview > 0 && (
                         <p className="text-sm text-amber-800 dark:text-amber-300 mt-0.5 font-medium">
                           Review results to approve or fix extractions.
@@ -1139,7 +1146,7 @@ function App() {
         )}
 
         {/* Review queue view */}
-        {apiKeyConfigured && viewMode === ViewMode.REVIEW && (
+        {isSetupComplete && viewMode === ViewMode.REVIEW && (
           <div className="flex-1 min-h-0">
             <ReviewQueue
               packets={packets}
@@ -1151,7 +1158,7 @@ function App() {
         )}
 
         {/* History view */}
-        {apiKeyConfigured && viewMode === ViewMode.HISTORY && (
+        {isSetupComplete && viewMode === ViewMode.HISTORY && (
           <div className="flex-1 min-h-0 max-w-4xl mx-auto w-full">
             <Card className="h-full flex flex-col m-4">
               <HistoryLog
@@ -1165,7 +1172,7 @@ function App() {
         )}
 
         {/* Admin Dashboard view */}
-        {apiKeyConfigured && viewMode === ViewMode.ADMIN && (
+        {isSetupComplete && viewMode === ViewMode.ADMIN && (
           <div className="flex-1 min-h-0">
             <AdminDashboard
               packets={packets}
@@ -1173,7 +1180,7 @@ function App() {
               usage={usage}
               retabConfig={retabConfig}
               history={history}
-              dbConnected={dbConnected}
+              dbConnected={dbConnected || healthStatus.database === 'online'}
               onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.DASHBOARD)}
             />
           </div>
