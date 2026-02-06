@@ -4,8 +4,9 @@
  * Uses local proxy server to avoid CORS issues
  */
 
-// Use nullish coalescing (??) so empty string from Docker builds works for relative URLs
-const RETAB_API_BASE = `${import.meta.env.VITE_API_URL ?? "http://localhost:3005"}/api`;
+// Default to "" (relative / same-origin) so production & Docker work without VITE_API_URL.
+// For local dev the Vite proxy forwards /api → localhost:3005 automatically.
+const RETAB_API_BASE = `${import.meta.env.VITE_API_URL ?? ""}/api`;
 
 /**
  * Get API key from localStorage

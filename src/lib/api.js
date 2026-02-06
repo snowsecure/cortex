@@ -5,8 +5,9 @@
 
 import { getExtractionData } from "./utils";
 
-// Use nullish coalescing (??) so empty string from Docker builds works for relative URLs
-export const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3005";
+// Default to "" (relative / same-origin) so production & Docker work without VITE_API_URL.
+// For local dev the Vite proxy forwards /api → localhost:3005 automatically.
+export const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 /**
  * Generic fetch wrapper with error handling
@@ -185,8 +186,8 @@ export async function getPacketFileAsBase64(packetId) {
     const reader = new FileReader();
     reader.onloadend = () => {
       const dataUrl = reader.result;
-      const base64 = dataUrl?.split(",")[1];
-      if (base64) resolve(base64);
+      // Return full data URL (data:application/pdf;base64,...) for Retab API compatibility
+      if (dataUrl) resolve(dataUrl);
       else reject(new Error("Failed to read file"));
     };
     reader.onerror = () => reject(reader.error);

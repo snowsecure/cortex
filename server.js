@@ -19,6 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set("trust proxy", 1); // Trust first proxy (Caddy/nginx) for correct client IP in rate limiter
 const PORT = process.env.PORT || 3005;
 const RETAB_API_BASE = "https://api.retab.com/v1";
 const isProduction = process.env.NODE_ENV === "production";
@@ -606,6 +607,7 @@ app.post("/api/documents/extract", async (req, res) => {
         "Api-Key": apiKey,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(600000), // 10 min for large documents
     });
 
     const data = await response.json();
@@ -640,6 +642,7 @@ app.post("/api/schemas/generate", async (req, res) => {
         "Api-Key": apiKey,
       },
       body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(600000), // 10 min for large documents
     });
 
     const data = await response.json();
@@ -670,6 +673,7 @@ app.post("/api/jobs", async (req, res) => {
         "Api-Key": apiKey,
       },
       body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(600000), // 10 min for large documents
     });
 
     const data = await response.json();
@@ -698,6 +702,7 @@ app.get("/api/jobs/:jobId", async (req, res) => {
       headers: {
         "Api-Key": apiKey,
       },
+      signal: AbortSignal.timeout(60000), // 1 min for status checks
     });
 
     const data = await response.json();
@@ -730,6 +735,7 @@ app.post("/api/documents/split", async (req, res) => {
         "Api-Key": apiKey,
       },
       body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(600000), // 10 min for large documents
     });
 
     const data = await response.json();
@@ -763,6 +769,7 @@ app.post("/api/documents/classify", async (req, res) => {
         "Api-Key": apiKey,
       },
       body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(600000), // 10 min for large documents
     });
 
     const data = await response.json();
@@ -794,6 +801,7 @@ app.post("/api/documents/parse", async (req, res) => {
         "Api-Key": apiKey,
       },
       body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(600000), // 10 min for large documents
     });
 
     const data = await response.json();
@@ -878,7 +886,7 @@ if (isProduction) {
   app.use(express.static(path.join(__dirname, "dist")));
   
   // SPA fallback - serve index.html for all non-API routes
-  app.get("*", (req, res, next) => {
+  app.get("/{*splat}", (req, res, next) => {
     if (req.path.startsWith("/api/") || req.path === "/health") {
       return next();
     }
