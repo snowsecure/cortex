@@ -186,18 +186,14 @@ export function DocumentDetailModal({ document, packet, onClose }) {
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfFetchError, setPdfFetchError] = useState(false);
 
-  // Fetch PDF from server when packet was uploaded to server but base64 isn't in browser memory
+  // Fetch PDF from server when base64 isn't in browser memory
+  // Always attempt fetch — the file may be on the server even if hasServerFile isn't set
   useEffect(() => {
     if (!packet?.id) return;
     if (packet.base64) {
       setFetchedBase64(null);
       setLoadingPdf(false);
       setPdfFetchError(false);
-      return;
-    }
-    if (!packet.hasServerFile) {
-      setFetchedBase64(null);
-      setLoadingPdf(false);
       return;
     }
     setFetchedBase64(null);
@@ -210,7 +206,7 @@ export function DocumentDetailModal({ document, packet, onClose }) {
       })
       .catch(() => setPdfFetchError(true))
       .finally(() => setLoadingPdf(false));
-  }, [packet?.id, packet?.base64, packet?.hasServerFile]);
+  }, [packet?.id, packet?.base64]);
 
   const pdfBase64 = packet?.base64 ?? fetchedBase64;
   const pdfLoading = loadingPdf && !pdfBase64;
@@ -363,7 +359,11 @@ export function DocumentDetailModal({ document, packet, onClose }) {
             {/* Fields list */}
             <div className="flex-1 overflow-y-auto p-4">
               {sortedFields.length === 0 ? (
-                <p className="text-gray-500 dark:text-gray-400 text-center py-8">No data extracted</p>
+                <p className="text-gray-500 dark:text-gray-400 text-center py-8">
+                  {document.status === "pending" || document.status === "processing"
+                    ? "No data extracted yet"
+                    : "No data extracted"}
+                </p>
               ) : (
                 <div className="space-y-2">
                   {sortedFields.map(([key, value]) => {

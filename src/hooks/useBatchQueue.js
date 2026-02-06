@@ -51,6 +51,7 @@ const ActionTypes = {
   SET_CONFIG: "SET_CONFIG",
   SET_RETAB_CONFIG: "SET_RETAB_CONFIG",
   SET_SESSION_ID: "SET_SESSION_ID",
+  DB_INIT_COMPLETE: "DB_INIT_COMPLETE",
   RESTORE_FROM_DB: "RESTORE_FROM_DB",
   RESTORE_FROM_STORAGE: "RESTORE_FROM_STORAGE",
 };
@@ -144,6 +145,7 @@ function getInitialState() {
     },
     retabConfig: loadSettings(), // Retab API settings (model, consensus, etc.)
     dbConnected: false, // Track if database is available
+    dbInitComplete: false, // Track if database initialization has finished
   };
 }
 
@@ -521,6 +523,10 @@ function batchQueueReducer(state, action) {
         sessionId: action.sessionId,
         dbConnected: action.dbConnected ?? state.dbConnected,
       };
+    }
+
+    case ActionTypes.DB_INIT_COMPLETE: {
+      return { ...state, dbInitComplete: true };
     }
     
     case ActionTypes.UPDATE_DOCUMENT: {
@@ -959,6 +965,9 @@ export function useBatchQueue() {
           console.log(`Restored ${saved.packets.length} packet(s) from localStorage (DB unavailable)`);
         }
       }
+
+      // Signal that init is complete (DB or fallback)
+      dispatch({ type: ActionTypes.DB_INIT_COMPLETE });
     }
     
     initDbSession();
@@ -1303,6 +1312,7 @@ export function useBatchQueue() {
     retabConfig: state.retabConfig,
     sessionId: state.sessionId,
     dbConnected: state.dbConnected,
+    dbInitComplete: state.dbInitComplete,
     addPackets,
     start,
     pause,

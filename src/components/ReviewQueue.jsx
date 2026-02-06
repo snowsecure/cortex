@@ -44,7 +44,7 @@ function getReviewItems(packets) {
   return items;
 }
 
-export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
+export function ReviewQueue({ packets, onApprove, onClose }) {
   const reviewItems = useMemo(() => getReviewItems(packets), [packets]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [editedFields, setEditedFields] = useState({});
@@ -168,20 +168,6 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
     }
   }, [current, onApprove, editedFields, currentApprovedFields, reviewItems.length]);
 
-  const handleReject = useCallback(() => {
-    if (current) {
-      onReject?.(current.document, current.packet, {});
-      setEditedFields({});
-      // Clear approved fields for this document
-      setApprovedFields((prev) => {
-        const updated = { ...prev };
-        delete updated[current.document.id];
-        return updated;
-      });
-      setCurrentIndex((i) => Math.min(i + 1, reviewItems.length - 1));
-    }
-  }, [current, onReject, reviewItems.length]);
-
   if (reviewItems.length === 0) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-neutral-900 pt-16 pb-16">
@@ -266,7 +252,7 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
                   ? "bg-green-500 text-white" 
                   : "border-2 border-gray-300 hover:border-green-400"
               }`}
-              title={isApproved ? "Approved - click to unapprove" : "Click to approve this field"}
+              title={isApproved ? "Confirmed - click to undo" : "Click to confirm this field"}
             >
               {isApproved && <Check className="h-3 w-3" />}
             </button>
@@ -332,10 +318,10 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
     );
   };
 
-  // Count approved fields in critical/warning sections
-  const fieldsNeedingApproval = [...categorizedFields.critical, ...categorizedFields.warning];
-  const approvedCount = fieldsNeedingApproval.filter(f => currentApprovedFields[f.key]).length;
-  const allFieldsApproved = fieldsNeedingApproval.length === 0 || approvedCount === fieldsNeedingApproval.length;
+  // Count approved fields across ALL sections (every field can be confirmed)
+  const allFields = [...categorizedFields.critical, ...categorizedFields.warning, ...categorizedFields.ok];
+  const approvedCount = allFields.filter(f => currentApprovedFields[f.key]).length;
+  const allFieldsApproved = allFields.length === 0 || approvedCount === allFields.length;
 
   // Render collapsible section
   const renderSection = (title, icon, fields, sectionKey, variant, needsApproval = false) => {
@@ -362,7 +348,7 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
             <span className={`text-xs font-medium ${colors.text}`}>{title}</span>
             {needsApproval ? (
               <span className={`text-[10px] ${allSectionApproved ? "text-green-600" : colors.text} opacity-70`}>
-                ({sectionApprovedCount}/{fields.length} approved)
+                ({sectionApprovedCount}/{fields.length} confirmed)
               </span>
             ) : (
               <span className={`text-[10px] ${colors.text} opacity-70`}>({fields.length})</span>
@@ -388,7 +374,7 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
                     onClick={() => approveAllFields(fields.map(f => f.key))}
                     className="text-[10px] text-green-600 hover:text-green-700 font-medium"
                   >
-                    Approve all
+                    Confirm all
                   </button>
                 )}
               </div>
@@ -469,11 +455,9 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
               )}
             </div>
             <p className="text-xs text-gray-500 mt-0.5">
-              {fieldsNeedingApproval.length > 0
-                ? allFieldsApproved 
-                  ? "All fields approved — ready to submit"
-                  : `${approvedCount}/${fieldsNeedingApproval.length} fields approved`
-                : "All fields look good — ready to submit"}
+              {allFieldsApproved 
+                ? "All fields confirmed — ready to save"
+                : `${approvedCount}/${allFields.length} fields confirmed`}
             </p>
           </div>
 
@@ -501,46 +485,41 @@ export function ReviewQueue({ packets, onApprove, onReject, onClose }) {
               categorizedFields.ok,
               "ok",
               "ok",
-              false // no approval needed
+              true // every field can be individually confirmed
             )}
           </div>
 
-          {/* Approval status and buttons - pinned to bottom */}
+          {/* Status and Save button - pinned to bottom */}
           <div className="p-3 border-t border-gray-200 dark:border-gray-700 shrink-0 space-y-2 bg-white dark:bg-gray-800">
-            {fieldsNeedingApproval.length > 0 && (
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-500">
-                  Fields approved: {approvedCount}/{fieldsNeedingApproval.length}
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-500">
+                Fields confirmed: {approvedCount}/{allFields.length}
+              </span>
+              {allFieldsApproved ? (
+                <span className="text-green-600 font-medium flex items-center gap-1">
+                  <CheckCircle className="h-3 w-3" /> All confirmed
                 </span>
-                {allFieldsApproved ? (
-                  <span className="text-green-600 font-medium flex items-center gap-1">
-                    <CheckCircle className="h-3 w-3" /> Ready
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => approveAllFields(fieldsNeedingApproval.map(f => f.key))}
-                    className="text-green-600 hover:text-green-700 font-medium"
-                  >
-                    Approve all remaining
-                  </button>
-                )}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <Button 
-                variant="success" 
-                onClick={handleApprove} 
-                className="flex-1"
-                disabled={!allFieldsApproved}
-                title={allFieldsApproved ? "Submit approved document" : "Approve all fields first"}
-              >
-                {allFieldsApproved ? "Submit Document" : `Approve ${fieldsNeedingApproval.length - approvedCount} more`}
-              </Button>
-              <Button variant="outline" onClick={handleReject} className="flex-1 border-red-300 text-red-700 hover:bg-red-50">
-                Reject
-              </Button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => approveAllFields(allFields.map(f => f.key))}
+                  className="text-green-600 hover:text-green-700 font-medium"
+                >
+                  Confirm all remaining
+                </button>
+              )}
             </div>
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-tight">
+              <AlertTriangle className="h-3 w-3 inline-block mr-0.5 -mt-px" />
+              Saving will lock these fields as the final extracted data for this document. This action cannot be undone.
+            </p>
+            <Button 
+              variant="success" 
+              onClick={handleApprove} 
+              className="w-full"
+            >
+              Save Edits
+            </Button>
           </div>
         </div>
       </div>

@@ -374,6 +374,7 @@ function App() {
     retabConfig,
     sessionId,
     dbConnected,
+    dbInitComplete,
     addPackets,
     start,
     pause,
@@ -485,12 +486,24 @@ function App() {
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [stats.needsReview]);
 
-  // Navigate to results view on mount if we have restored packets
+  // After DB init completes, redirect to results if we have packets,
+  // or redirect to dashboard if we're on a view that requires packets but have none.
   useEffect(() => {
-    if (packets.length > 0 && batchStatus === BatchStatus.COMPLETED) {
-      setViewMode(ViewMode.RESULTS);
+    if (!dbInitComplete) return; // Wait until DB restore is fully done
+    
+    if (packets.length > 0) {
+      // If we restored packets and we're on dashboard, go to results
+      if (viewMode === ViewMode.DASHBOARD) {
+        setViewMode(ViewMode.RESULTS, true);
+      }
+    } else {
+      // No packets — redirect away from views that need them
+      const packetViews = [ViewMode.RESULTS, ViewMode.PROCESSING, ViewMode.REVIEW];
+      if (packetViews.includes(viewMode)) {
+        setViewMode(ViewMode.DASHBOARD, true);
+      }
     }
-  }, []); // Only run on mount
+  }, [dbInitComplete]); // Only run once when init finishes
 
   // Health check - runs on mount and every 30 seconds
   useEffect(() => {
@@ -686,7 +699,7 @@ function App() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex flex-col transition-colors">
+    <div className="h-screen bg-gray-50 dark:bg-neutral-900 flex flex-col overflow-hidden transition-colors">
       {/* Header */}
       <header className="bg-white dark:bg-neutral-800 border-b border-gray-200 dark:border-neutral-700 shrink-0">
         <div className="max-w-7xl mx-auto px-4">
@@ -796,20 +809,7 @@ function App() {
                     <Menu className="h-4 w-4" />
                   </Button>
                   <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-neutral-800 rounded-lg shadow-lg border border-gray-200 dark:border-neutral-700 py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                    <button
-                      onClick={() => setShowSchemaExplorer(true)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
-                    >
-                      <BookOpen className="h-4 w-4" />
-                      Schemas
-                    </button>
-                    <button
-                      onClick={() => setViewMode(ViewMode.ADMIN)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
-                    >
-                      <BarChart3 className="h-4 w-4" />
-                      Admin
-                    </button>
+                    {/* Tools */}
                     <button
                       onClick={() => setViewMode(ViewMode.HELP)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
@@ -817,13 +817,15 @@ function App() {
                       <HelpCircle className="h-4 w-4" />
                       Help & Docs
                     </button>
-                    <a
-                      href="mailto:philip.snowden@stewart.com?subject=SAIL%20Inquiry%20from%20CORTEX"
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#9e2339] hover:bg-red-50 dark:hover:bg-red-900/20"
+                    <button
+                      onClick={() => setShowSchemaExplorer(true)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
                     >
-                      <Mail className="h-4 w-4" />
-                      Contact SAIL
-                    </a>
+                      <BookOpen className="h-4 w-4" />
+                      Schemas
+                    </button>
+                    <div className="border-t border-gray-100 dark:border-neutral-700 my-1" />
+                    {/* Preferences */}
                     <button
                       onClick={toggleDarkMode}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:text-neutral-200 dark:hover:bg-neutral-700"
@@ -832,27 +834,28 @@ function App() {
                       {isDark ? "Light Mode" : "Dark Mode"}
                     </button>
                     <div className="border-t border-gray-100 dark:border-neutral-700 my-1" />
+                    {/* Admin & Support */}
                     <button
-                      onClick={handleClearApiKey}
+                      onClick={() => setViewMode(ViewMode.ADMIN)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
                     >
-                      <Key className="h-4 w-4" />
-                      API Key
+                      <BarChart3 className="h-4 w-4" />
+                      Admin
                     </button>
-                    <button
-                      onClick={() => setConfirmDialog({
-                        isOpen: true,
-                        title: "Clear All Data",
-                        message: "This will remove all packets, results, and processing data. This action cannot be undone.",
-                        action: () => {
-                          clearAll();
-                          setViewMode(ViewMode.DASHBOARD);
-                        }
-                      })}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    <a
+                      href="mailto:philip.snowden@stewart.com?subject=SAIL%20Inquiry%20from%20CORTEX"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[#9e2339] hover:bg-red-50 dark:hover:bg-red-900/20"
                     >
-                      <Trash2 className="h-4 w-4" />
-                      Clear Data
+                      <Mail className="h-4 w-4" />
+                      Contact SAIL
+                    </a>
+                    <div className="border-t border-gray-100 dark:border-neutral-700 my-1" />
+                    <button
+                      onClick={handleClearApiKey}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-700"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Log Out
                     </button>
                   </div>
                 </div>
@@ -863,10 +866,10 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-0">
+      <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Setup Screen (API Key + Username) */}
         {!isSetupComplete && (
-          <div className="max-w-2xl mx-auto px-4 py-8 w-full">
+          <div className="flex-1 min-h-0 overflow-y-auto max-w-2xl mx-auto px-4 py-8 w-full">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -969,7 +972,7 @@ function App() {
 
         {/* Upload view */}
         {isSetupComplete && viewMode === ViewMode.UPLOAD && (
-          <div className="max-w-4xl mx-auto px-4 py-8 w-full">
+          <div className="flex-1 min-h-0 overflow-y-auto max-w-4xl mx-auto px-4 py-8 w-full">
             <Card>
               <CardHeader>
                 <CardTitle>Upload Document Packets</CardTitle>
@@ -1151,7 +1154,6 @@ function App() {
             <ReviewQueue
               packets={packets}
               onApprove={handleApproveReview}
-              onReject={handleRejectReview}
               onClose={handleCloseReview}
             />
           </div>
