@@ -4,7 +4,7 @@ import { Button } from "./ui/button";
 import { useToast } from "./ui/toast";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
-import { getExtractionData } from "../lib/utils";
+import { getExtractionData, getMergedExtractionData } from "../lib/utils";
 
 /**
  * Flatten nested object for CSV export
@@ -181,14 +181,11 @@ export function BatchExport({ packets, stats }) {
         "review_reasons",
       ]);
 
-      // First pass: collect all columns (from final merged data)
+      // First pass: collect all columns (from final merged data including corrections)
       for (const packet of exportablePackets) {
         for (const doc of packet.documents || []) {
-          const { data } = getExtractionData(doc.extraction);
-          // Merge corrections into data for column detection
-          const editedFields = doc.editedFields || {};
-          const finalData = { ...data, ...editedFields };
-          const flattened = flattenObject(finalData, "data");
+          const { data } = getMergedExtractionData(doc);
+          const flattened = flattenObject(data, "data");
           Object.keys(flattened).forEach(key => columnSet.add(key));
         }
       }
@@ -198,20 +195,10 @@ export function BatchExport({ packets, stats }) {
       // Second pass: create rows with corrections merged
       for (const packet of exportablePackets) {
         for (const doc of packet.documents || []) {
-          const { data } = getExtractionData(doc.extraction);
-          // Merge editedFields corrections into final data
-          const editedFields = doc.editedFields || {};
-          const finalData = { ...data };
-          let hasCorrections = false;
-          
-          for (const [field, correctedValue] of Object.entries(editedFields)) {
-            if (correctedValue !== undefined) {
-              finalData[field] = correctedValue;
-              if (correctedValue !== data[field]) {
-                hasCorrections = true;
-              }
-            }
-          }
+          const { data: finalData, originalData, editedFields } = getMergedExtractionData(doc);
+          const hasCorrections = Object.keys(editedFields).some(
+            field => editedFields[field] !== undefined && editedFields[field] !== originalData[field]
+          );
           
           const flattened = flattenObject(finalData, "data");
           
@@ -277,7 +264,7 @@ export function BatchExport({ packets, stats }) {
           const deeds = packet.documents?.filter(d => 
             d.classification?.category === "recorded_transfer_deed"
           ) || [];
-          const { data: firstDeed } = getExtractionData(deeds[0]?.extraction);
+          const { data: firstDeed } = getMergedExtractionData(deeds[0] || {});
           
           return {
             transaction_id: packet.id,
@@ -294,7 +281,7 @@ export function BatchExport({ packets, stats }) {
               prior_owner: firstDeed?.grantor_name || null,
             },
             documents: (packet.documents || []).map(doc => {
-              const { data } = getExtractionData(doc.extraction);
+              const { data } = getMergedExtractionData(doc);
               return {
                 doc_type: doc.classification?.category,
                 confidence: doc.classification?.confidence,

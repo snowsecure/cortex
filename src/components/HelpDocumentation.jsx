@@ -65,13 +65,14 @@ function AnimatedWorkflowDiagram() {
       description: "Drop multi-document PDF packets for processing",
       details: {
         what: "Upload PDF files containing title documents from real estate transactions.",
-        how: "Drag & drop files or folders, or click to browse. Supports multiple files.",
+        how: "Drag & drop files or folders, or click to browse. Supports multiple files at once.",
         tips: [
           "Each PDF can contain multiple documents",
-          "Maximum 100MB per file",
-          "Organize by transaction for easier tracking",
+          "Files over 75MB may fail due to base64 encoding limits",
+          "PDFs are stored on the server for 14 days for preview and reprocessing",
+          "Duplicate files are detected and warned about, but allowed",
         ],
-        technical: "Files are converted to base64 and processed via the Retab API."
+        technical: "Files are uploaded to the server and stored for 14 days, then converted to base64 for the Retab API."
       }
     },
     {
@@ -145,13 +146,14 @@ function AnimatedWorkflowDiagram() {
       description: "Verify flagged items with side-by-side PDF view",
       details: {
         what: "Human reviewers verify extractions that the AI is uncertain about.",
-        how: "View the original PDF alongside extracted data. Edit or approve values.",
+        how: "View the original PDF alongside extracted data. Confirm or edit each field individually, then click 'Save Edits' to finalize.",
         tips: [
-          "Focus on flagged fields first",
-          "AI provides suggestions for uncertain values",
-          "Corrections improve future accuracy",
+          "Each field has its own confirm button—no blanket approvals required",
+          "Fields are grouped by confidence: Needs Attention, Low Confidence, Verified",
+          "Saving locks the data as the final extraction—this cannot be undone",
+          "Original PDF is shown side-by-side for cross-referencing",
         ],
-        technical: "Review queue prioritizes by confidence score and critical field status."
+        technical: "Edited fields are persisted as corrections that override the raw extraction in all exports."
       }
     },
     {
@@ -165,13 +167,15 @@ function AnimatedWorkflowDiagram() {
       description: "Download validated data in JSON, CSV, or TPS format",
       details: {
         what: "Export your structured data for use in other systems.",
-        how: "Choose format based on your needs: JSON for APIs, CSV for spreadsheets, TPS for Stewart.",
+        how: "Choose format based on your needs: JSON for APIs, CSV for spreadsheets, grouped CSV by document type, or TPS for Stewart.",
         tips: [
           "JSON includes all metadata and confidence scores",
           "CSV flattens data to rows/columns",
-          "TPS formatted for Stewart Title Production System",
+          "Grouped CSV creates separate files per document type",
+          "Estimated file size shown before export",
+          "Large exports (5,000+ documents) are processed in chunks to avoid browser freezing",
         ],
-        technical: "Export includes extraction results, likelihoods, and review annotations."
+        technical: "Export merges human review corrections over raw extraction data. Includes likelihoods and review annotations."
       }
     },
   ];
@@ -713,7 +717,7 @@ function FAQSection() {
   const faqs = [
     {
       q: "What file formats are supported?",
-      a: "Cortex supports PDF files only. Each PDF can contain multiple documents from a single real estate transaction. The system automatically splits multi-document PDFs into individual documents for extraction."
+      a: "CORTEX supports PDF files only. Each PDF can contain multiple documents from a single real estate transaction. The system automatically splits multi-document PDFs into individual documents for extraction."
     },
     {
       q: "How is extraction accuracy measured?",
@@ -737,11 +741,27 @@ function FAQSection() {
     },
     {
       q: "What happens if processing fails?",
-      a: "Failed documents can be retried individually or together. Common issues: missing API key, network timeout, document too large. Use exponential backoff for retries. For long documents, consider async job flow instead of sync extraction."
+      a: "Failed documents can be retried individually with the retry button on each document, or all at once with 'Retry Failed'. The system automatically retries transient network errors up to 3 times with exponential backoff. Common causes: network timeout, rate limiting, or PDFs exceeding 75MB (base64 encoding pushes them past the 100MB API limit). If your page was refreshed during processing, CORTEX will automatically resume where it left off."
     },
     {
       q: "Is my data secure?",
-      a: "Documents are processed via secure API calls to Retab. No document data is stored permanently on servers—only extraction results. API keys are stored locally in your browser's localStorage."
+      a: "Documents are processed via secure API calls to Retab. Uploaded PDFs are stored on the server for 14 days to enable PDF preview, reprocessing, and human review—then automatically deleted. Extraction results are stored in the SQLite database. API keys and usernames are stored locally in your browser's localStorage."
+    },
+    {
+      q: "How long are uploaded PDFs retained?",
+      a: "PDFs are stored on the server for 14 days after upload. During this time, you can preview the original PDF during review, retry failed extractions, and resume interrupted processing. After 14 days, files are automatically cleaned up. Extraction results remain in the database indefinitely."
+    },
+    {
+      q: "Can other users see my work?",
+      a: "Yes. CORTEX is designed for team use—all uploaded PDFs, extracted data, and processing history are visible to every user. Each action is tagged with the username of whoever performed it, so you can see who uploaded or reviewed each document."
+    },
+    {
+      q: "How do I log out or change my API key?",
+      a: "Open the menu (hamburger icon, top right) and click 'Log Out'. This clears your API key and username from the browser, returning you to the setup screen. Your processing data remains in the database and will be visible when you or anyone else logs back in."
+    },
+    {
+      q: "What happens if I upload the same file again?",
+      a: "CORTEX detects duplicate files (by name and size) and shows a warning, but allows you to re-process them. This is useful when you want to re-extract with different settings (e.g., a different model or consensus level)."
     },
   ];
   
@@ -836,7 +856,7 @@ const INTERNAL_ENDPOINTS = {
 };
 
 const ERROR_REMEDIATION = [
-  { pattern: "API key not configured", cause: "Missing or invalid Api-Key", fix: "Set API key in Admin → API Key, or localStorage key retab_api_key." },
+  { pattern: "API key not configured", cause: "Missing or invalid Api-Key", fix: "Log out (menu → Log Out) and re-enter your API key on the setup screen." },
   { pattern: "401", cause: "Unauthorized", fix: "Check Api-Key header. Ensure key is valid and has not been revoked." },
   { pattern: "429", cause: "Rate limit", fix: "Reduce concurrency, add exponential backoff. Consider retab-small or retab-micro for volume." },
   { pattern: "timeout|ETIMEDOUT|network", cause: "Network or timeout", fix: "Increase client timeout. For large PDFs use async jobs (POST /jobs) and poll." },
@@ -848,7 +868,11 @@ const ERROR_REMEDIATION = [
 // Mermaid diagram renderer for Technical Reference
 function MermaidDiagram({ chart, className = "" }) {
   const containerRef = useRef(null);
+  const wrapperRef = useRef(null);
   const [error, setError] = useState(null);
+  const [zoom, setZoom] = useState(100);
+  const [isPanning, setIsPanning] = useState(false);
+  const panStart = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   useEffect(() => {
     if (!chart || !containerRef.current) return;
@@ -864,7 +888,7 @@ function MermaidDiagram({ chart, className = "" }) {
         secondaryColor: "#e2e8f0",
         tertiaryColor: "#f8fafc",
       },
-      flowchart: { useMaxWidth: true, htmlLabels: true, curve: "basis" },
+      flowchart: { useMaxWidth: false, htmlLabels: true, curve: "basis" },
     });
     mermaid
       .run({
@@ -876,6 +900,27 @@ function MermaidDiagram({ chart, className = "" }) {
       });
   }, [chart]);
 
+  const handleMouseDown = (e) => {
+    if (!wrapperRef.current) return;
+    setIsPanning(true);
+    panStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: wrapperRef.current.scrollLeft,
+      scrollTop: wrapperRef.current.scrollTop,
+    };
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isPanning || !wrapperRef.current) return;
+    const dx = e.clientX - panStart.current.x;
+    const dy = e.clientY - panStart.current.y;
+    wrapperRef.current.scrollLeft = panStart.current.scrollLeft - dx;
+    wrapperRef.current.scrollTop = panStart.current.scrollTop - dy;
+  };
+
+  const handleMouseUp = () => setIsPanning(false);
+
   return (
     <div className={cn("mermaid-diagram", className)}>
       {error ? (
@@ -883,8 +928,49 @@ function MermaidDiagram({ chart, className = "" }) {
           Diagram could not be rendered: {error}
         </div>
       ) : (
-        <div ref={containerRef} className="mermaid">
-          {chart}
+        <div className="relative">
+          {/* Zoom controls */}
+          <div className="absolute top-2 right-2 z-10 flex items-center gap-1 bg-white/90 dark:bg-neutral-800/90 rounded-lg border border-gray-200 dark:border-neutral-700 shadow-sm px-1.5 py-1">
+            <button
+              onClick={() => setZoom(z => Math.max(50, z - 25))}
+              className="px-1.5 py-0.5 text-xs text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-700 rounded"
+            >−</button>
+            <span className="text-[10px] text-gray-500 dark:text-neutral-400 w-8 text-center">{zoom}%</span>
+            <button
+              onClick={() => setZoom(z => Math.min(200, z + 25))}
+              className="px-1.5 py-0.5 text-xs text-gray-600 dark:text-neutral-300 hover:bg-gray-100 dark:hover:bg-neutral-700 rounded"
+            >+</button>
+            <button
+              onClick={() => setZoom(100)}
+              className="px-1.5 py-0.5 text-[10px] text-gray-500 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-700 rounded ml-0.5"
+            >Reset</button>
+          </div>
+          {/* Pannable + zoomable container */}
+          <div
+            ref={wrapperRef}
+            className="overflow-auto cursor-grab active:cursor-grabbing"
+            style={{ maxHeight: "500px" }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          >
+            <div
+              ref={containerRef}
+              className="mermaid"
+              style={{
+                transform: `scale(${zoom / 100})`,
+                transformOrigin: "top left",
+                minWidth: "max-content",
+                padding: "16px",
+              }}
+            >
+              {chart}
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-400 dark:text-neutral-500 mt-1 text-center">
+            Drag to pan · Use +/− to zoom
+          </p>
         </div>
       )}
     </div>
@@ -892,25 +978,39 @@ function MermaidDiagram({ chart, className = "" }) {
 }
 
 const ARCHITECTURE_MERMAID = `flowchart LR
-  subgraph Browser
-    A[React SPA]
-    B[Custom Hooks]
-    C[(localStorage)]
+  subgraph Browser["Browser"]
+    direction TB
+    UI["Upload · Results · Review · Export"]
+    BQ["State & Queue Manager"]
+    PP["Processing Pipeline"]
+    LS[("localStorage")]
+    UI --- BQ
+    BQ --- PP
+    BQ --- LS
   end
-  subgraph Server
-    D[Express API]
-    E[Retab Proxy]
+
+  subgraph Server["Express Server"]
+    direction TB
+    REST["REST API"]
+    PROXY["Retab Proxy"]
+    UP["File Upload"]
   end
-  subgraph Storage
-    F[(SQLite)]
-    G[Temp PDFs]
+
+  subgraph Storage["Storage"]
+    direction TB
+    DB[("SQLite DB")]
+    PDFS[("Temp PDFs")]
   end
-  A --> B
-  B --> C
-  B --> D
-  D --> F
-  D --> G
-  E --> H[Retab API]`;
+
+  RETAB(("Retab API"))
+
+  PP -- "split · classify · extract" --> PROXY
+  PROXY -- "retry x3" --> RETAB
+  BQ -- "sync & restore" --> REST
+  REST --- DB
+  UI -- "upload" --> UP
+  UP --> PDFS
+  UI -. "PDF preview" .-> PDFS`;
 
 function ArchitectureOverview() {
   return (
@@ -920,8 +1020,8 @@ function ArchitectureOverview() {
       </p>
       
       {/* Architecture Diagram */}
-      <div className="rounded-xl border border-gray-200 dark:border-neutral-700 bg-slate-50/80 dark:bg-neutral-800 p-6 overflow-x-auto min-h-[180px] flex items-center justify-center">
-        <MermaidDiagram chart={ARCHITECTURE_MERMAID} className="flex justify-center py-2 [&_svg]:max-w-full [&_svg]:h-auto [&_.node]:outline-none [&_.edgePath]:stroke-slate-400 dark:[&_.edgePath]:stroke-neutral-500" />
+      <div className="rounded-xl border border-gray-200 dark:border-neutral-700 bg-slate-50/80 dark:bg-neutral-800 p-4">
+        <MermaidDiagram chart={ARCHITECTURE_MERMAID} className="[&_.node]:outline-none [&_.edgePath]:stroke-slate-400 dark:[&_.edgePath]:stroke-neutral-500" />
       </div>
       
       {/* Technology Stack */}
@@ -930,7 +1030,7 @@ function ArchitectureOverview() {
         <div className="grid grid-cols-2 gap-4 text-xs">
           <div>
             <span className="font-medium text-gray-600 dark:text-neutral-400">Frontend:</span>
-            <span className="text-gray-500 dark:text-neutral-500 ml-2">React 18, Vite 5, Tailwind CSS 4</span>
+            <span className="text-gray-500 dark:text-neutral-500 ml-2">React 19, Vite 5, Tailwind CSS 4</span>
           </div>
           <div>
             <span className="font-medium text-gray-600 dark:text-neutral-400">Backend:</span>
@@ -2095,7 +2195,7 @@ export function HelpDocumentation({ onClose }) {
         <div>
           <h1 className="text-xl font-semibold text-gray-900 dark:text-neutral-100">Help & Documentation</h1>
           <p className="text-sm text-gray-500 dark:text-neutral-400 mt-0.5">
-            Complete guide to document processing with Cortex
+            Complete guide to document processing with CORTEX
           </p>
         </div>
         <button
@@ -2108,27 +2208,17 @@ export function HelpDocumentation({ onClose }) {
       
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {/* Workflow */}
+        {/* Workflow — how CORTEX processes documents */}
         <Section icon={Zap} title="Processing Workflow" defaultOpen={true}>
           <AnimatedWorkflowDiagram />
         </Section>
         
-        {/* Consensus Mode */}
-        <Section icon={GitBranch} title="Understanding Consensus Mode" badge="Important">
-          <ConsensusExplainer />
+        {/* FAQ — quick answers */}
+        <Section icon={HelpCircle} title="Frequently Asked Questions">
+          <FAQSection />
         </Section>
         
-        {/* Confidence Scores */}
-        <Section icon={Target} title="Likelihood & Confidence Scores">
-          <ConfidenceThresholdGuide />
-        </Section>
-        
-        {/* Schema Building */}
-        <Section icon={FileCode} title="Schema Building Process" badge="From Retab Docs">
-          <SchemaBuildingProcess />
-        </Section>
-        
-        {/* Model Selection */}
+        {/* Model Selection — actionable choice before processing */}
         <Section icon={Cpu} title="Model Selection">
           <p className="text-sm text-gray-600 dark:text-neutral-300 mb-4">
             Choose the right model based on your speed, accuracy, and cost requirements.
@@ -2136,19 +2226,29 @@ export function HelpDocumentation({ onClose }) {
           <ModelComparison />
         </Section>
         
-        {/* Best Practices */}
-        <Section icon={Shield} title="Best Practices" badge="From Retab Docs">
+        {/* Confidence Scores — understanding results */}
+        <Section icon={Target} title="Likelihood & Confidence Scores">
+          <ConfidenceThresholdGuide />
+        </Section>
+        
+        {/* Consensus Mode — improving accuracy */}
+        <Section icon={GitBranch} title="Understanding Consensus Mode">
+          <ConsensusExplainer />
+        </Section>
+        
+        {/* Best Practices — tips for better results */}
+        <Section icon={Shield} title="Best Practices">
           <BestPractices />
         </Section>
         
-        {/* Technical Reference (enterprise architects & senior engineers) */}
-        <Section icon={Terminal} title="Technical Reference" badge="Engineers">
-          <TechnicalReferenceContent />
+        {/* Schema Building — advanced customization */}
+        <Section icon={FileCode} title="Schema Building Process">
+          <SchemaBuildingProcess />
         </Section>
         
-        {/* FAQ */}
-        <Section icon={HelpCircle} title="Frequently Asked Questions">
-          <FAQSection />
+        {/* Technical Reference — engineers only */}
+        <Section icon={Terminal} title="Technical Reference">
+          <TechnicalReferenceContent />
         </Section>
         
         {/* Contact */}
