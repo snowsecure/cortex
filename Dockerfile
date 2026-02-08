@@ -48,8 +48,7 @@ RUN mkdir -p /app/data && chown -R node:node /app/data
 ENV NODE_ENV=production
 ENV PORT=3005
 ENV DB_PATH=/app/data
-ENV CORS_ORIGIN=*
-ENV CORS_ORIGIN=https://cortex.stewart.com
+ENV CORS_ORIGIN=https://cortex.snowsecure.net
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
