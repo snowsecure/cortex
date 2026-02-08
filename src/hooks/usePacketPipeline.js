@@ -222,6 +222,8 @@ export function usePacketPipeline() {
           reviewReasons: [],
           error: null,
           extractionConfidence: undefined,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
         };
 
         try {
@@ -302,6 +304,7 @@ export function usePacketPipeline() {
           documentResult.needsReview = reviewCheck.needsReview;
           documentResult.reviewReasons = reviewCheck.reasons;
           documentResult.status = reviewCheck.needsReview ? "needs_review" : "completed";
+          documentResult.completedAt = new Date().toISOString();
 
         } catch (docError) {
           // Abort errors must propagate up to cancel the entire packet, not be
@@ -312,6 +315,7 @@ export function usePacketPipeline() {
           console.error(`Error extracting document ${index + 1}:`, docError);
           documentResult.status = "failed";
           documentResult.error = docError.message;
+          documentResult.completedAt = new Date().toISOString();
         }
 
         return documentResult;
@@ -501,6 +505,7 @@ export function usePacketPipeline() {
     const chunkingKeysArray = config.chunkingKeys ? getArrayFieldKeys(schema) : null;
 
     onStatusChange(document.id, "retrying");
+    const retryStartedAt = new Date().toISOString();
 
     // Retry extraction with exponential backoff (same as initial pipeline)
     const DOC_MAX_RETRIES = 2;
@@ -558,6 +563,8 @@ export function usePacketPipeline() {
       needsReview: reviewCheck.needsReview,
       reviewReasons: reviewCheck.reasons,
       error: null,
+      startedAt: retryStartedAt,
+      completedAt: new Date().toISOString(),
       usage: {
         pages: docPages,
         credits: docPages * retryModelInfo.creditsPerPage * config.nConsensus,

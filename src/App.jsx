@@ -769,7 +769,7 @@ function App() {
               <div className="flex flex-col -space-y-0.5">
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-xl tracking-wide text-gray-900 dark:text-white" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
-                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.3.5</span>
+                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.0</span>
                 </div>
                 <span className="text-[9px] tracking-wider text-gray-400 dark:text-neutral-500" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
               </div>
@@ -1040,10 +1040,9 @@ function App() {
                     </span>
                   </div>
                   <Button
-                    variant="outline"
                     size="sm"
                     onClick={pause}
-                    className="h-8 px-3 gap-1.5 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30 dark:hover:border-red-700 shrink-0"
+                    className="h-8 px-4 gap-1.5 bg-[#9e2339] hover:bg-[#852030] text-white shrink-0"
                   >
                     <Square className="h-3 w-3 fill-current" />
                     Stop
@@ -1114,9 +1113,9 @@ function App() {
 
               {/* Progress track */}
               {isProcessing && (
-                <div className="h-[3px] bg-gray-100 dark:bg-neutral-800 rounded-full overflow-hidden">
+                <div className="h-3 bg-gray-100 dark:bg-neutral-800 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-[#9e2339]/70 rounded-full"
+                    className="h-full bg-emerald-500 dark:bg-emerald-400 rounded-full"
                     style={{
                       width: `${Math.max(2, footerProgress.percent)}%`,
                       transition: "width 1.5s cubic-bezier(0.4, 0, 0.2, 1)",
@@ -1124,6 +1123,7 @@ function App() {
                   />
                 </div>
               )}
+
             </div>
 
             {/* Results list */}

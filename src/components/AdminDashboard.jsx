@@ -38,6 +38,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { cn, getExtractionData, formatDateTimeCST, getDocumentQualityTier, aggregateDocumentQuality } from "../lib/utils";
+import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getAdminMetrics, clearDatabase } from "../lib/api";
 import { useToast } from "./ui/toast";
 import { 
@@ -46,6 +47,85 @@ import {
   OPTIMIZATION_STRATEGIES,
   TROUBLESHOOTING,
 } from "../lib/retabKnowledge";
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+/** Format seconds into a human-readable elapsed string (e.g. "2m 14s", "45s") */
+function formatElapsed(totalSec) {
+  if (!totalSec || totalSec <= 0) return "—";
+  const s = Math.round(totalSec);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return `${m}m ${rem}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return `${h}h ${remM}m`;
+}
+
+// ============================================================================
+// TIMING COMPUTATION (shared by server-metrics and fallback paths)
+// ============================================================================
+
+function computeTimingFromPackets(packets, history) {
+  const docTimes = [];
+  const pktTimes = [];
+  let totalPages = 0;
+
+  const processPkt = (pkt) => {
+    if (pkt.startedAt && pkt.completedAt) {
+      pktTimes.push((new Date(pkt.completedAt) - new Date(pkt.startedAt)) / 1000);
+    }
+    for (const doc of (pkt.documents || [])) {
+      const pages = doc.pages?.length || 1;
+      totalPages += pages;
+      if (doc.startedAt && doc.completedAt) {
+        docTimes.push({
+          sec: (new Date(doc.completedAt) - new Date(doc.startedAt)) / 1000,
+          pages,
+          category: doc.classification?.category || "unknown",
+        });
+      }
+    }
+  };
+
+  for (const pkt of (packets || [])) processPkt(pkt);
+  for (const entry of (history || [])) {
+    for (const pkt of (entry.packets || [])) processPkt(pkt);
+  }
+
+  const allDocSecs = docTimes.map(d => d.sec);
+  const avgDocTime = allDocSecs.length > 0 ? allDocSecs.reduce((a, b) => a + b, 0) / allDocSecs.length : 0;
+  const minDocTime = allDocSecs.length > 0 ? Math.min(...allDocSecs) : 0;
+  const maxDocTime = allDocSecs.length > 0 ? Math.max(...allDocSecs) : 0;
+  const avgPktTime = pktTimes.length > 0 ? pktTimes.reduce((a, b) => a + b, 0) / pktTimes.length : 0;
+  const totalElapsed = pktTimes.reduce((a, b) => a + b, 0);
+  const pagesPerMin = totalElapsed > 0 ? (totalPages / totalElapsed) * 60 : 0;
+
+  const catTimes = {};
+  for (const dt of docTimes) {
+    if (!catTimes[dt.category]) catTimes[dt.category] = { total: 0, count: 0, pages: 0 };
+    catTimes[dt.category].total += dt.sec;
+    catTimes[dt.category].count += 1;
+    catTimes[dt.category].pages += dt.pages;
+  }
+  const categoryBreakdown = Object.entries(catTimes)
+    .map(([cat, d]) => ({ category: cat, avgSec: d.total / d.count, count: d.count, pages: d.pages }))
+    .sort((a, b) => b.avgSec - a.avgSec);
+
+  return {
+    avgDocTime,
+    minDocTime,
+    maxDocTime,
+    avgPktTime,
+    totalElapsed,
+    pagesPerMin,
+    docTimingSamples: allDocSecs.length,
+    categoryBreakdown,
+  };
+}
 
 // ============================================================================
 // METRIC CARD COMPONENT
@@ -279,35 +359,6 @@ function ConfidenceDistribution({ data }) {
             />
           </div>
           <span className="text-xs font-medium w-8 text-right text-gray-700 dark:text-neutral-300">{bucket.count}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ============================================================================
-// PROCESSING SPEED CHART
-// ============================================================================
-
-function ProcessingSpeedChart({ data }) {
-  if (!data || data.length === 0) {
-    return <p className="text-gray-400 dark:text-neutral-500 text-sm text-center py-4">No data yet</p>;
-  }
-  
-  const maxTime = Math.max(...data.map(d => d.avgTime), 1);
-  
-  return (
-    <div className="space-y-1">
-      {data.slice(-7).map((day, i) => (
-        <div key={i} className="flex items-center gap-3">
-          <span className="text-xs text-gray-500 dark:text-neutral-400 w-16">{day.date}</span>
-          <div className="flex-1 h-4 bg-gray-100 dark:bg-neutral-700 rounded overflow-hidden">
-            <div 
-              className="h-full bg-blue-500"
-              style={{ width: `${(day.avgTime / maxTime) * 100}%` }}
-            />
-          </div>
-          <span className="text-xs font-medium w-12 text-right text-gray-700 dark:text-neutral-300">{day.avgTime.toFixed(1)}s</span>
         </div>
       ))}
     </div>
@@ -708,6 +759,10 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
     const qualityMetrics = aggregateDocumentQuality(currentDocs);
 
     if (serverMetrics && !serverMetricsLoading) {
+      // Compute document-level timing from in-memory packets (server metrics
+      // only have packet-level timing from SQL, not per-document breakdowns)
+      const timingFromPackets = computeTimingFromPackets(packets, history);
+
       return {
         totalPackets: serverMetrics.totalPackets ?? 0,
         totalDocuments: serverMetrics.totalDocuments ?? 0,
@@ -717,9 +772,6 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
         avgConfidence: serverMetrics.avgConfidence ?? 0,
         minConfidence: serverMetrics.minConfidence ?? 0,
         maxConfidence: serverMetrics.maxConfidence ?? 0,
-        // Server now returns { high, medium, low } instead of raw array.
-        // The ConfidenceDistribution chart expects an array, so we signal
-        // "has data" via a non-empty array and provide the bucketed shape.
         confidenceDistribution: serverMetrics.confidenceDistribution ?? [],
         confidenceBuckets: serverMetrics.confidenceDistribution ?? null,
         fieldStats: serverMetrics.fieldStats ?? [],
@@ -730,9 +782,15 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
           ? (serverMetrics.lowConfidenceFields ?? 0) / (serverMetrics.fieldStats ?? []).length 
           : 0,
         reviewReasons: Array.isArray(serverMetrics.reviewReasons) ? serverMetrics.reviewReasons : [],
-        avgProcessingTime: serverMetrics.avgProcessingTime ?? 0,
-        minProcessingTime: serverMetrics.minProcessingTime ?? 0,
-        maxProcessingTime: serverMetrics.maxProcessingTime ?? 0,
+        // Use document-level timing when available, fall back to server packet-level
+        avgProcessingTime: timingFromPackets.avgDocTime || (serverMetrics.avgProcessingTime ?? 0),
+        minProcessingTime: timingFromPackets.minDocTime || (serverMetrics.minProcessingTime ?? 0),
+        maxProcessingTime: timingFromPackets.maxDocTime || (serverMetrics.maxProcessingTime ?? 0),
+        avgPacketTime: timingFromPackets.avgPktTime,
+        totalElapsedTime: timingFromPackets.totalElapsed,
+        pagesPerMinute: timingFromPackets.pagesPerMin,
+        docTimingSamples: timingFromPackets.docTimingSamples,
+        categoryBreakdown: timingFromPackets.categoryBreakdown,
         totalCredits: serverMetrics.totalCredits ?? 0,
         totalCost: serverMetrics.totalCost ?? 0,
         avgCreditsPerDoc: serverMetrics.avgCreditsPerDoc ?? 0,
@@ -798,7 +856,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
       count: confs.length,
     })).sort((a, b) => a.avgConfidence - b.avgConfidence);
 
-    const avgProcessingTime = totalPackets > 0 ? 3.5 + Math.random() * 2 : 0;
+    const timing = computeTimingFromPackets(packets, history);
 
     return {
       totalPackets,
@@ -820,9 +878,14 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
       reviewReasons: Object.entries(reviewReasons)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5),
-      avgProcessingTime,
-      minProcessingTime: avgProcessingTime * 0.6,
-      maxProcessingTime: avgProcessingTime * 1.8,
+      avgProcessingTime: timing.avgDocTime,
+      minProcessingTime: timing.minDocTime,
+      maxProcessingTime: timing.maxDocTime,
+      avgPacketTime: timing.avgPktTime,
+      totalElapsedTime: timing.totalElapsed,
+      pagesPerMinute: timing.pagesPerMin,
+      docTimingSamples: timing.docTimingSamples,
+      categoryBreakdown: timing.categoryBreakdown,
       totalCredits: usage?.totalCredits || 0,
       totalCost: usage?.totalCost || 0,
       avgCreditsPerDoc: completedDocuments > 0 ? (usage?.totalCredits || 0) / completedDocuments : 0,
@@ -928,6 +991,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
   
   const tabs = [
     { id: "overview", label: "Overview", icon: BarChart3 },
+    { id: "performance", label: "Performance", icon: Gauge },
     { id: "confidence", label: "Confidence", icon: Target },
     { id: "reviews", label: "Reviews", icon: Eye },
     { id: "logs", label: "Logs", icon: FileText },
@@ -1054,7 +1118,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
                         <Cpu className="h-4 w-4 text-blue-500" />
                         <span className="text-sm text-gray-700 dark:text-neutral-300">Avg Processing</span>
                       </div>
-                      <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">{metrics.avgProcessingTime.toFixed(1)}s</span>
+                      <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">{metrics.docTimingSamples > 0 ? `${metrics.avgProcessingTime.toFixed(1)}s / doc` : "—"}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -1085,6 +1149,158 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
           </div>
         )}
         
+        {/* Performance Tab */}
+        {activeTab === "performance" && (
+          <div className="space-y-6">
+            {/* Top-level timing metrics */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <MetricCard
+                icon={Clock}
+                title="Avg per Document"
+                value={metrics.docTimingSamples > 0 ? `${metrics.avgProcessingTime.toFixed(1)}s` : "—"}
+                subtitle={metrics.docTimingSamples > 0 ? `${metrics.docTimingSamples} samples` : "No timing data yet"}
+              />
+              <MetricCard
+                icon={Gauge}
+                title="Pages / Minute"
+                value={metrics.pagesPerMinute > 0 ? metrics.pagesPerMinute.toFixed(1) : "—"}
+                subtitle="Throughput"
+              />
+              <MetricCard
+                icon={Activity}
+                title="Avg per File"
+                value={metrics.avgPacketTime > 0 ? formatElapsed(metrics.avgPacketTime) : "—"}
+                subtitle="Split + extract"
+              />
+              <MetricCard
+                icon={Zap}
+                title="Total Processing"
+                value={metrics.totalElapsedTime > 0 ? formatElapsed(metrics.totalElapsedTime) : "—"}
+                subtitle={`${metrics.totalPackets} file${metrics.totalPackets !== 1 ? "s" : ""}`}
+              />
+            </div>
+
+            {/* Min / Max / Range */}
+            {metrics.docTimingSamples > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium">Document Extraction Times</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-3 gap-6">
+                    <div className="text-center">
+                      <p className="text-2xl font-semibold text-green-600 dark:text-green-400">{metrics.minProcessingTime.toFixed(1)}s</p>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">Fastest</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-semibold text-gray-900 dark:text-neutral-100">{metrics.avgProcessingTime.toFixed(1)}s</p>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">Average</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-semibold text-amber-600 dark:text-amber-400">{metrics.maxProcessingTime.toFixed(1)}s</p>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">Slowest</p>
+                    </div>
+                  </div>
+                  {/* Visual range bar */}
+                  <div className="mt-4 relative h-2 bg-gray-100 dark:bg-neutral-700 rounded-full overflow-hidden">
+                    {(() => {
+                      const range = metrics.maxProcessingTime - metrics.minProcessingTime || 1;
+                      const avgPos = ((metrics.avgProcessingTime - metrics.minProcessingTime) / range) * 100;
+                      return (
+                        <>
+                          <div className="absolute inset-y-0 left-0 bg-emerald-400 dark:bg-emerald-500 rounded-full" style={{ width: `${avgPos}%` }} />
+                          <div
+                            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white dark:bg-neutral-200 border-2 border-gray-900 dark:border-neutral-100 rounded-full"
+                            style={{ left: `calc(${avgPos}% - 6px)` }}
+                            title={`Average: ${metrics.avgProcessingTime.toFixed(1)}s`}
+                          />
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div className="flex justify-between text-[10px] text-gray-400 dark:text-neutral-500 mt-1">
+                    <span>{metrics.minProcessingTime.toFixed(1)}s</span>
+                    <span>{metrics.maxProcessingTime.toFixed(1)}s</span>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Per-category breakdown */}
+            {metrics.categoryBreakdown?.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm font-medium">Time by Document Type</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {(() => {
+                      const maxAvg = Math.max(...metrics.categoryBreakdown.map(c => c.avgSec), 1);
+                      return metrics.categoryBreakdown.map((cat) => (
+                        <div key={cat.category} className="flex items-center gap-3">
+                          <span className="text-xs text-gray-600 dark:text-neutral-300 w-36 truncate" title={getCategoryDisplayName(cat.category)}>
+                            {getCategoryDisplayName(cat.category)}
+                          </span>
+                          <div className="flex-1 h-5 bg-gray-100 dark:bg-neutral-700 rounded overflow-hidden">
+                            <div
+                              className="h-full bg-blue-500 dark:bg-blue-400 rounded"
+                              style={{ width: `${(cat.avgSec / maxAvg) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-medium text-gray-700 dark:text-neutral-300 w-14 text-right tabular-nums">
+                            {cat.avgSec.toFixed(1)}s
+                          </span>
+                          <span className="text-[10px] text-gray-400 dark:text-neutral-500 w-16 text-right">
+                            {cat.count} doc{cat.count !== 1 ? "s" : ""} · {cat.pages} pg
+                          </span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Cost efficiency */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Cost Efficiency</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-6">
+                  <div className="text-center">
+                    <p className="text-2xl font-semibold text-gray-900 dark:text-neutral-100">
+                      ${metrics.totalCost > 0 ? metrics.totalCost.toFixed(2) : "0.00"}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">Total Cost</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-semibold text-gray-900 dark:text-neutral-100">
+                      {metrics.avgCreditsPerDoc > 0 ? metrics.avgCreditsPerDoc.toFixed(2) : "—"}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">Credits / Doc</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-semibold text-gray-900 dark:text-neutral-100">
+                      {metrics.totalCredits > 0 ? metrics.totalCredits.toFixed(1) : "0"}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-neutral-400 mt-1">Total Credits</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Empty state */}
+            {metrics.docTimingSamples === 0 && (
+              <div className="text-center py-12 text-gray-400 dark:text-neutral-500">
+                <Clock className="h-10 w-10 mx-auto mb-3 opacity-50" />
+                <p className="text-sm">No timing data collected yet.</p>
+                <p className="text-xs mt-1">Process some documents and timing stats will appear here.</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Confidence Tab */}
         {activeTab === "confidence" && (
           <div className="space-y-6">
@@ -1269,8 +1485,8 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
                   <div className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-neutral-800 rounded">
                     <div className="w-3 h-3 rounded-full bg-gray-400" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">Awaiting Scores</p>
-                      <p className="text-xs text-gray-500 dark:text-neutral-400">No confidence data yet — enable consensus mode for per-field scores</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">Unscored</p>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400">No confidence data available — enable consensus mode for per-field scores</p>
                     </div>
                     <Badge variant="outline">0.7 weight</Badge>
                   </div>

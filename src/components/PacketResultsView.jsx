@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   FileText,
   ChevronDown,
@@ -20,6 +20,7 @@ import { cn, getMergedExtractionData, getDocumentQualityTier } from "../lib/util
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
+import { RETAB_MODELS } from "../lib/retabConfig";
 
 /**
  * Get status badge variant
@@ -333,17 +334,17 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
           )}
           {(() => {
             const quality = getDocumentQualityTier(document);
+            // Only show badge when it communicates something actionable
+            if (quality.tier === "unscored") return null;
             const pct = extractionKnown ? Math.round((confidence ?? 0) * 100) : null;
             const tierStyles = {
               verified: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400",
               high: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400",
-              unscored: "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400",
               needs_attention: "bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400",
             };
             const tierIcons = {
               verified: CheckCircle,
               high: CheckCircle,
-              unscored: Clock,
               needs_attention: AlertTriangle,
             };
             const TierIcon = tierIcons[quality.tier];
@@ -352,11 +353,9 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
                 className={cn("inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium", tierStyles[quality.tier])}
                 title={quality.tier === "verified"
                   ? "Human-reviewed — highest data trust"
-                  : quality.tier === "unscored"
-                    ? "Confidence scores not available from API"
-                    : pct != null
-                      ? `${pct}% extraction confidence`
-                      : quality.label}
+                  : pct != null
+                    ? `${pct}% extraction confidence`
+                    : quality.label}
               >
                 <TierIcon className="h-3 w-3 shrink-0" />
                 {quality.label}
@@ -492,6 +491,63 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
 }
 
 /**
+ * Per-packet run info strip with live elapsed timer.
+ * Always visible once the packet has started processing.
+ */
+function PacketRunInfo({ packet, isProcessing }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!isProcessing) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isProcessing]);
+
+  const u = packet.usage;
+  const modelInfo = u?.model ? RETAB_MODELS[u.model] : null;
+  const modelLabel = modelInfo?.name || u?.model;
+  const consensus = u?.nConsensus ?? 1;
+  const smartRouting = u?.costOptimize ?? false;
+  const pages = u?.totalPages ?? 0;
+  const cost = u?.totalCost ?? 0;
+  const credits = u?.totalCredits ?? 0;
+
+  // Elapsed: live during processing, frozen after completion
+  let elapsedLabel = null;
+  if (packet.startedAt) {
+    const start = new Date(packet.startedAt).getTime();
+    const end = packet.completedAt
+      ? new Date(packet.completedAt).getTime()
+      : now;
+    const totalSec = Math.max(0, Math.floor((end - start) / 1000));
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    elapsedLabel = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+  }
+
+  const dot = <span className="text-gray-300 dark:text-neutral-600">&middot;</span>;
+
+  return (
+    <div className="px-4 py-1.5 flex items-center gap-1.5 flex-wrap text-[11px] text-gray-400 dark:text-neutral-500">
+      {modelLabel && (
+        <span className="font-medium text-gray-500 dark:text-neutral-400">{modelLabel}</span>
+      )}
+      {consensus > 1 && <>{dot}<span>{consensus}x consensus</span></>}
+      {smartRouting && <>{dot}<span>smart routing</span></>}
+      {pages > 0 && <>{dot}<span>{pages} pg{pages !== 1 ? "s" : ""}</span></>}
+      {cost > 0 && <>{dot}<span>${cost.toFixed(3)}</span></>}
+      {credits > 0 && <>{dot}<span className="tabular-nums">{credits.toFixed(1)} cr</span></>}
+      {elapsedLabel && (
+        <>
+          {(modelLabel || pages > 0 || cost > 0) && dot}
+          <span className="tabular-nums">{elapsedLabel}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * Single packet row with expandable documents
  */
 function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove, expanded, onToggle }) {
@@ -596,17 +652,6 @@ function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove,
                 }
                 return <><span>•</span><span className="text-blue-600 dark:text-blue-400">{getStatusText(packet.status)}</span></>;
               })()}
-              {/* Per-run model info (each upload can use a different model) */}
-              {!isProcessing && packet.usage?.model && (
-                <>
-                  <span>•</span>
-                  <span className="text-gray-400 dark:text-gray-500">
-                    {packet.usage.model}
-                    {packet.usage.nConsensus > 1 && ` × ${packet.usage.nConsensus}`}
-                    {packet.usage.costOptimize && " · Smart Routing"}
-                  </span>
-                </>
-              )}
             </div>
           </div>
         </div>
@@ -669,8 +714,8 @@ function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove,
 
       {/* Per-packet progress bar during extraction */}
       {isProcessing && packet.status === PacketStatus.EXTRACTING && packet.progress?.totalDocs > 0 && (
-        <div className="px-4 pb-0">
-          <div className="h-1 bg-gray-200 dark:bg-neutral-700 rounded-full overflow-hidden">
+        <div className="px-4 pt-3 pb-3">
+          <div className="h-2.5 bg-gray-200 dark:bg-neutral-700 rounded-full overflow-hidden">
             <div
               className="h-full bg-blue-500 dark:bg-blue-400 rounded-full"
               style={{
@@ -680,6 +725,11 @@ function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove,
             />
           </div>
         </div>
+      )}
+
+      {/* Per-packet run info — always visible once processing has started */}
+      {packet.startedAt && (
+        <PacketRunInfo packet={packet} isProcessing={isProcessing} />
       )}
 
       {/* Expanded documents */}

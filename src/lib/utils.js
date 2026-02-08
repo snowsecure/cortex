@@ -173,8 +173,8 @@ export function getDocumentQualityTier(doc) {
   if (hasConfidence) {
     return { tier: "needs_attention", label: "Low Confidence", weight: 0.4, color: "amber" };
   }
-  // 5. No confidence data and not flagged — genuinely unknown
-  return { tier: "unscored", label: "Awaiting Scores", weight: 0.7, color: "gray" };
+  // 5. No confidence data and not flagged — scores may not be available for this doc type
+  return { tier: "unscored", label: "Unscored", weight: 0.7, color: "gray" };
 }
 
 /**

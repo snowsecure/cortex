@@ -24,8 +24,10 @@ import {
   CONSENSUS_OPTIONS,
   DPI_OPTIONS,
   CONFIDENCE_PRESETS,
+  QUALITY_PRESETS,
   estimateCost,
   getConfigSummary,
+  getActivePreset,
 } from "../lib/retabConfig";
 
 function SettingSection({ icon: Icon, title, children }) {
@@ -417,30 +419,7 @@ export function RetabSettingsPanel({ onClose, onSave }) {
   );
 }
 
-// Quality presets aligned with Retab best practices
-// Consensus runs parallel extractions for verification (docs recommend n_consensus=4-5 for testing)
-const QUALITY_PRESETS = [
-  { id: "draft", name: "Draft", model: "retab-micro", nConsensus: 1, imageDpi: 150, costOptimize: false, tooltip: "Quick preview, lowest cost. Good for simple forms." },
-  { id: "costopt", name: "Cost Opt.", model: "retab-small", nConsensus: 1, imageDpi: 192, costOptimize: true, tooltip: "Smart routing: simple docs use micro, complex docs use Small. Saves ~40-60%." },
-  { id: "standard", name: "Standard", model: "retab-small", nConsensus: 1, imageDpi: 192, costOptimize: false, tooltip: "Balanced accuracy and cost. Good for most documents." },
-  { id: "production", name: "Production", model: "retab-small", nConsensus: 3, imageDpi: 192, costOptimize: true, tooltip: "Production-ready with consensus for complex docs. Smart routing saves on simple docs." },
-  { id: "best", name: "Best", model: "retab-large", nConsensus: 4, imageDpi: 192, costOptimize: false, tooltip: "Highest accuracy. Retab recommends 4× consensus for production." },
-];
-
-function getActivePreset(config) {
-  if (!config) return "standard";
-  for (const preset of QUALITY_PRESETS) {
-    if (
-      config.model === preset.model &&
-      config.nConsensus === preset.nConsensus &&
-      config.imageDpi === preset.imageDpi &&
-      (config.costOptimize ?? false) === preset.costOptimize
-    ) {
-      return preset.id;
-    }
-  }
-  return "custom";
-}
+// QUALITY_PRESETS and getActivePreset imported from retabConfig.js
 
 export function ProcessingConfigOverride({ config, onChange, globalConfig }) {
   const [showCustom, setShowCustom] = useState(false);
