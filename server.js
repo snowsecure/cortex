@@ -538,11 +538,11 @@ app.post("/api/upload", uploadMulter.single("file"), (req, res) => {
 
   // Validate PDF magic bytes — the first 5 bytes must be "%PDF-"
   // This catches non-PDF files that were given a .pdf extension or spoofed MIME type.
+  let fd;
   try {
-    const fd = fs.openSync(req.file.path, "r");
+    fd = fs.openSync(req.file.path, "r");
     const header = Buffer.alloc(5);
     fs.readSync(fd, header, 0, 5, 0);
-    fs.closeSync(fd);
     if (header.toString("ascii") !== "%PDF-") {
       fs.unlink(req.file.path, () => {});
       return res.status(400).json({ error: "Invalid file: not a valid PDF (bad file signature)" });
@@ -550,6 +550,10 @@ app.post("/api/upload", uploadMulter.single("file"), (req, res) => {
   } catch (sigErr) {
     fs.unlink(req.file.path, () => {});
     return res.status(400).json({ error: "Could not validate file" });
+  } finally {
+    if (fd != null) {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    }
   }
 
   try {

@@ -754,8 +754,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
                   #{i + 1}{pageLabel ? <span className="ml-1 opacity-60">{pageLabel}</span> : null}
                 </button>
               );
-            }
-            ))}
+            })}
           </div>
         </div>
 
