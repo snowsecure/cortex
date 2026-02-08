@@ -1262,63 +1262,68 @@ export function useBatchQueue() {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
     
-    let idleIterations = 0;
-    const MAX_IDLE_ITERATIONS = 60; // 60 × 500ms = 30s safety valve
-    
-    while (true) {
-      const currentState = stateRef.current;
+    try {
+      let idleIterations = 0;
+      const MAX_IDLE_ITERATIONS = 60; // 60 × 500ms = 30s safety valve
       
-      // Check if we should stop
-      if (pausedRef.current) break;
-      if (currentState.batchStatus !== BatchStatus.PROCESSING) break;
-      
-      // Use claimedRef (synchronous) alongside reducer state for accurate counts.
-      // claimedRef tracks packets we've started but that haven't yet been reflected
-      // in the reducer's processing set (due to React's async batched renders).
-      const unclaimedQueue = currentState.queue.filter(id => !claimedRef.current.has(id));
-      const inFlightCount = claimedRef.current.size;
-      
-      // Exit when no work remains: nothing in the queue and nothing in-flight
-      if (unclaimedQueue.length === 0 && inFlightCount === 0 && currentState.processing.size === 0) break;
-      
-      // Safety valve: if we're just spinning with no actionable queue items
-      // but state claims something is still in-flight, eventually give up.
-      // This catches corrupted state from prior bugs.
-      if (unclaimedQueue.length === 0) {
-        idleIterations++;
-        if (idleIterations > MAX_IDLE_ITERATIONS) {
-          console.warn("Processing loop safety valve triggered: no progress for 30s, forcing completion");
-          // Clear claimed refs for any stuck packets so they can be retried
-          if (claimedRef.current.size > 0) {
-            console.warn(`Releasing ${claimedRef.current.size} stuck claimed packet(s):`, [...claimedRef.current]);
-            claimedRef.current.clear();
+      while (true) {
+        const currentState = stateRef.current;
+        
+        // Check if we should stop
+        if (pausedRef.current) break;
+        if (currentState.batchStatus !== BatchStatus.PROCESSING) break;
+        
+        // Use claimedRef (synchronous) alongside reducer state for accurate counts.
+        // claimedRef tracks packets we've started but that haven't yet been reflected
+        // in the reducer's processing set (due to React's async batched renders).
+        const unclaimedQueue = currentState.queue.filter(id => !claimedRef.current.has(id));
+        const inFlightCount = claimedRef.current.size;
+        
+        // Exit when no work remains: nothing in the queue and nothing in-flight
+        if (unclaimedQueue.length === 0 && inFlightCount === 0 && currentState.processing.size === 0) break;
+        
+        // Safety valve: if we're just spinning with no actionable queue items
+        // but state claims something is still in-flight, eventually give up.
+        // This catches corrupted state from prior bugs.
+        if (unclaimedQueue.length === 0) {
+          idleIterations++;
+          if (idleIterations > MAX_IDLE_ITERATIONS) {
+            console.warn("Processing loop safety valve triggered: no progress for 30s, forcing completion");
+            // Clear claimed refs for any stuck packets so they can be retried
+            if (claimedRef.current.size > 0) {
+              console.warn(`Releasing ${claimedRef.current.size} stuck claimed packet(s):`, [...claimedRef.current]);
+              claimedRef.current.clear();
+            }
+            break;
           }
-          break;
+          await new Promise(resolve => setTimeout(resolve, 500));
+          continue;
         }
-        await new Promise(resolve => setTimeout(resolve, 500));
-        continue;
+        
+        // Reset idle counter when there's actual work to do
+        idleIterations = 0;
+        
+        // Process unclaimed packets up to concurrency limit.
+        // Use claimedRef.size (not processing.size which may be stale) for slot math.
+        const availableSlots = currentState.config.concurrency - inFlightCount;
+        
+        if (availableSlots > 0) {
+          // Pass specific packet IDs instead of letting each worker read queue[0].
+          // This is the key fix: each promise gets a DIFFERENT packet ID.
+          const toProcess = unclaimedQueue.slice(0, availableSlots);
+          const promises = toProcess.map(pid => processNextPacket(pid));
+          await Promise.all(promises);
+        } else {
+          // All slots occupied, wait before checking again
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
-      
-      // Reset idle counter when there's actual work to do
-      idleIterations = 0;
-      
-      // Process unclaimed packets up to concurrency limit.
-      // Use claimedRef.size (not processing.size which may be stale) for slot math.
-      const availableSlots = currentState.config.concurrency - inFlightCount;
-      
-      if (availableSlots > 0) {
-        // Pass specific packet IDs instead of letting each worker read queue[0].
-        // This is the key fix: each promise gets a DIFFERENT packet ID.
-        const toProcess = unclaimedQueue.slice(0, availableSlots);
-        const promises = toProcess.map(pid => processNextPacket(pid));
-        await Promise.all(promises);
-      } else {
-        // All slots occupied, wait before checking again
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+    } catch (loopErr) {
+      console.error("Processing loop crashed:", loopErr);
+    } finally {
+      // ALWAYS reset — without this, a crash permanently blocks the loop
+      isProcessingRef.current = false;
     }
-    
-    isProcessingRef.current = false;
   }, [processNextPacket]);
 
   // Keep the ref in sync so initDbSession can trigger the loop
@@ -1344,6 +1349,8 @@ export function useBatchQueue() {
       return;
     }
     pausedRef.current = false;
+    // Reset in case a previous run crashed and left isProcessingRef stuck
+    isProcessingRef.current = false;
     // Create a fresh AbortController for this processing run
     abortControllerRef.current = new AbortController();
     dispatch({ type: ActionTypes.START_PROCESSING });
@@ -1382,6 +1389,7 @@ export function useBatchQueue() {
       return;
     }
     pausedRef.current = false;
+    isProcessingRef.current = false;
     // Create a fresh AbortController for the resumed run
     abortControllerRef.current = new AbortController();
     dispatch({ type: ActionTypes.RESUME_PROCESSING });

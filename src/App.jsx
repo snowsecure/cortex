@@ -13,6 +13,7 @@ import { HelpDocumentation } from "./components/HelpDocumentation";
 import { ProcessingConfigOverride } from "./components/RetabSettings";
 import { ExportPage } from "./components/ExportPage";
 import { SchemaExplorer } from "./components/SchemaExplorer";
+import OnboardingModal from "./components/OnboardingModal";
 import { RETAB_MODELS } from "./lib/retabConfig";
 import { useBatchQueue, BatchStatus } from "./hooks/useBatchQueue";
 import { useProcessingHistory } from "./hooks/useProcessingHistory";
@@ -876,81 +877,17 @@ function App() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Setup Screen (API Key + Username) */}
+        {/* Onboarding modal (API Key + Username) */}
         {!isSetupComplete && (
-          <div className="flex-1 min-h-0 overflow-y-auto max-w-2xl mx-auto px-4 py-8 w-full">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Key className="h-5 w-5 text-[#9e2339]" />
-                  Welcome to CORTEX
-                </CardTitle>
-                <CardDescription>
-                  Enter your name and Retab API key to get started. You can find your API
-                  key in the{" "}
-                  <a
-                    href="https://retab.com/dashboard"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[#9e2339] hover:underline"
-                  >
-                    Retab Dashboard
-                  </a>
-                  .
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="username">Your Name</Label>
-                    <Input
-                      id="username"
-                      type="text"
-                      placeholder="Enter your name (e.g. Philip)"
-                      value={usernameInput}
-                      onChange={(e) => {
-                        setUsernameInput(e.target.value);
-                        setShowApiKeyWarning(false);
-                      }}
-                      onKeyDown={(e) => e.key === "Enter" && handleSaveApiKey()}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="api-key">API Key</Label>
-                    <Input
-                      id="api-key"
-                      type="password"
-                      placeholder="Enter your Retab API key"
-                      value={apiKeyInput}
-                      onChange={(e) => {
-                        setApiKeyInput(e.target.value);
-                        setShowApiKeyWarning(false);
-                      }}
-                      onKeyDown={(e) => e.key === "Enter" && handleSaveApiKey()}
-                    />
-                  </div>
-                  {showApiKeyWarning && (
-                    <Alert variant="warning">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        Please enter your name and a valid API key
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  <Alert>
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>Security Note</AlertTitle>
-                    <AlertDescription>
-                      Your name and API key are stored locally in your browser.
-                    </AlertDescription>
-                  </Alert>
-                  <Button onClick={handleSaveApiKey} className="w-full">
-                    Get Started
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <OnboardingModal
+            usernameInput={usernameInput}
+            setUsernameInput={setUsernameInput}
+            apiKeyInput={apiKeyInput}
+            setApiKeyInput={setApiKeyInput}
+            onComplete={handleSaveApiKey}
+            showWarning={showApiKeyWarning}
+            setShowWarning={setShowApiKeyWarning}
+          />
         )}
 
         {/* Dashboard view (home) */}

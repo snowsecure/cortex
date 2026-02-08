@@ -73,15 +73,6 @@ export function initializeDatabase() {
     if (!/duplicate column name/i.test(e.message)) throw e;
   }
 
-  // Migration: add created_by column to all main tables
-  for (const table of ["history", "sessions", "packets", "documents"]) {
-    try {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN created_by TEXT`);
-    } catch (e) {
-      if (!/duplicate column name/i.test(e.message)) throw e;
-    }
-  }
-
   // Documents table - individual documents extracted from packets
   db.exec(`
     CREATE TABLE IF NOT EXISTS documents (
@@ -160,6 +151,15 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_documents_needs_review ON documents(needs_review);
     CREATE INDEX IF NOT EXISTS idx_history_completed ON history(completed_at);
   `);
+
+  // Migration: add created_by column to all main tables (must run AFTER all tables are created)
+  for (const table of ["history", "sessions", "packets", "documents"]) {
+    try {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN created_by TEXT`);
+    } catch (e) {
+      if (!/duplicate column name/i.test(e.message)) throw e;
+    }
+  }
 
   console.log("Database initialized:", DB_FILE);
 }
@@ -1103,7 +1103,6 @@ process.on("SIGINT", () => {
 
 export {
   clearAllData,
-  completePacketAtomic,
 };
 
 export default db;
