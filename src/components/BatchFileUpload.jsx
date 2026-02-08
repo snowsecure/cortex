@@ -8,8 +8,8 @@ import { getPdfPageCount } from "../lib/pdfUtils";
 import { estimateCost } from "../lib/retabConfig";
 import * as api from "../lib/api";
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB per file
-const LARGE_FILE_WARNING_SIZE = 75 * 1024 * 1024; // 75MB — base64 inflates ~33%, nearing 100MB JSON limit
+const MAX_FILE_SIZE = 75 * 1024 * 1024; // 75MB per file — base64 inflates ~33% to ~100MB, matching JSON body limit
+const LARGE_FILE_WARNING_SIZE = 50 * 1024 * 1024; // 50MB — warn about extraction speed on large files
 const SUPPORTED_TYPES = ["application/pdf"];
 
 /**
@@ -115,16 +115,35 @@ export function BatchFileUpload({
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState(null);
   const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 });
+  const [uploadProgress, setUploadProgress] = useState(0); // 0-1 for current file upload
   
   const fileInputRef = useRef(null);
   const folderInputRef = useRef(null);
   const lastProcessedInitialRef = useRef(null);
+  const uploadAbortRef = useRef(null);
+
+  // Abort in-flight uploads on unmount
+  React.useEffect(() => {
+    return () => { uploadAbortRef.current?.abort(); };
+  }, []);
+
+  /** Cancel any in-progress upload batch */
+  const cancelUpload = useCallback(() => {
+    uploadAbortRef.current?.abort();
+    uploadAbortRef.current = null;
+  }, []);
 
   /**
    * Process files: upload to server when connected (so work continues if user leaves),
    * otherwise convert to base64 in browser. On server upload failure, fall back to base64.
    */
   const processFiles = useCallback(async (fileItems) => {
+    // Abort any previous in-flight upload batch
+    uploadAbortRef.current?.abort();
+    const controller = new AbortController();
+    uploadAbortRef.current = controller;
+    const { signal } = controller;
+
     setIsScanning(true);
     setError(null);
     
@@ -155,6 +174,11 @@ export function BatchFileUpload({
       const processedFiles = [];
       
       for (let i = 0; i < fileItems.length; i++) {
+        // Check for cancellation between files
+        if (signal.aborted) {
+          toast.info(`Upload cancelled — ${processedFiles.length} of ${fileItems.length} files processed`);
+          break;
+        }
         const { file, path } = fileItems[i];
         setProcessingProgress({ current: i + 1, total: fileItems.length });
         
@@ -162,7 +186,11 @@ export function BatchFileUpload({
           const pageCount = await getPdfPageCount(file);
           if (uploadToServer) {
             try {
-              const packet = await api.uploadPacketFile(sessionId, file, getUsername());
+              setUploadProgress(0);
+              const packet = await api.uploadPacketFile(sessionId, file, getUsername(), {
+                signal,
+                onProgress: (pct) => setUploadProgress(pct),
+              });
               processedFiles.push({
                 id: packet.id,
                 name: packet.filename || file.name,
@@ -174,6 +202,8 @@ export function BatchFileUpload({
                 addedAt: new Date().toISOString(),
               });
             } catch (uploadErr) {
+              // If upload was cancelled, don't fall back to base64
+              if (uploadErr.name === "AbortError" || signal.aborted) break;
               // Fall back to base64 when server upload fails (e.g. backend down, CORS)
               console.warn(`Server upload failed for ${file.name}, using local processing:`, uploadErr.message);
               const base64 = await fileToBase64(file);
@@ -215,8 +245,8 @@ export function BatchFileUpload({
         if (largeFiles.length > 0) {
           const names = largeFiles.map(f => f.name).join(", ");
           toast.warning(
-            `${largeFiles.length === 1 ? `"${names}" is` : `${largeFiles.length} files are`} over 75 MB. ` +
-            `Base64 encoding inflates files ~33%, which may cause extraction to fail. Consider splitting large PDFs before uploading.`,
+            `${largeFiles.length === 1 ? `"${names}" is` : `${largeFiles.length} files are`} over 50 MB. ` +
+            `Large files take longer to process and use more memory. Consider splitting before uploading for best results.`,
             8000
           );
         }
@@ -237,8 +267,9 @@ export function BatchFileUpload({
     } finally {
       setIsScanning(false);
       setProcessingProgress({ current: 0, total: 0 });
+      setUploadProgress(0);
     }
-  }, [onFilesSelected, sessionId, dbConnected, selectedFiles]);
+  }, [onFilesSelected, sessionId, dbConnected, selectedFiles, toast, cancelUpload]);
 
   // Process initial files (e.g. dropped on dashboard) once when provided
   React.useEffect(() => {
@@ -299,7 +330,7 @@ export function BatchFileUpload({
       const fileItems = await processDroppedItems(items);
       
       if (fileItems.length === 0) {
-        setError("No valid PDF files found. Please upload PDF files under 100MB.");
+        setError("No valid PDF files found. Please upload PDF files under 75 MB.");
         setIsScanning(false);
         return;
       }
@@ -325,7 +356,7 @@ export function BatchFileUpload({
       .map(f => ({ file: f, path: f.name }));
     
     if (fileItems.length === 0) {
-      setError("No valid PDF files selected. Please select PDF files under 100MB.");
+      setError("No valid PDF files selected. Please select PDF files under 75 MB.");
       return;
     }
     
@@ -519,14 +550,41 @@ export function BatchFileUpload({
         )}
       >
         {isScanning ? (
-          <div className="flex flex-col items-center gap-3">
+          <div className="flex flex-col items-center gap-3 w-full max-w-xs">
             <div className="animate-spin rounded-full h-10 w-10 border-2 border-[#9e2339] border-t-transparent" />
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-gray-600 dark:text-gray-300">
               {processingProgress.total > 0 
-                ? `Processing ${processingProgress.current} of ${processingProgress.total} files...`
+                ? `Uploading ${processingProgress.current} of ${processingProgress.total} files...`
                 : "Scanning files..."
               }
             </p>
+            {/* Per-file upload progress bar */}
+            {processingProgress.total > 0 && uploadProgress > 0 && (
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                <div
+                  className="bg-[#9e2339] h-1.5 rounded-full transition-all duration-200"
+                  style={{ width: `${Math.round(uploadProgress * 100)}%` }}
+                />
+              </div>
+            )}
+            {/* Overall batch progress */}
+            {processingProgress.total > 1 && (
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1">
+                <div
+                  className="bg-gray-400 dark:bg-gray-500 h-1 rounded-full transition-all duration-200"
+                  style={{ width: `${Math.round(((processingProgress.current - 1) / processingProgress.total) * 100)}%` }}
+                />
+              </div>
+            )}
+            {processingProgress.total > 1 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); cancelUpload(); }}
+                className="text-xs text-gray-500 hover:text-red-600 dark:hover:text-red-400 underline"
+              >
+                Cancel
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center gap-4">
@@ -570,7 +628,7 @@ export function BatchFileUpload({
                 </div>
                 
                 <p className="text-xs text-gray-400">
-                  PDF files up to 100 MB each (75 MB+ may fail due to base64 encoding overhead)
+                  PDF files up to 75 MB each
                 </p>
               </>
             )}

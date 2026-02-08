@@ -4,6 +4,8 @@ import * as api from "../lib/api";
 import { loadSettings, DEFAULT_CONFIG as RETAB_DEFAULT_CONFIG } from "../lib/retabConfig";
 import { getUsername } from "../lib/retab";
 
+const __DEV__ = import.meta.env.DEV;
+
 /**
  * Batch processing status constants
  */
@@ -546,7 +548,8 @@ function batchQueueReducer(state, action) {
       for (const doc of updatedDocs || []) {
         if (doc.status === "reviewed" || doc.status === "completed") {
           docStats.completed++;
-        } else if (doc.status === "needs_review" && doc.needsReview !== false) {
+        } else if (doc.needsReview === true) {
+          // Use explicit boolean check — needsReview can be true/false/null/undefined
           docStats.needsReview++;
         } else if (doc.status === "failed" || doc.status === "rejected") {
           docStats.failed++;
@@ -570,15 +573,16 @@ function batchQueueReducer(state, action) {
         failedDocuments: docStats.failed,
       });
       
-      // Recalculate global stats across all packets
+      // Recalculate global stats across all packets — all counts are DOCUMENT-level
+      // so the UI shows consistent numbers (e.g., "10 done · 2 review · 1 failed" = documents).
       const statsUpdate = { ...state.stats };
       let totalNeedsReview = 0;
       let totalCompleted = 0;
       let totalFailed = 0;
       for (const [, p] of newPackets) {
         totalNeedsReview += p.needsReviewDocuments || 0;
-        if (p.status === PacketStatus.COMPLETED || p.status === "completed") totalCompleted++;
-        else if (p.status === PacketStatus.FAILED || p.status === "failed") totalFailed++;
+        totalCompleted += p.completedDocuments || 0;
+        totalFailed += p.failedDocuments || 0;
       }
       statsUpdate.needsReview = totalNeedsReview;
       statsUpdate.completed = totalCompleted;
@@ -750,6 +754,7 @@ function batchQueueReducer(state, action) {
             reviewedAt: d.reviewed_at ?? d.reviewedAt ?? null,
             reviewedBy: d.reviewed_by ?? d.reviewedBy ?? null,
             reviewerNotes: d.reviewer_notes ?? d.reviewerNotes ?? null,
+            categoryOverride: d.category_override ?? d.categoryOverride ?? null,
             splitType: d.split_type ?? d.splitType ?? d.document_type ?? null,
             // Build an extraction object so getMergedExtractionData works correctly
             extraction: d.extraction || (extractedData ? { data: extractedData, likelihoods: likelihoods || {} } : null),
@@ -799,13 +804,13 @@ function batchQueueReducer(state, action) {
 
       if (newPackets.size === 0) return state;
 
-      // Calculate stats from restored packets
+      // Calculate stats from restored packets — document-level counts for consistency
       let completed = 0, needsReview = 0, failed = 0, queued = 0;
       for (const [, p] of newPackets) {
-        if (p.status === PacketStatus.COMPLETED) completed++;
-        else if (p.status === PacketStatus.NEEDS_REVIEW) needsReview++;
-        else if (p.status === PacketStatus.FAILED) failed++;
-        else if (p.status === PacketStatus.QUEUED) queued++;
+        completed += p.completedDocuments || 0;
+        needsReview += p.needsReviewDocuments || 0;
+        failed += p.failedDocuments || 0;
+        if (p.status === PacketStatus.QUEUED) queued++;
       }
 
       // If there are packets to resume, set status to PROCESSING so the loop picks them up
@@ -921,29 +926,11 @@ export function useBatchQueue() {
   }, []);
   
   // --- Data loss prevention ---
-  // Warn the user and attempt a final sync if they try to close while processing.
+  // Warn the user if they try to close the page while processing is active.
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       const s = stateRef.current;
       const isActive = s.batchStatus === BatchStatus.PROCESSING || s.processing.size > 0;
-      const hasUnsyncedWork = s.packets.size > 0 && s.dbConnected && s.sessionId;
-      if (isActive || hasUnsyncedWork) {
-        // Attempt a best-effort sync via sendBeacon (fires even during unload)
-        try {
-          const unsynced = [];
-          for (const [id, pkt] of s.packets) {
-            if (pkt.status === "completed" || pkt.status === "needs_review") {
-              unsynced.push(id);
-            }
-          }
-          if (unsynced.length > 0) {
-            navigator.sendBeacon?.(
-              `/api/sessions/${s.sessionId}/beacon-sync`,
-              JSON.stringify({ packetIds: unsynced })
-            );
-          }
-        } catch (_) { /* best effort */ }
-      }
       if (isActive) {
         e.preventDefault();
         e.returnValue = "Processing is in progress. Leaving may result in data loss.";
@@ -974,7 +961,7 @@ export function useBatchQueue() {
             sessionId: session.id,
             dbConnected: true,
           });
-          console.log("Database session initialized:", session.id);
+          if (__DEV__) console.log("Database session initialized:", session.id);
 
           // Always try to restore from database (authoritative source)
           try {
@@ -992,7 +979,7 @@ export function useBatchQueue() {
                 interruptedStatuses.includes(p.status) && (p.hasServerFile ?? !!p.temp_file_path)
               );
               if (resumable.length > 0) {
-                console.log(`Auto-resuming ${resumable.length} interrupted packet(s)...`);
+                if (__DEV__) console.log(`Auto-resuming ${resumable.length} interrupted packet(s)...`);
                 // Poll stateRef until the RESTORE_FROM_DB dispatch has propagated,
                 // then start the processing loop. This replaces the old fixed 500ms
                 // timeout which was fragile — if React hadn't re-rendered by then,
@@ -1018,14 +1005,14 @@ export function useBatchQueue() {
                 waitForStateAndResume();
               }
 
-              console.log(`Restored ${fullSession.packets.length} packet(s) from database`);
+              if (__DEV__) console.log(`Restored ${fullSession.packets.length} packet(s) from database`);
             }
           } catch (restoreError) {
             console.warn("Failed to restore packets from database:", restoreError.message);
           }
 
           if (!dbRestored) {
-            console.log("DB session has 0 packets");
+            if (__DEV__) console.log("DB session has 0 packets");
           }
         }
       } catch (error) {
@@ -1157,7 +1144,7 @@ export function useBatchQueue() {
         // the packet so it can be picked up again on resume, instead of leaving
         // it orphaned in the processing set.
         if (error.message === "Processing aborted" || error.name === "AbortError") {
-          console.log(`Packet ${packetId} processing was aborted, re-queuing for resume`);
+          if (__DEV__) console.log(`Packet ${packetId} processing was aborted, re-queuing for resume`);
           dispatch({ type: ActionTypes.PACKET_REQUEUE, packetId });
           return;
         }
@@ -1373,7 +1360,7 @@ export function useBatchQueue() {
       currentStatus === BatchStatus.COMPLETED ||
       currentStatus === BatchStatus.PAUSED
     ) {
-      console.log("[addPackets] Auto-resuming processing loop for newly added files");
+      if (__DEV__) console.log("[addPackets] Auto-resuming processing loop for newly added files");
       pausedRef.current = false;
       isProcessingRef.current = false;
       abortControllerRef.current = new AbortController();

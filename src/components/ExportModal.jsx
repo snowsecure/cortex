@@ -29,6 +29,7 @@ import { useToast } from "./ui/toast";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName, DOCUMENT_CATEGORIES } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
+import { schemas } from "../schemas/index";
 
 // Export formats
 const EXPORT_FORMATS = [
@@ -493,7 +494,7 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     
     for (const packet of filteredPackets) {
       for (const doc of packet.documents || []) {
-        const { data } = getMergedExtractionData(doc);
+        const { data } = getMergedExtractionData(doc, schemas);
         Object.keys(data).forEach(key => fieldSet.add(key));
       }
     }
@@ -507,14 +508,15 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     
     for (const packet of filteredPackets) {
       for (const doc of packet.documents || []) {
-        const { data: extractedData, likelihoods, editedFields } = getMergedExtractionData(doc);
+        const { data: extractedData, likelihoods, editedFields } = getMergedExtractionData(doc, schemas);
+        const effectiveType = doc.categoryOverride?.name || doc.classification?.category;
         
         const row = {
           packet_id: packet.id,
           packet_filename: packet.filename,
           document_id: doc.id,
-          document_type: doc.classification?.category,
-          document_type_display: getCategoryDisplayName(doc.classification?.category),
+          document_type: effectiveType,
+          document_type_display: getCategoryDisplayName(effectiveType),
           pages: Array.isArray(doc.pages) ? doc.pages.join("-") : doc.pages,
           split_type: doc.splitType,
           extraction_confidence: doc.extractionConfidence,
@@ -561,7 +563,7 @@ export function ExportModal({ packets, stats, isOpen, onClose }) {
     const counts = {};
     for (const packet of filteredPackets) {
       for (const doc of packet.documents || []) {
-        const type = doc.classification?.category || "unknown";
+        const type = doc.categoryOverride?.name || doc.classification?.category || "unknown";
         counts[type] = (counts[type] || 0) + 1;
       }
     }

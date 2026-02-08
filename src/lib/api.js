@@ -182,16 +182,50 @@ export async function deletePacket(id) {
  * Upload a PDF for a packet (store on server so work continues if user leaves).
  * Returns the created packet { id, filename, temp_file_path, ... }.
  */
-export async function uploadPacketFile(sessionId, file, created_by) {
+export async function uploadPacketFile(sessionId, file, created_by, { signal, onProgress } = {}) {
   const url = `${API_BASE}/api/upload`;
   const form = new FormData();
   form.append("session_id", sessionId);
   form.append("file", file);
   if (created_by) form.append("created_by", created_by);
+
+  // If caller wants upload progress, use XMLHttpRequest (fetch doesn't support upload progress)
+  if (onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url);
+      xhr.withCredentials = true;
+      if (signal) {
+        signal.addEventListener("abort", () => xhr.abort(), { once: true });
+      }
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve(JSON.parse(xhr.responseText)); }
+          catch { reject(new Error("Invalid JSON response")); }
+        } else {
+          try {
+            const err = JSON.parse(xhr.responseText);
+            reject(new Error(err.error || `Upload failed: ${xhr.status}`));
+          } catch {
+            reject(new Error(`Upload failed: ${xhr.status}`));
+          }
+        }
+      };
+      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
+      xhr.send(form);
+    });
+  }
+
+  // Simple fetch path (no progress)
   const response = await fetch(url, {
     method: "POST",
     body: form,
     credentials: "include",
+    ...(signal && { signal }),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({ error: response.statusText }));
@@ -222,6 +256,22 @@ export async function getPacketFileAsBase64(packetId) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+/**
+ * Fetch stored PDF for a packet as a Blob URL (for display only — avoids base64 overhead).
+ * Returns an object URL like "blob:http://localhost:3005/...". The caller MUST revoke
+ * the URL with URL.revokeObjectURL() when done to free memory.
+ */
+export async function getPacketFileAsBlobUrl(packetId) {
+  const url = `${API_BASE}/api/packets/${packetId}/file`;
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || "File not found or expired");
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
 }
 
 // ============================================================================

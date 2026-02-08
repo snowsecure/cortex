@@ -75,6 +75,8 @@ import {
 } from "lucide-react";
 import { useDarkMode } from "./hooks/useDarkMode";
 
+const isProduction = import.meta.env.PROD;
+
 /** Lightweight spinner shown while lazy components load */
 function LazyFallback({ name }) {
   return (
@@ -668,7 +670,7 @@ function App() {
   // Handle view document
   const handleViewDocument = useCallback((document, packet) => {
     setSelectedDocument({ document, packet });
-    console.log("View document:", document, "from packet:", packet?.filename);
+    // Debug: console.log("View document:", document.id, packet?.filename);
   }, []);
 
   // Handle open review queue
@@ -685,8 +687,12 @@ function App() {
   const handleApproveReview = useCallback(async (document, packet, reviewData) => {
     const sentEdits = reviewData.editedFields || {};
     const editedCount = Object.keys(sentEdits).length;
+    // userEditedCount = fields the reviewer actually typed into (excludes phantom edits
+    // and schema-fill fields). Falls back to editedCount for backwards compatibility.
+    const userEditedCount = reviewData.userEditedCount ?? editedCount;
     const reviewer = getUsername() || "reviewer";
-    const docName = document.splitType || document.classification?.category || "Document";
+    const catOverride = reviewData.categoryOverride || null;
+    const docName = catOverride?.name || document.splitType || document.classification?.category || "Document";
 
     // Save to database — the server returns the saved document for verification
     const savedDoc = await api.reviewDocument(document.id, {
@@ -694,6 +700,7 @@ function App() {
       editedFields: sentEdits,
       reviewerNotes: reviewData.reviewerNotes || null,
       reviewedBy: reviewer,
+      ...(catOverride && { categoryOverride: catOverride }),
     });
 
     // --- Verify the save was persisted correctly ---
@@ -728,19 +735,22 @@ function App() {
       reviewerNotes: reviewData.reviewerNotes || null,
       reviewedAt: new Date().toISOString(),
       reviewedBy: reviewer,
+      ...(catOverride && { categoryOverride: catOverride }),
     });
 
-    // Informative toast
-    if (editedCount > 0) {
-      toast.success(`Sealed — ${editedCount} field${editedCount !== 1 ? "s" : ""} updated on ${docName}`);
+    // Informative toast — use userEditedCount for accuracy (excludes phantom/schema-fill)
+    if (catOverride) {
+      toast.success(`Sealed — ${docName}${userEditedCount > 0 ? ` (${userEditedCount} field${userEditedCount !== 1 ? "s" : ""} edited)` : ""}`);
+    } else if (userEditedCount > 0) {
+      toast.success(`Sealed — ${userEditedCount} field${userEditedCount !== 1 ? "s" : ""} updated on ${docName}`);
     } else {
       toast.success(`Sealed — ${docName} approved as-is`);
     }
 
-    console.log("Review sealed:", document.id, { editedCount, status: "reviewed", verified: true });
+    if (!isProduction) console.log("Review sealed:", document.id, { editedCount, userEditedCount });
 
     // Return result for ReviewQueue UI feedback
-    return { ok: true, editedCount, documentName: docName };
+    return { ok: true, editedCount: userEditedCount, documentName: docName };
   }, [updateDocument, toast]);
 
   // Handle reject review item - mark for re-processing or removal
@@ -764,7 +774,7 @@ function App() {
       });
       
       toast.info("Document rejected");
-      console.log("Document rejected:", document.id);
+      if (!isProduction) console.log("Document rejected:", document.id);
     } catch (error) {
       console.error("Failed to save rejection:", error);
       toast.error("Failed to save rejection: " + error.message);

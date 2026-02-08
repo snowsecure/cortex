@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { 
   X, 
   FileText, 
@@ -20,14 +20,84 @@ import { Badge } from "./ui/badge";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getMergedExtractionData } from "../lib/utils";
+import { schemas } from "../schemas/index";
 import * as api from "../lib/api";
+import { pdfBlobCache } from "../lib/pdfCache";
+import * as pdfjsLib from "pdfjs-dist";
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 /**
- * PDF Preview Component
+ * Renders a single PDF page on a <canvas> using pdfjs-dist.
  */
-function PDFPreview({ base64Data, pages, filename, loading }) {
+function PdfCanvasPage({ pdfDoc, pageNumber, scale }) {
+  const canvasRef = useRef(null);
+  const renderTaskRef = useRef(null);
+
+  useEffect(() => {
+    if (!pdfDoc || !canvasRef.current) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        if (renderTaskRef.current) {
+          renderTaskRef.current.cancel();
+          renderTaskRef.current = null;
+        }
+        const page = await pdfDoc.getPage(pageNumber);
+        if (cancelled) return;
+
+        const viewport = page.getViewport({ scale });
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const ctx = canvas.getContext("2d");
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * dpr);
+        canvas.height = Math.floor(viewport.height * dpr);
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
+        ctx.scale(dpr, dpr);
+
+        const renderTask = page.render({ canvasContext: ctx, viewport });
+        renderTaskRef.current = renderTask;
+        await renderTask.promise;
+      } catch (err) {
+        if (err?.name !== "RenderingCancelledException" && !cancelled) {
+          console.error("PDF page render error:", err);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (renderTaskRef.current) {
+        renderTaskRef.current.cancel();
+        renderTaskRef.current = null;
+      }
+    };
+  }, [pdfDoc, pageNumber, scale]);
+
+  return <canvas ref={canvasRef} className="block mx-auto shadow-md" />;
+}
+
+/**
+ * PDF Preview Component.
+ *
+ * Props:
+ *   base64Data  — base64 or data-URL string (legacy path, converted to Blob URL internally)
+ *   blobUrl     — pre-built Blob URL from the server (preferred, avoids base64 overhead)
+ *   pages       — page numbers this document spans (for navigation)
+ *   filename    — display name
+ *   loading     — show spinner
+ */
+function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loading }) {
   const [zoom, setZoom] = useState(100);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const [pdfDoc, setPdfDoc] = useState(null);
+  const [pdfRenderError, setPdfRenderError] = useState(null);
+  const [pdfDocLoading, setPdfDocLoading] = useState(false);
   
   // Get the pages this document spans
   const pageNumbers = useMemo(() => {
@@ -35,59 +105,83 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
     if (Array.isArray(pages) && pages.length > 0) return pages;
     return [1];
   }, [pages]);
-  
-  // Create PDF URL with page parameter
-  const pdfUrl = useMemo(() => {
+
+  // Reset page index when switching documents
+  const prevPagesRef = useRef(pages);
+  useEffect(() => {
+    if (prevPagesRef.current !== pages) {
+      setCurrentPageIndex(0);
+      prevPagesRef.current = pages;
+    }
+  }, [pages]);
+
+  const hasData = !!(base64Data || externalBlobUrl);
+
+  // Build pdfjs source — prefer Blob URL (no base64 overhead), fall back to decoded data
+  const pdfSource = useMemo(() => {
+    if (externalBlobUrl) return { url: externalBlobUrl };
     if (!base64Data) return null;
-    
-    // Get the current page to display
-    const pageNum = pageNumbers[currentPageIndex] || pageNumbers[0] || 1;
-    
-    // Create object URL from base64
     try {
-      // Strip data URL prefix if present (e.g., "data:application/pdf;base64,")
-      const base64String = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-      const binaryString = atob(base64String);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const blob = new Blob([bytes], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-      return `${url}#page=${pageNum}`;
-    } catch (e) {
-      console.error("Failed to create PDF URL:", e);
+      const b64 = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return { data: bytes };
+    } catch {
       return null;
     }
-  }, [base64Data, pageNumbers, currentPageIndex]);
-  
-  // Cleanup URL on unmount
-  React.useEffect(() => {
+  }, [base64Data, externalBlobUrl]);
+
+  // Load PDF document via pdfjs
+  useEffect(() => {
+    if (!pdfSource) { setPdfDoc(null); return; }
+    let cancelled = false;
+    setPdfDocLoading(true);
+    setPdfRenderError(null);
+    const loadingTask = pdfjsLib.getDocument(pdfSource);
+    loadingTask.promise
+      .then((doc) => {
+        if (cancelled) { doc.destroy(); return; }
+        setPdfDoc((prev) => { prev?.destroy?.(); return doc; });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error("pdfjs load error:", err);
+          setPdfRenderError("Failed to render PDF");
+        }
+      })
+      .finally(() => { if (!cancelled) setPdfDocLoading(false); });
     return () => {
-      if (pdfUrl) {
-        const baseUrl = pdfUrl.split("#")[0];
-        URL.revokeObjectURL(baseUrl);
-      }
+      cancelled = true;
+      loadingTask?.destroy?.();
     };
-  }, [pdfUrl]);
+  }, [pdfSource]);
+
+  // Cleanup pdfDoc on unmount
+  useEffect(() => {
+    return () => { pdfDoc?.destroy?.(); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const scale = zoom / 100;
+  const pageNum = pageNumbers[currentPageIndex] || pageNumbers[0] || 1;
   
-  if (loading) {
+  if (loading || pdfDocLoading) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400">
         <div className="text-center">
           <Loader2 className="h-12 w-12 mx-auto mb-2 animate-spin opacity-60" />
-          <p>Loading PDF from server…</p>
+          <p>Loading PDF…</p>
         </div>
       </div>
     );
   }
   
-  if (!base64Data) {
+  if (!hasData || pdfRenderError) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-100 dark:bg-gray-900 text-gray-500 dark:text-gray-400">
         <div className="text-center">
           <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
-          <p>PDF preview not available</p>
+          <p>{pdfRenderError || "PDF preview not available"}</p>
         </div>
       </div>
     );
@@ -110,7 +204,7 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <span className="text-xs text-gray-600 min-w-[80px] text-center">
-                Page {pageNumbers[currentPageIndex]} of {pageNumbers.length} pages
+                Page {pageNumbers[currentPageIndex]}{pageNumbers.length > 1 ? ` (${currentPageIndex + 1}/${pageNumbers.length})` : ""}
               </span>
               <Button
                 variant="ghost"
@@ -159,19 +253,16 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
         </div>
       </div>
       
-      {/* PDF Viewer */}
-      <div className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-800">
-        <iframe
-          src={pdfUrl}
-          title={filename || "Document Preview"}
-          className="w-full h-full border-0"
-          style={{ 
-            transform: `scale(${zoom / 100})`,
-            transformOrigin: "top left",
-            width: `${10000 / zoom}%`,
-            height: `${10000 / zoom}%`,
-          }}
-        />
+      {/* PDF Canvas Viewer — pdfjs-dist renders on <canvas> for consistent cross-browser display */}
+      <div className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-800 p-4">
+        {pdfDoc && (
+          <PdfCanvasPage
+            key={`${pageNum}-${zoom}`}
+            pdfDoc={pdfDoc}
+            pageNumber={pageNum}
+            scale={scale}
+          />
+        )}
       </div>
     </div>
   );
@@ -183,45 +274,50 @@ function PDFPreview({ base64Data, pages, filename, loading }) {
 export function DocumentDetailModal({ document, packet, onClose }) {
   const toast = useToast();
   const [copied, setCopied] = useState(false);
-  const [fetchedBase64, setFetchedBase64] = useState(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfFetchError, setPdfFetchError] = useState(false);
+  const [cacheVersion, setCacheVersion] = useState(0);
 
-  // Fetch PDF from server when base64 isn't in browser memory
-  // Always attempt fetch — the file may be on the server even if hasServerFile isn't set
+  // Fetch PDF from server as Blob URL, using the shared LRU cache.
   useEffect(() => {
     if (!packet?.id) return;
-    if (packet.base64) {
-      setFetchedBase64(null);
+    if (packet.base64 || pdfBlobCache.has(packet.id)) {
       setLoadingPdf(false);
       setPdfFetchError(false);
       return;
     }
-    setFetchedBase64(null);
+    let cancelled = false;
     setPdfFetchError(false);
     setLoadingPdf(true);
-    api.getPacketFileAsBase64(packet.id)
-      .then((b64) => {
-        setFetchedBase64(b64);
+    api.getPacketFileAsBlobUrl(packet.id)
+      .then((url) => {
+        if (cancelled) { URL.revokeObjectURL(url); return; }
+        pdfBlobCache.set(packet.id, url, 0);
+        setCacheVersion(v => v + 1);
         setPdfFetchError(false);
       })
-      .catch(() => setPdfFetchError(true))
-      .finally(() => setLoadingPdf(false));
+      .catch(() => { if (!cancelled) setPdfFetchError(true); })
+      .finally(() => { if (!cancelled) setLoadingPdf(false); });
+    return () => { cancelled = true; };
   }, [packet?.id, packet?.base64]);
 
-  const pdfBase64 = packet?.base64 ?? fetchedBase64;
-  const pdfLoading = loadingPdf && !pdfBase64;
+  const pdfBase64 = packet?.base64 ?? null;
+  const pdfBlobUrl = packet?.id ? pdfBlobCache.get(packet.id) : null;
+  const pdfLoading = loadingPdf && !pdfBase64 && !pdfBlobUrl;
 
   if (!document) return null;
   
   // Get extracted data and likelihoods (with corrections merged in)
-  const { data: extractedData, likelihoods, editedFields, originalData } = getMergedExtractionData(document);
+  const { data: extractedData, likelihoods, editedFields, originalData } = getMergedExtractionData(document, schemas);
   
-  // Get display name
+  // Get display name - prefer category override, then split type, then category
+  const catOverride = document.categoryOverride || null;
   const splitType = document.splitType || document.classification?.splitType;
-  const displayName = splitType 
-    ? getSplitTypeDisplayName(splitType)
-    : getCategoryDisplayName(document.classification?.category || "unknown");
+  const displayName = catOverride?.name
+    ? catOverride.name
+    : splitType 
+      ? getSplitTypeDisplayName(splitType)
+      : getCategoryDisplayName(document.classification?.category || "unknown");
   
   // Format pages
   const formatPages = () => {
@@ -344,12 +440,13 @@ export function DocumentDetailModal({ document, packet, onClose }) {
           {/* PDF Preview - Left Side */}
           <div className="w-1/2 border-r border-gray-200 dark:border-gray-700">
             <PDFPreview 
-              base64Data={pdfBase64} 
+              base64Data={pdfBase64}
+              blobUrl={pdfBlobUrl}
               pages={document.pages}
               filename={packet?.filename}
               loading={pdfLoading}
             />
-            {pdfFetchError && !pdfBase64 && (
+            {pdfFetchError && !pdfBase64 && !pdfBlobUrl && (
               <p className="text-xs text-amber-600 dark:text-amber-400 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-100 dark:border-amber-800">
                 Could not load PDF from server. Extracted data above is still from the original file.
               </p>

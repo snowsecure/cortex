@@ -22,6 +22,7 @@ import { cn, getMergedExtractionData, getDocumentQualityTier } from "../lib/util
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
+import { schemas } from "../schemas/index";
 import { RETAB_MODELS } from "../lib/retabConfig";
 
 /**
@@ -211,13 +212,16 @@ function getPriorityFields(category) {
  */
 function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expanded, onToggle }) {
   // Extract data from Retab API response (with corrections merged in)
-  const { data, likelihoods, editedFields, originalData } = getMergedExtractionData(document);
+  const { data, likelihoods, editedFields, originalData } = getMergedExtractionData(document, schemas);
   
-  // Get display name - prefer split type, fallback to category
+  // Get display name - prefer category override (reviewer reclassification), then split type, then category
+  const catOverride = document.categoryOverride || null;
   const splitType = document.splitType || document.classification?.splitType;
-  const displayName = splitType 
-    ? getSplitTypeDisplayName(splitType)
-    : getCategoryDisplayName(document.classification?.category || "unknown");
+  const displayName = catOverride?.name
+    ? catOverride.name
+    : splitType 
+      ? getSplitTypeDisplayName(splitType)
+      : getCategoryDisplayName(document.classification?.category || "unknown");
   
   // Get key fields based on document type
   const getKeyInfo = () => {
@@ -314,6 +318,11 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
               <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">
                 {displayName}
               </span>
+              {catOverride && (
+                <span className="text-[10px] font-medium text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5">
+                  retyped{catOverride.isCustom ? " (custom)" : ""}
+                </span>
+              )}
               {pagesDisplay && (
                 <span className="text-xs text-gray-500 dark:text-neutral-400 shrink-0">
                   (pages {pagesDisplay})

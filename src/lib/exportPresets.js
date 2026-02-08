@@ -5,6 +5,7 @@
  */
 
 import { getMergedExtractionData } from "./utils";
+import { schemas } from "../schemas/index";
 
 // ============================================================================
 // HELPERS
@@ -86,17 +87,23 @@ function downloadFile(content, filename, type) {
   URL.revokeObjectURL(url);
 }
 
-/** Extract all documents with merged data from packets */
+/** Extract all documents with merged data from packets.
+ *  Uses category override (from reviewer reclassification) when available. */
 function extractAllDocs(packets) {
   const docs = [];
   for (const pkt of packets) {
     for (const doc of pkt.documents || []) {
-      const { data } = getMergedExtractionData(doc);
+      const { data } = getMergedExtractionData(doc, schemas);
+      // Category override takes priority — set during human review for "other" docs
+      const catOverride = doc.categoryOverride || null;
+      const docType = catOverride?.name || doc.classification?.category || "unknown";
       docs.push({
         packetId: pkt.id,
         packetFilename: pkt.filename || pkt.name,
         docId: doc.id,
-        docType: doc.classification?.category || "unknown",
+        docType,
+        docTypeOriginal: doc.classification?.category || "unknown",
+        isReclassified: !!catOverride,
         pages: doc.pages,
         confidence: doc.extractionConfidence,
         needsReview: doc.needsReview,

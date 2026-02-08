@@ -120,6 +120,17 @@ function validationError(res, message) {
   return res.status(400).json({ error: `Validation error: ${message}` });
 }
 
+/**
+ * Return a safe error message — hide internal details (stack traces, file paths,
+ * SQL errors) in production to prevent information leakage.
+ */
+function safeErrorMessage(error) {
+  if (!isProduction) return error.message;
+  // Allow validation-style messages through; hide everything else
+  if (error.message?.startsWith("Validation")) return error.message;
+  return "Internal server error";
+}
+
 // Initialize database
 db.initializeDatabase();
 
@@ -138,7 +149,7 @@ const uploadMulter = multer({
       cb(null, `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 11)}${ext}`);
     },
   }),
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: 75 * 1024 * 1024 }, // 75MB — matches frontend MAX_FILE_SIZE
   fileFilter: (_req, file, cb) => {
     if (file.mimetype === "application/pdf") return cb(null, true);
     cb(new Error("Only PDF files are allowed"));
@@ -233,7 +244,7 @@ app.get("/api/status", (req, res) => {
       version: "0.4.0",
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -252,7 +263,7 @@ app.get("/api/sessions/active", (req, res) => {
     }
     res.json(session);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -265,7 +276,7 @@ app.get("/api/sessions/:id", (req, res) => {
     }
     res.json(session);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -283,7 +294,7 @@ app.post("/api/sessions", (req, res) => {
     const session = db.createSession(id, createdBy);
     res.status(201).json(session);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -299,7 +310,7 @@ app.patch("/api/sessions/:id", (req, res) => {
     }
     res.json(session);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -312,25 +323,10 @@ app.post("/api/sessions/:id/close", (req, res) => {
     }
     res.json(session);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
-// Beacon sync — best-effort endpoint called from beforeunload.
-// navigator.sendBeacon sends a POST with text/plain body.
-app.post("/api/sessions/:id/beacon-sync", express.text({ type: "*/*" }), (req, res) => {
-  try {
-    const data = JSON.parse(req.body);
-    const packetIds = data?.packetIds;
-    if (Array.isArray(packetIds)) {
-      logger.info({ sessionId: req.params.id, packetIds }, "Beacon sync received");
-    }
-    // Acknowledge immediately — the browser is closing and won't read the response.
-    res.status(204).end();
-  } catch {
-    res.status(204).end();
-  }
-});
 
 // Get full session data (session + packets + documents)
 app.get("/api/sessions/:id/full", (req, res) => {
@@ -356,7 +352,7 @@ app.get("/api/sessions/:id/full", (req, res) => {
       documents,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -384,7 +380,7 @@ app.get("/api/packets/all", (req, res) => {
     });
     res.json(enriched);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -425,7 +421,7 @@ app.post("/api/packets", (req, res) => {
       res.status(201).json(packet);
     }
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -442,7 +438,7 @@ app.get("/api/packets/:id", (req, res) => {
       hasServerFile: !!packet.temp_file_path,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -457,7 +453,7 @@ app.get("/api/sessions/:sessionId/packets", (req, res) => {
     }));
     res.json(packetsWithFlag);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -473,7 +469,7 @@ app.patch("/api/packets/:id", (req, res) => {
     }
     res.json(packet);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -502,7 +498,7 @@ app.post("/api/packets/:id/complete", (req, res) => {
     }
     res.json(packet);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -525,7 +521,7 @@ app.delete("/api/packets/:id", (req, res) => {
     }
     res.status(204).send();
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -539,6 +535,23 @@ app.post("/api/upload", uploadMulter.single("file"), (req, res) => {
     fs.unlink(req.file.path, () => {});
     return res.status(400).json({ error: "session_id required" });
   }
+
+  // Validate PDF magic bytes — the first 5 bytes must be "%PDF-"
+  // This catches non-PDF files that were given a .pdf extension or spoofed MIME type.
+  try {
+    const fd = fs.openSync(req.file.path, "r");
+    const header = Buffer.alloc(5);
+    fs.readSync(fd, header, 0, 5, 0);
+    fs.closeSync(fd);
+    if (header.toString("ascii") !== "%PDF-") {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: "Invalid file: not a valid PDF (bad file signature)" });
+    }
+  } catch (sigErr) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: "Could not validate file" });
+  }
+
   try {
     const packetId = `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const filename = req.file.originalname || "document.pdf";
@@ -556,7 +569,7 @@ app.post("/api/upload", uploadMulter.single("file"), (req, res) => {
     res.status(201).json(packet);
   } catch (error) {
     fs.unlink(req.file.path, () => {});
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -567,8 +580,14 @@ app.get("/api/packets/:id/file", (req, res) => {
     if (!packet || !packet.temp_file_path) {
       return res.status(404).json({ error: "File not found" });
     }
-    // Resolve to absolute path for res.sendFile
+    // Resolve to absolute path for res.sendFile — then verify it's inside TEMP_PDF_DIR
+    // to prevent path traversal if temp_file_path were ever manipulated.
     const absolutePath = path.resolve(packet.temp_file_path);
+    const allowedDir = path.resolve(TEMP_PDF_DIR);
+    if (!absolutePath.startsWith(allowedDir + path.sep) && absolutePath !== allowedDir) {
+      logger.warn({ packetId: req.params.id, path: absolutePath }, "Path traversal attempt blocked");
+      return res.status(403).json({ error: "Invalid file path" });
+    }
     if (!fs.existsSync(absolutePath)) {
       db.updatePacket(packet.id, { temp_file_path: null });
       return res.status(404).json({ error: "File expired or removed" });
@@ -577,7 +596,7 @@ app.get("/api/packets/:id/file", (req, res) => {
     res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(packet.filename || "document.pdf")}"`);
     res.sendFile(absolutePath);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: isProduction ? "Internal server error" : error.message });
   }
 });
 
@@ -611,7 +630,7 @@ app.post("/api/documents", (req, res) => {
       res.status(201).json(doc);
     }
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -624,7 +643,7 @@ app.get("/api/documents/:id", (req, res) => {
     }
     res.json(doc);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -634,7 +653,7 @@ app.get("/api/packets/:packetId/documents", (req, res) => {
     const docs = db.getDocumentsByPacket(req.params.packetId);
     res.json(docs);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -644,7 +663,7 @@ app.get("/api/sessions/:sessionId/review-queue", (req, res) => {
     const docs = db.getDocumentsNeedingReview(req.params.sessionId);
     res.json(docs);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -660,14 +679,14 @@ app.patch("/api/documents/:id", (req, res) => {
     }
     res.json(doc);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
 // Review document (approve/reject)
 app.post("/api/documents/:id/review", (req, res) => {
   try {
-    const { status, editedFields, reviewerNotes, reviewedBy } = req.body;
+    const { status, editedFields, reviewerNotes, reviewedBy, categoryOverride } = req.body;
     const validStatuses = ["reviewed", "approved", "rejected"];
     if (status && !validStatuses.includes(status)) {
       return validationError(res, `status must be one of: ${validStatuses.join(", ")}`);
@@ -686,13 +705,14 @@ app.post("/api/documents/:id/review", (req, res) => {
       editedFields,
       reviewerNotes: sanitizeString(reviewerNotes, 2000),
       reviewedBy: sanitizeString(reviewedBy, 200),
+      categoryOverride: categoryOverride || null,
     });
     if (!doc) {
       return res.status(404).json({ error: "Document not found" });
     }
     res.json(doc);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -707,7 +727,7 @@ app.get("/api/history", (req, res) => {
     const history = db.getHistory(limit);
     res.json(history);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -728,7 +748,7 @@ app.post("/api/history", (req, res) => {
     });
     res.status(201).json(entry);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -738,7 +758,7 @@ app.delete("/api/history/:id", (req, res) => {
     db.deleteHistoryEntry(req.params.id);
     res.status(204).send();
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -748,7 +768,7 @@ app.delete("/api/history", (req, res) => {
     db.clearHistory();
     res.status(204).send();
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -761,12 +781,12 @@ app.get("/api/admin/metrics", (req, res) => {
     const metrics = db.getAdminDashboardMetrics();
     res.json(metrics);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
 // Password-protected database clear
-const ADMIN_CLEAR_PASSWORD = "stewart";
+const ADMIN_CLEAR_PASSWORD = process.env.ADMIN_CLEAR_PASSWORD || "stewart";
 
 app.post("/api/admin/clear-database", (req, res) => {
   if (!req.body || typeof req.body.password !== "string") {
@@ -780,7 +800,7 @@ app.post("/api/admin/clear-database", (req, res) => {
     const result = db.clearAllData();
     res.json({ success: true, message: "Database cleared", ...result });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -795,7 +815,7 @@ app.get("/api/usage", (req, res) => {
     const total = db.getTotalUsage();
     res.json({ daily, total });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -805,7 +825,7 @@ app.get("/api/stats/30d", (req, res) => {
     const stats = db.getStats30Days(days);
     res.json(stats);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -818,7 +838,7 @@ app.get("/api/export-templates", (req, res) => {
     const templates = db.getExportTemplates();
     res.json(templates);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -833,7 +853,7 @@ app.post("/api/export-templates", (req, res) => {
     const template = db.saveExportTemplate(req.body);
     res.status(201).json(template);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -842,7 +862,7 @@ app.delete("/api/export-templates/:name", (req, res) => {
     db.deleteExportTemplate(req.params.name);
     res.status(204).send();
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -854,7 +874,7 @@ app.post("/api/documents/extract", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    console.log("Extract request schema name:", req.body.json_schema?.name || "unnamed");
+    logger.debug({ schemaName: req.body.json_schema?.name || "unnamed" }, "Extract request");
 
     // Retab API requires temperature > 0 when n_consensus > 1; enforce before forwarding
     const body = { ...req.body };
@@ -923,9 +943,9 @@ app.post("/api/documents/extract", async (req, res) => {
     }
 
     const data = await response.json();
-    console.log("Extract response keys:", Object.keys(data));
+    logger.debug({ keys: Object.keys(data) }, "Extract response");
     if (data.likelihoods) {
-      console.log("Extract likelihoods sample:", Object.entries(data.likelihoods).slice(0, 3));
+      logger.debug({ sample: Object.entries(data.likelihoods).slice(0, 3) }, "Extract likelihoods");
     }
     
     if (!response.ok) {
@@ -1038,7 +1058,7 @@ app.post("/api/documents/split", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    console.log("Split request subdocuments:", req.body.subdocuments?.map(s => s.name));
+    logger.debug({ subdocuments: req.body.subdocuments?.map(s => s.name) }, "Split request");
 
     const response = await fetchWithRetry(`${RETAB_API_BASE}/documents/split`, {
       method: "POST",
@@ -1051,7 +1071,7 @@ app.post("/api/documents/split", async (req, res) => {
     });
 
     const data = await response.json();
-    console.log("Split response:", JSON.stringify(data, null, 2));
+    logger.debug({ splitResult: data }, "Split response");
     
     if (!response.ok) {
       return res.status(response.status).json(data);
@@ -1072,7 +1092,7 @@ app.post("/api/documents/classify", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    console.log("Classify request categories:", req.body.categories?.map(c => c.name));
+    logger.debug({ categories: req.body.categories?.map(c => c.name) }, "Classify request");
 
     const response = await fetchWithRetry(`${RETAB_API_BASE}/documents/classify`, {
       method: "POST",
@@ -1085,7 +1105,7 @@ app.post("/api/documents/classify", async (req, res) => {
     });
 
     const data = await response.json();
-    console.log("Classify response:", JSON.stringify(data, null, 2));
+    logger.debug({ classifyResult: data }, "Classify response");
     
     if (!response.ok) {
       return res.status(response.status).json(data);
@@ -1143,7 +1163,7 @@ app.post("/api/edit/agent/fill", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    console.log("Edit Agent Fill request");
+    logger.debug("Edit Agent Fill request");
 
     // Try the current endpoint first, fall back to legacy if 404
     let response = await fetchWithRetry(`${RETAB_API_BASE}/documents/edit`, {
@@ -1158,7 +1178,7 @@ app.post("/api/edit/agent/fill", async (req, res) => {
 
     // If /documents/edit returns 404, try the legacy /edit/agent/fill path
     if (response.status === 404) {
-      console.log("Edit endpoint /documents/edit returned 404, trying legacy /edit/agent/fill...");
+      logger.debug("Edit endpoint /documents/edit returned 404, trying legacy /edit/agent/fill...");
       response = await fetchWithRetry(`${RETAB_API_BASE}/edit/agent/fill`, {
         method: "POST",
         headers: {
@@ -1191,7 +1211,7 @@ app.post("/api/edit/templates/generate", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    console.log("Edit Template Generate request");
+    logger.debug("Edit Template Generate request");
 
     const response = await fetchWithRetry(`${RETAB_API_BASE}/edit/templates/generate`, {
       method: "POST",
@@ -1224,7 +1244,7 @@ app.post("/api/edit/templates/fill", async (req, res) => {
       return res.status(401).json({ error: "API key required" });
     }
 
-    console.log("Edit Template Fill request");
+    logger.debug("Edit Template Fill request");
 
     const response = await fetchWithRetry(`${RETAB_API_BASE}/edit/templates/fill`, {
       method: "POST",
@@ -1278,7 +1298,7 @@ app.get("/api/debug/errors", (req, res) => {
     const errors = db.getRecentFailedPackets(limit);
     res.json({ errors, count: errors.length });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: safeErrorMessage(error) });
   }
 });
 
@@ -1299,10 +1319,10 @@ function runTempFileCleanup() {
       db.updatePacket(row.id, { temp_file_path: null });
     }
     if (old.length > 0) {
-      console.log(`Temp file cleanup: removed ${old.length} expired file(s)`);
+      logger.info({ count: old.length }, "Temp file cleanup: removed expired files");
     }
   } catch (e) {
-    console.warn("Temp file cleanup error:", e.message);
+    logger.warn({ err: e }, "Temp file cleanup error");
   }
 }
 
@@ -1316,6 +1336,36 @@ setInterval(() => {
   }
 }, CLEANUP_INTERVAL_MS);
 runTempFileCleanup();
+
+// Clean up orphaned tmp_* files on startup.
+// If the server crashes between multer saving the temp file and renaming it to
+// pkt_*.pdf, the tmp_ file will be left behind. We delete any tmp_ file older
+// than 1 hour (processing should never take that long).
+function cleanupOrphanTempFiles() {
+  try {
+    const files = fs.readdirSync(TEMP_PDF_DIR);
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    const cutoff = Date.now() - ONE_HOUR_MS;
+    let removed = 0;
+    for (const file of files) {
+      if (!file.startsWith("tmp_")) continue;
+      const filePath = path.join(TEMP_PDF_DIR, file);
+      try {
+        const stat = fs.statSync(filePath);
+        if (stat.mtimeMs < cutoff) {
+          fs.unlinkSync(filePath);
+          removed++;
+        }
+      } catch { /* ignore individual file errors */ }
+    }
+    if (removed > 0) {
+      logger.info({ count: removed }, "Orphan temp file cleanup: removed stale tmp_* files");
+    }
+  } catch (e) {
+    logger.warn({ err: e }, "Orphan temp file cleanup error");
+  }
+}
+cleanupOrphanTempFiles();
 
 // ============================================================================
 // STATIC FILES (Production)

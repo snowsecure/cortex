@@ -126,13 +126,38 @@ export function getExtractionData(extraction) {
 /**
  * Get extraction data with user corrections (editedFields) merged in.
  * This is the single source of truth for "final data" after human review.
+ *
+ * When a document has been reclassified (categoryOverride with a known schema),
+ * the editedFields contain the COMPLETE new-schema field set (saved by
+ * ReviewQueue.handleApprove). To prevent old-schema extraction fields from
+ * leaking through, we restrict the output to only new-schema fields.
+ *
  * @param {Object} document - A document object with .extraction and optional .editedFields
+ * @param {Object} [schemasMap] - Optional schemas map; pass to enable schema-aware filtering
  * @returns {{ data: Object, likelihoods: Object, originalData: Object, editedFields: Object }}
  */
-export function getMergedExtractionData(document) {
+export function getMergedExtractionData(document, schemasMap) {
   const { data, likelihoods } = getExtractionData(document?.extraction);
   const editedFields = document?.editedFields || {};
-  const mergedData = { ...data, ...editedFields };
+  let mergedData = { ...data, ...editedFields };
+
+  // For reclassified documents with a known schema, restrict output to the
+  // target schema's fields so old-schema extraction data doesn't leak through.
+  const catOverride = document?.categoryOverride;
+  if (catOverride && !catOverride.isCustom && catOverride.id && schemasMap) {
+    const targetSchema = schemasMap[catOverride.id];
+    if (targetSchema?.schema?.properties) {
+      const allowedKeys = new Set(Object.keys(targetSchema.schema.properties));
+      const filtered = {};
+      for (const key of allowedKeys) {
+        if (key in mergedData) {
+          filtered[key] = mergedData[key];
+        }
+      }
+      mergedData = filtered;
+    }
+  }
+
   return { data: mergedData, likelihoods, originalData: data, editedFields };
 }
 

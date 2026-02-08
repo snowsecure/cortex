@@ -23,6 +23,7 @@ import { EXPORT_PRESETS, executePresetExport } from "../lib/exportPresets";
 import { agentFillDocument, fileToBase64 } from "../lib/retab";
 import { RETAB_MODELS } from "../lib/retabConfig";
 import { getCategoryDisplayName } from "../lib/documentCategories";
+import { schemas } from "../schemas/index";
 
 // ============================================================================
 // CONSTANTS
@@ -122,7 +123,7 @@ function PacketSelector({
     const types = {};
     for (const pkt of exportablePackets) {
       for (const doc of pkt.documents || []) {
-        const cat = doc.classification?.category || "other";
+        const cat = doc.categoryOverride?.name || doc.classification?.category || "other";
         types[cat] = (types[cat] || 0) + 1;
       }
     }
@@ -291,7 +292,7 @@ function ExportSummaryPanel({ packets }) {
     for (const pkt of packets) {
       for (const doc of pkt.documents || []) {
         allDocs.push(doc);
-        const cat = doc.classification?.category || "other";
+        const cat = doc.categoryOverride?.name || doc.classification?.category || "other";
         types[cat] = (types[cat] || 0) + 1;
       }
     }
@@ -454,7 +455,7 @@ function DocumentFillSection({ packets, exportablePackets }) {
       if (!pkt) return "";
       const lines = [];
       for (const doc of pkt.documents || []) {
-        const { data } = getMergedExtractionData(doc);
+        const { data } = getMergedExtractionData(doc, schemas);
         if (!data) continue;
         for (const [key, value] of Object.entries(data)) {
           if (value != null && value !== "" && !key.startsWith("reasoning___") && !key.startsWith("source___")) {
@@ -736,7 +737,7 @@ export function ExportPage({ packets, stats }) {
       pkts = pkts.map((pkt) => ({
         ...pkt,
         documents: (pkt.documents || []).filter((doc) => {
-          const cat = doc.classification?.category || "other";
+          const cat = doc.categoryOverride?.name || doc.classification?.category || "other";
           return selectedDocTypes.has(cat);
         }),
       })).filter((pkt) => pkt.documents.length > 0); // remove packets with 0 matching docs

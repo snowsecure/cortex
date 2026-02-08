@@ -59,6 +59,7 @@ function deserializeDocument(row) {
     likelihoods: tryParseJson(row.likelihoods, {}),
     review_reasons: tryParseJson(row.review_reasons, []),
     edited_fields: tryParseJson(row.edited_fields, null),
+    category_override: tryParseJson(row.category_override, null),
     extraction_confidence: row.extraction_confidence ?? null,
     needs_review: !!row.needs_review,
   };
@@ -224,6 +225,13 @@ export function initializeDatabase() {
     } catch (e) {
       if (!/duplicate column name/i.test(e.message)) throw e;
     }
+  }
+
+  // Migration: add category_override column to documents (stores reviewer-assigned category)
+  try {
+    db.exec(`ALTER TABLE documents ADD COLUMN category_override TEXT`);
+  } catch (e) {
+    if (!/duplicate column name/i.test(e.message)) throw e;
   }
 
   console.log("Database initialized:", DB_FILE);
@@ -670,7 +678,7 @@ export function updateDocumentExtraction(id, { status, extractionData, likelihoo
   return getDocument(id);
 }
 
-export function reviewDocument(id, { status, reviewerNotes, editedFields, reviewedBy }) {
+export const reviewDocument = db.transaction((id, { status, reviewerNotes, editedFields, reviewedBy, categoryOverride }) => {
   db.prepare(`
     UPDATE documents SET
       status = ?,
@@ -679,6 +687,7 @@ export function reviewDocument(id, { status, reviewerNotes, editedFields, review
       reviewed_by = ?,
       reviewer_notes = ?,
       edited_fields = ?,
+      category_override = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
@@ -686,11 +695,12 @@ export function reviewDocument(id, { status, reviewerNotes, editedFields, review
     reviewedBy || null,
     reviewerNotes || null,
     editedFields ? JSON.stringify(editedFields) : null,
+    categoryOverride ? JSON.stringify(categoryOverride) : null,
     id
   );
 
   return getDocument(id);
-}
+});
 
 // ============================================================================
 // HISTORY OPERATIONS

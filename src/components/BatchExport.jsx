@@ -5,6 +5,7 @@ import { useToast } from "./ui/toast";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getExtractionData, getMergedExtractionData } from "../lib/utils";
+import { schemas } from "../schemas/index";
 
 /**
  * Flatten nested object for CSV export
@@ -184,7 +185,7 @@ export function BatchExport({ packets, stats }) {
       // First pass: collect all columns (from final merged data including corrections)
       for (const packet of exportablePackets) {
         for (const doc of packet.documents || []) {
-          const { data } = getMergedExtractionData(doc);
+          const { data } = getMergedExtractionData(doc, schemas);
           const flattened = flattenObject(data, "data");
           Object.keys(flattened).forEach(key => columnSet.add(key));
         }
@@ -195,7 +196,7 @@ export function BatchExport({ packets, stats }) {
       // Second pass: create rows with corrections merged
       for (const packet of exportablePackets) {
         for (const doc of packet.documents || []) {
-          const { data: finalData, originalData, editedFields } = getMergedExtractionData(doc);
+          const { data: finalData, originalData, editedFields } = getMergedExtractionData(doc, schemas);
           const hasCorrections = Object.keys(editedFields).some(
             field => editedFields[field] !== undefined && editedFields[field] !== originalData[field]
           );
@@ -264,7 +265,7 @@ export function BatchExport({ packets, stats }) {
           const deeds = packet.documents?.filter(d => 
             d.classification?.category === "recorded_transfer_deed"
           ) || [];
-          const { data: firstDeed } = getMergedExtractionData(deeds[0] || {});
+          const { data: firstDeed } = getMergedExtractionData(deeds[0] || {}, schemas);
           
           return {
             transaction_id: packet.id,
@@ -281,7 +282,7 @@ export function BatchExport({ packets, stats }) {
               prior_owner: firstDeed?.grantor_name || null,
             },
             documents: (packet.documents || []).map(doc => {
-              const { data } = getMergedExtractionData(doc);
+              const { data } = getMergedExtractionData(doc, schemas);
               return {
                 doc_type: doc.classification?.category,
                 confidence: doc.classification?.confidence,

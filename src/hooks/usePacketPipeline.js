@@ -352,9 +352,29 @@ export function usePacketPipeline() {
           extractSingleDoc(split, i + batchIndex)
         );
         
-        const batchResults = await Promise.all(batchPromises);
+        // Use Promise.allSettled so one document failure doesn't kill the entire batch.
+        // Each extractSingleDoc already catches its own errors and returns a failed result,
+        // but an unexpected throw (e.g., abort) could still reject the promise.
+        const batchSettled = await Promise.allSettled(batchPromises);
         
-        for (const docResult of batchResults) {
+        for (const outcome of batchSettled) {
+          let docResult;
+          if (outcome.status === "fulfilled") {
+            docResult = outcome.value;
+          } else {
+            // Unexpected rejection — create a failed placeholder so the batch continues
+            const err = outcome.reason;
+            if (err?.name === "AbortError" || err?.message === "Processing aborted" || signal?.aborted) {
+              throw err; // Abort should still propagate
+            }
+            console.error("[Pipeline] Unexpected batch rejection:", err);
+            docResult = {
+              id: `doc_err_${Date.now()}`,
+              status: "failed",
+              error: err?.message || "Unknown extraction error",
+            };
+          }
+
           result.documents.push(docResult);
           
           // Aggregate usage
@@ -533,7 +553,8 @@ export function usePacketPipeline() {
     // Retry extraction with exponential backoff (same as initial pipeline)
     const DOC_MAX_RETRIES = 2;
     const DOC_RETRY_DELAYS = [2000, 4000];
-    const RETRIABLE_PATTERNS = /fetch failed|network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|50[0-9]|529/i;
+    const RETRIABLE_PATTERNS = /fetch failed|network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|429|50[0-9]|529/i;
+    const RATE_LIMIT_PATTERN = /429/;
 
     let extractionResponse;
     for (let attempt = 0; attempt <= DOC_MAX_RETRIES; attempt++) {
@@ -557,7 +578,17 @@ export function usePacketPipeline() {
           throw retryErr;
         }
         const isRetriable = RETRIABLE_PATTERNS.test(retryErr.message);
-        if (isRetriable && attempt < DOC_MAX_RETRIES) {
+        const isRateLimited = RATE_LIMIT_PATTERN.test(retryErr.message);
+
+        if (isRateLimited) {
+          // Longer backoff for rate limits — 5s base, doubling each retry
+          const rateLimitDelay = 5000 * Math.pow(2, attempt);
+          console.warn(`Rate limited (429) on retry, attempt ${attempt + 1}/${DOC_MAX_RETRIES + 1}. Waiting ${rateLimitDelay / 1000}s...`);
+          if (attempt < DOC_MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, rateLimitDelay));
+            continue;
+          }
+        } else if (isRetriable && attempt < DOC_MAX_RETRIES) {
           console.warn(`Document retry attempt ${attempt + 1} failed (${retryErr.message}), retrying in ${DOC_RETRY_DELAYS[attempt]}ms...`);
           await new Promise(r => setTimeout(r, DOC_RETRY_DELAYS[attempt]));
           continue;
