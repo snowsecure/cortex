@@ -326,53 +326,56 @@ export function BatchExport({ packets, stats }) {
   const hasExportableData = exportablePackets.length > 0;
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1">
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
         onClick={exportJSON}
         disabled={!hasExportableData || isExporting}
+        className="h-7 px-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
       >
         {exportSuccess === "json" ? (
-          <Check className="h-4 w-4 mr-1 text-green-500" />
+          <Check className="h-3.5 w-3.5 mr-1 text-green-500" />
         ) : isExporting ? (
-          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
         ) : (
-          <FileJson className="h-4 w-4 mr-1" />
+          <FileJson className="h-3.5 w-3.5 mr-1" />
         )}
         JSON
       </Button>
       
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
         onClick={exportCSV}
         disabled={!hasExportableData || isExporting}
+        className="h-7 px-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
       >
         {exportSuccess === "csv" ? (
-          <Check className="h-4 w-4 mr-1 text-green-500" />
+          <Check className="h-3.5 w-3.5 mr-1 text-green-500" />
         ) : isExporting ? (
-          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
         ) : (
-          <FileSpreadsheet className="h-4 w-4 mr-1" />
+          <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />
         )}
         CSV
       </Button>
       
       <Button
+        variant="outline"
         size="sm"
         onClick={exportTPS}
         disabled={!hasExportableData || isExporting}
-        className="bg-[#9e2339] hover:bg-[#7a1b2d]"
+        className="h-7 px-2.5 text-xs border-[#9e2339]/30 text-[#9e2339] hover:bg-[#9e2339]/5 dark:border-[#9e2339]/40 dark:text-[#c73a55] dark:hover:bg-[#9e2339]/10"
       >
         {exportSuccess === "tps" ? (
-          <Check className="h-4 w-4 mr-1" />
+          <Check className="h-3.5 w-3.5 mr-1" />
         ) : isExporting ? (
-          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
         ) : (
-          <Download className="h-4 w-4 mr-1" />
+          <Download className="h-3.5 w-3.5 mr-1" />
         )}
-        TPS Export
+        TPS
       </Button>
     </div>
   );

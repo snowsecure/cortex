@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { cn, getMergedExtractionData } from "../lib/utils";
+import { cn, getMergedExtractionData, getDocumentQualityTier } from "../lib/utils";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
@@ -55,7 +55,7 @@ function getStatusVariant(status) {
 function getStatusText(status) {
   switch (status) {
     case PacketStatus.QUEUED:
-      return "Queued";
+      return "Up next";
     case PacketStatus.SPLITTING:
       return "Splitting...";
     case PacketStatus.CLASSIFYING:
@@ -332,31 +332,34 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
             </Badge>
           )}
           {(() => {
-            if (!extractionKnown) {
-              return (
-                <span
-                  className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400"
-                  title="Extraction confidence not available (no per-field scores from API)"
-                >
-                  —
-                </span>
-              );
-            }
-            const tier = getConfidenceTier(confidence);
-            const TierIcon = tier.Icon;
-            const pct = Math.round((confidence ?? 0) * 100);
+            const quality = getDocumentQualityTier(document);
+            const pct = extractionKnown ? Math.round((confidence ?? 0) * 100) : null;
+            const tierStyles = {
+              verified: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400",
+              high: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400",
+              unscored: "bg-gray-100 dark:bg-neutral-700 text-gray-500 dark:text-neutral-400",
+              needs_attention: "bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400",
+            };
+            const tierIcons = {
+              verified: CheckCircle,
+              high: CheckCircle,
+              unscored: Clock,
+              needs_attention: AlertTriangle,
+            };
+            const TierIcon = tierIcons[quality.tier];
             return (
               <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium",
-                  tier.variant === "success" && "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400",
-                  tier.variant === "warning" && "bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400",
-                  tier.variant === "destructive" && "bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400"
-                )}
-                title={`${tier.label} — ${pct}% extraction confidence for this document`}
+                className={cn("inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium", tierStyles[quality.tier])}
+                title={quality.tier === "verified"
+                  ? "Human-reviewed — highest data trust"
+                  : quality.tier === "unscored"
+                    ? "Confidence scores not available from API"
+                    : pct != null
+                      ? `${pct}% extraction confidence`
+                      : quality.label}
               >
                 <TierIcon className="h-3 w-3 shrink-0" />
-                {tier.label}
+                {quality.label}
               </span>
             );
           })()}
@@ -580,19 +583,30 @@ function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove,
               {isProcessing && (() => {
                 const prog = packet.progress;
                 if (packet.status === PacketStatus.SPLITTING) {
-                  return <><span>•</span><span className="text-blue-600">Splitting PDF…</span></>;
+                  return <><span>•</span><span className="text-blue-600 dark:text-blue-400">Splitting PDF…</span></>;
                 }
                 if (packet.status === PacketStatus.CLASSIFYING) {
-                  return <><span>•</span><span className="text-blue-600">Classifying…</span></>;
+                  return <><span>•</span><span className="text-blue-600 dark:text-blue-400">Classifying…</span></>;
                 }
                 if (packet.status === PacketStatus.EXTRACTING && prog?.totalDocs > 0) {
                   const current = Math.min((prog.docIndex ?? 0) + 1, prog.totalDocs);
                   return (
-                    <><span>•</span><span className="text-blue-600">Extracting document {current} of {prog.totalDocs}</span></>
+                    <><span>•</span><span className="text-blue-600 dark:text-blue-400">{current}/{prog.totalDocs} docs</span></>
                   );
                 }
-                return <><span>•</span><span className="text-blue-600">{getStatusText(packet.status)}</span></>;
+                return <><span>•</span><span className="text-blue-600 dark:text-blue-400">{getStatusText(packet.status)}</span></>;
               })()}
+              {/* Per-run model info (each upload can use a different model) */}
+              {!isProcessing && packet.usage?.model && (
+                <>
+                  <span>•</span>
+                  <span className="text-gray-400 dark:text-gray-500">
+                    {packet.usage.model}
+                    {packet.usage.nConsensus > 1 && ` × ${packet.usage.nConsensus}`}
+                    {packet.usage.costOptimize && " · Smart Routing"}
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -652,6 +666,21 @@ function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove,
           )}
         </div>
       </div>
+
+      {/* Per-packet progress bar during extraction */}
+      {isProcessing && packet.status === PacketStatus.EXTRACTING && packet.progress?.totalDocs > 0 && (
+        <div className="px-4 pb-0">
+          <div className="h-1 bg-gray-200 dark:bg-neutral-700 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-blue-500 dark:bg-blue-400 rounded-full"
+              style={{
+                width: `${Math.max(2, Math.round(((packet.progress.docIndex ?? 0) / packet.progress.totalDocs) * 100))}%`,
+                transition: "width 1.5s cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Expanded documents */}
       {expanded && packet.documents?.length > 0 && (
@@ -797,9 +826,7 @@ export function PacketResultsView({
               className={cn(
                 "px-3 py-1 text-xs font-medium rounded-md transition-colors",
                 filter === option.value
-                  ? option.value === "needs_review"
-                    ? "bg-amber-100 dark:bg-amber-900/50 text-amber-900 dark:text-amber-200 shadow-sm border border-amber-200/60 dark:border-amber-700"
-                    : "bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm"
+                  ? "bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm"
                   : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
               )}
             >

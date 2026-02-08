@@ -257,7 +257,7 @@ export function usePacketPipeline() {
                 nConsensus: docConsensus,
                 imageDpi: config.imageDpi,
                 temperature: config.temperature,
-                stream: true,
+                stream: false, // non-streaming avoids "Unexpected non-whitespace character after JSON" when API returns JSON
                 chunkingKeys: chunkingKeysArray,
                 signal,
               });
@@ -381,6 +381,10 @@ export function usePacketPipeline() {
     // Calculate final totals
     result.usage.totalCredits = result.usage.splitCredits + result.usage.extractCredits;
     result.usage.totalCost = result.usage.totalCredits * 0.01; // $0.01 per credit
+    // Store run config on result so each packet can display its own model (different runs can use different models)
+    result.usage.model = config.model;
+    result.usage.nConsensus = config.nConsensus;
+    result.usage.costOptimize = config.costOptimize;
 
     return result;
   }, []);
@@ -433,7 +437,7 @@ export function usePacketPipeline() {
       nConsensus: docConsensus,
       imageDpi: config.imageDpi,
       temperature: config.temperature,
-      stream: true,
+      stream: false, // non-streaming avoids "Unexpected non-whitespace character after JSON" when API returns JSON
       chunkingKeys: chunkingKeysArray,
       signal,
     });
@@ -514,7 +518,7 @@ export function usePacketPipeline() {
           nConsensus: config.nConsensus,
           imageDpi: config.imageDpi,
           temperature: config.temperature,
-          stream: true,
+          stream: false, // non-streaming avoids "Unexpected non-whitespace character after JSON" when API returns JSON
           chunkingKeys: chunkingKeysArray,
           signal,
         });

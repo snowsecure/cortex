@@ -357,9 +357,16 @@ app.get("/api/packets/all", (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 500, 1000);
     const packets = db.getAllPackets(limit);
-    // Attach documents and hasServerFile flag for each packet
+    // Batch-fetch all documents in one query (no N+1)
+    const packetIds = packets.map(p => p.id);
+    const allDocs = db.getDocumentsByPacketIds(packetIds);
+    const docsByPacket = new Map();
+    for (const doc of allDocs) {
+      if (!docsByPacket.has(doc.packet_id)) docsByPacket.set(doc.packet_id, []);
+      docsByPacket.get(doc.packet_id).push(doc);
+    }
     const enriched = packets.map((p) => {
-      const docs = db.getDocumentsByPacket(p.id);
+      const docs = docsByPacket.get(p.id) || [];
       const hasServerFile = !!(p.temp_file_path && fs.existsSync(p.temp_file_path));
       return { ...p, documents: docs, hasServerFile };
     });
@@ -1287,7 +1294,15 @@ function runTempFileCleanup() {
   }
 }
 
-setInterval(runTempFileCleanup, CLEANUP_INTERVAL_MS);
+setInterval(() => {
+  runTempFileCleanup();
+  // Database maintenance: prune old sessions/usage/history + incremental vacuum
+  try {
+    db.runMaintenance();
+  } catch (e) {
+    console.warn("DB maintenance error:", e.message);
+  }
+}, CLEANUP_INTERVAL_MS);
 runTempFileCleanup();
 
 // ============================================================================

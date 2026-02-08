@@ -37,7 +37,7 @@ import {
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
-import { cn, getExtractionData, formatDateTimeCST } from "../lib/utils";
+import { cn, getExtractionData, formatDateTimeCST, getDocumentQualityTier, aggregateDocumentQuality } from "../lib/utils";
 import { getAdminMetrics, clearDatabase } from "../lib/api";
 import { useToast } from "./ui/toast";
 import { 
@@ -220,9 +220,18 @@ function DangerZone({ dbConnected, onCleared }) {
 // CONFIDENCE DISTRIBUTION CHART
 // ============================================================================
 
+/**
+ * Check if confidence data is available (works with both array and object shapes).
+ */
+function hasConfidenceData(data) {
+  if (!data) return false;
+  if (Array.isArray(data)) return data.length > 0;
+  // Object shape: { high, medium, low }
+  return (Number(data.high ?? 0) + Number(data.medium ?? 0) + Number(data.low ?? 0)) > 0;
+}
+
 function ConfidenceDistribution({ data }) {
-  // Check if we have actual confidence data
-  if (!data || data.length === 0) {
+  if (!hasConfidenceData(data)) {
     return (
       <div className="text-center py-6">
         <p className="text-gray-400 dark:text-neutral-500 text-sm mb-2">No confidence data available</p>
@@ -233,18 +242,28 @@ function ConfidenceDistribution({ data }) {
     );
   }
 
-  const buckets = [
-    { label: "< 40%", range: [0, 0.4], color: "bg-red-500" },
-    { label: "40-60%", range: [0.4, 0.6], color: "bg-amber-500" },
-    { label: "60-80%", range: [0.6, 0.8], color: "bg-yellow-500" },
-    { label: "80-95%", range: [0.8, 0.95], color: "bg-green-400" },
-    { label: "95%+", range: [0.95, 1.01], color: "bg-green-600" },
-  ];
-  
-  const distribution = buckets.map(bucket => ({
-    ...bucket,
-    count: data.filter(c => c >= bucket.range[0] && c < bucket.range[1]).length,
-  }));
+  let distribution;
+  if (Array.isArray(data)) {
+    // Legacy array-of-floats format (from local computation)
+    const buckets = [
+      { label: "< 40%", range: [0, 0.4], color: "bg-red-500" },
+      { label: "40-60%", range: [0.4, 0.6], color: "bg-amber-500" },
+      { label: "60-80%", range: [0.6, 0.8], color: "bg-yellow-500" },
+      { label: "80-95%", range: [0.8, 0.95], color: "bg-green-400" },
+      { label: "95%+", range: [0.95, 1.01], color: "bg-green-600" },
+    ];
+    distribution = buckets.map(bucket => ({
+      ...bucket,
+      count: data.filter(c => c >= bucket.range[0] && c < bucket.range[1]).length,
+    }));
+  } else {
+    // New object format: { high, medium, low } from SQL aggregation
+    distribution = [
+      { label: "Low (<70%)", color: "bg-red-500", count: Number(data.low ?? 0) },
+      { label: "Medium (70-90%)", color: "bg-yellow-500", count: Number(data.medium ?? 0) },
+      { label: "High (90%+)", color: "bg-green-600", count: Number(data.high ?? 0) },
+    ];
+  }
   
   const maxCount = Math.max(...distribution.map(d => d.count), 1);
   
@@ -382,26 +401,26 @@ function AIAssistant({ metrics, retabConfig, onSuggestionApply }) {
   const generateInitialSuggestions = () => {
     const suggestions = [];
     
-    // Analyze metrics using knowledge base strategies
-    if (metrics.avgConfidence < 0.7) {
+    // Analyze metrics using holistic quality + knowledge base strategies
+    if (metrics.quality.score < 70 && metrics.quality.total > 0) {
       const strategies = OPTIMIZATION_STRATEGIES.confidence.strategies.slice(0, 2);
       suggestions.push({
         type: "warning",
-        title: "Low Average Confidence",
-        message: `Your average extraction confidence is ${(metrics.avgConfidence * 100).toFixed(1)}%. ${RETAB_CONCEPTS.confidenceScoring.content.split('\n')[0]}`,
+        title: "Low Data Quality",
+        message: `Your data quality score is ${metrics.quality.score}% — ${metrics.quality.needsAttention} document${metrics.quality.needsAttention !== 1 ? "s" : ""} still need${metrics.quality.needsAttention === 1 ? "s" : ""} review. ${RETAB_CONCEPTS.confidenceScoring.content.split('\n')[0]}`,
         details: strategies.map(s => `• **${s.name}**: ${s.description}`).join('\n'),
         action: "Enable consensus mode",
       });
     }
     
-    if (metrics.fieldReviewRate > 0.25) {
+    if (metrics.quality.needsAttention > 5) {
       const strategies = OPTIMIZATION_STRATEGIES.reviews.strategies.slice(0, 2);
       suggestions.push({
         type: "optimization",
-        title: "High Field Review Rate",
-        message: `${(metrics.fieldReviewRate * 100).toFixed(1)}% of fields have low confidence and may need review.`,
+        title: "Documents Awaiting Review",
+        message: `${metrics.quality.needsAttention} document${metrics.quality.needsAttention !== 1 ? "s" : ""} ${metrics.quality.needsAttention !== 1 ? "are" : "is"} flagged for human review. Review them to improve your data quality score.`,
         details: strategies.map(s => `• **${s.name}**: ${s.description}`).join('\n'),
-        action: "View review patterns",
+        action: "View review queue",
       });
     }
     
@@ -428,12 +447,12 @@ function AIAssistant({ metrics, retabConfig, onSuggestionApply }) {
     }
     
     // Add config-based suggestions
-    if ((retabConfig?.nConsensus || 1) === 1 && metrics.avgConfidence < 0.8) {
+    if ((retabConfig?.nConsensus || 1) === 1 && metrics.quality.unscored > 0) {
       suggestions.push({
         type: "optimization",
         title: "Consider Consensus Mode",
-        message: `You're not using consensus mode (n_consensus=1). ${RETAB_CONCEPTS.consensus.content.split('\n')[0]}`,
-        details: "Consensus mode runs multiple extractions and compares results. Using n_consensus=3 typically improves confidence by 10-15%.",
+        message: `${metrics.quality.unscored} document${metrics.quality.unscored !== 1 ? "s" : ""} have no confidence scores. ${RETAB_CONCEPTS.consensus.content.split('\n')[0]}`,
+        details: "Consensus mode runs multiple extractions and compares results. This provides per-field confidence scores and typically improves accuracy by 10-15%.",
         action: "Enable consensus",
       });
     }
@@ -684,6 +703,10 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
 
   // Use server metrics when available; otherwise compute from packets + history
   const metrics = useMemo(() => {
+    // Compute holistic quality from current in-memory packets (works for both paths)
+    const currentDocs = packets.flatMap(p => p.documents || []);
+    const qualityMetrics = aggregateDocumentQuality(currentDocs);
+
     if (serverMetrics && !serverMetricsLoading) {
       return {
         totalPackets: serverMetrics.totalPackets ?? 0,
@@ -694,7 +717,11 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
         avgConfidence: serverMetrics.avgConfidence ?? 0,
         minConfidence: serverMetrics.minConfidence ?? 0,
         maxConfidence: serverMetrics.maxConfidence ?? 0,
+        // Server now returns { high, medium, low } instead of raw array.
+        // The ConfidenceDistribution chart expects an array, so we signal
+        // "has data" via a non-empty array and provide the bucketed shape.
         confidenceDistribution: serverMetrics.confidenceDistribution ?? [],
+        confidenceBuckets: serverMetrics.confidenceDistribution ?? null,
         fieldStats: serverMetrics.fieldStats ?? [],
         lowConfidenceFields: serverMetrics.lowConfidenceFields ?? 0,
         totalFields: (serverMetrics.fieldStats ?? []).length,
@@ -710,6 +737,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
         totalCost: serverMetrics.totalCost ?? 0,
         avgCreditsPerDoc: serverMetrics.avgCreditsPerDoc ?? 0,
         errorRate: serverMetrics.errorRate ?? 0,
+        quality: qualityMetrics,
       };
     }
     // Fallback: compute from current packets + history
@@ -799,6 +827,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
       totalCost: usage?.totalCost || 0,
       avgCreditsPerDoc: completedDocuments > 0 ? (usage?.totalCredits || 0) / completedDocuments : 0,
       errorRate: totalDocuments > 0 ? failedCount / totalDocuments : 0,
+      quality: qualityMetrics,
     };
   }, [serverMetrics, serverMetricsLoading, packets, usage, history]);
   
@@ -963,18 +992,22 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
                 icon={FileText}
               />
               <MetricCard
-                title="Avg Confidence"
-                value={metrics.confidenceDistribution?.length > 0 ? `${(metrics.avgConfidence * 100).toFixed(1)}%` : "N/A"}
-                subtitle={metrics.confidenceDistribution?.length > 0 ? "Across all fields" : "Requires consensus mode"}
+                title="Data Quality"
+                value={metrics.quality.total > 0 ? `${metrics.quality.score}%` : "N/A"}
+                subtitle={metrics.quality.total > 0
+                  ? `${metrics.quality.verified} verified, ${metrics.quality.needsAttention} need review`
+                  : "No documents processed"}
                 icon={Target}
-                variant={metrics.confidenceDistribution?.length > 0 ? (metrics.avgConfidence >= 0.75 ? "success" : metrics.avgConfidence >= 0.6 ? "warning" : "danger") : "default"}
+                variant={metrics.quality.score >= 80 ? "success" : metrics.quality.score >= 60 ? "warning" : metrics.quality.total === 0 ? "default" : "danger"}
               />
               <MetricCard
-                title="Fields Needing Review"
-                value={`${(metrics.fieldReviewRate * 100).toFixed(1)}%`}
-                subtitle={`${metrics.lowConfidenceFields} of ${metrics.totalFields} fields`}
+                title="Pending Review"
+                value={metrics.quality.needsAttention}
+                subtitle={metrics.quality.total > 0
+                  ? `${metrics.quality.verified} of ${metrics.quality.total} verified by human`
+                  : "No documents yet"}
                 icon={Eye}
-                variant={metrics.fieldReviewRate <= 0.1 ? "success" : metrics.fieldReviewRate <= 0.25 ? "warning" : "danger"}
+                variant={metrics.quality.needsAttention === 0 ? "success" : metrics.quality.needsAttention <= 5 ? "warning" : "danger"}
               />
               <MetricCard
                 title="Total Cost"
@@ -1055,35 +1088,116 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
         {/* Confidence Tab */}
         {activeTab === "confidence" && (
           <div className="space-y-6">
-            {/* Confidence Summary */}
+            {/* Holistic Quality Summary */}
+            <div className="grid grid-cols-4 gap-4">
+              <MetricCard
+                title="Data Quality"
+                value={metrics.quality.total > 0 ? `${metrics.quality.score}%` : "N/A"}
+                subtitle="Holistic score"
+                icon={Gauge}
+                variant={metrics.quality.score >= 80 ? "success" : metrics.quality.score >= 60 ? "warning" : metrics.quality.total === 0 ? "default" : "danger"}
+              />
+              <MetricCard
+                title="Human-Verified"
+                value={metrics.quality.verified}
+                subtitle={metrics.quality.total > 0 ? `of ${metrics.quality.total} documents` : "No documents"}
+                icon={CheckCircle}
+                variant={metrics.quality.verified > 0 ? "success" : "default"}
+              />
+              <MetricCard
+                title="High Confidence"
+                value={metrics.quality.high}
+                subtitle="AI extraction ≥ 80%"
+                icon={TrendingUp}
+                variant={metrics.quality.high > 0 ? "success" : "default"}
+              />
+              <MetricCard
+                title="Needs Review"
+                value={metrics.quality.needsAttention}
+                subtitle={metrics.quality.unscored > 0 ? `+ ${metrics.quality.unscored} unscored` : "Flagged or low confidence"}
+                icon={AlertTriangle}
+                variant={metrics.quality.needsAttention === 0 ? "success" : "warning"}
+              />
+            </div>
+
+            {/* Quality Breakdown Bar */}
+            {metrics.quality.total > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Quality Breakdown</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {/* Stacked bar */}
+                    <div className="h-4 rounded-full overflow-hidden bg-gray-200 dark:bg-neutral-700 flex">
+                      {metrics.quality.verified > 0 && (
+                        <div className="h-full bg-green-500" style={{ width: `${(metrics.quality.verified / metrics.quality.total) * 100}%` }} title={`${metrics.quality.verified} verified`} />
+                      )}
+                      {metrics.quality.high > 0 && (
+                        <div className="h-full bg-green-400" style={{ width: `${(metrics.quality.high / metrics.quality.total) * 100}%` }} title={`${metrics.quality.high} high confidence`} />
+                      )}
+                      {metrics.quality.unscored > 0 && (
+                        <div className="h-full bg-gray-400" style={{ width: `${(metrics.quality.unscored / metrics.quality.total) * 100}%` }} title={`${metrics.quality.unscored} unscored`} />
+                      )}
+                      {metrics.quality.needsAttention > 0 && (
+                        <div className="h-full bg-amber-400" style={{ width: `${(metrics.quality.needsAttention / metrics.quality.total) * 100}%` }} title={`${metrics.quality.needsAttention} needs review`} />
+                      )}
+                    </div>
+                    {/* Legend */}
+                    <div className="flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-400">
+                      {metrics.quality.verified > 0 && (
+                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" />{metrics.quality.verified} human-verified</div>
+                      )}
+                      {metrics.quality.high > 0 && (
+                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-400" />{metrics.quality.high} high-confidence</div>
+                      )}
+                      {metrics.quality.unscored > 0 && (
+                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-400" />{metrics.quality.unscored} awaiting scores</div>
+                      )}
+                      {metrics.quality.needsAttention > 0 && (
+                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" />{metrics.quality.needsAttention} needs review</div>
+                      )}
+                    </div>
+                    {/* Field accuracy */}
+                    {metrics.quality.fieldAccuracy !== null && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500 pt-2 border-t border-gray-200 dark:border-neutral-700">
+                        {metrics.quality.highFields} of {metrics.quality.scoredFields} scored fields are high-confidence or human-corrected ({metrics.quality.fieldAccuracy}%).
+                      </p>
+                    )}
+                    {metrics.quality.fieldAccuracy === null && metrics.quality.totalFields > 0 && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500 pt-2 border-t border-gray-200 dark:border-neutral-700">
+                        {metrics.quality.totalFields} fields extracted — enable consensus mode for per-field confidence scores.
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Raw Confidence Distribution (for users who have consensus mode) */}
             {(() => {
-              const hasData = metrics.confidenceDistribution?.length > 0;
+              const hasData = hasConfidenceData(metrics.confidenceDistribution);
+              if (!hasData) return null;
               return (
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <MetricCard
-                    title="Average"
-                    value={hasData ? `${(metrics.avgConfidence * 100).toFixed(1)}%` : "N/A"}
+                    title="Avg Raw Confidence"
+                    value={`${(metrics.avgConfidence * 100).toFixed(1)}%`}
+                    subtitle="Across scored fields"
                     icon={Gauge}
-                    variant={hasData ? (metrics.avgConfidence >= 0.75 ? "success" : "warning") : "default"}
+                    variant={metrics.avgConfidence >= 0.75 ? "success" : "warning"}
                   />
                   <MetricCard
                     title="Minimum"
-                    value={hasData ? `${(metrics.minConfidence * 100).toFixed(1)}%` : "N/A"}
+                    value={`${(metrics.minConfidence * 100).toFixed(1)}%`}
                     icon={TrendingDown}
-                    variant={hasData ? (metrics.minConfidence >= 0.5 ? "success" : "danger") : "default"}
+                    variant={metrics.minConfidence >= 0.5 ? "success" : "danger"}
                   />
                   <MetricCard
                     title="Maximum"
-                    value={hasData ? `${(metrics.maxConfidence * 100).toFixed(1)}%` : "N/A"}
+                    value={`${(metrics.maxConfidence * 100).toFixed(1)}%`}
                     icon={TrendingUp}
-                    variant={hasData ? "success" : "default"}
-                  />
-                  <MetricCard
-                    title="Low Confidence Fields"
-                    value={hasData ? metrics.lowConfidenceFields : 0}
-                    subtitle="Below 70%"
-                    icon={AlertTriangle}
-                    variant={!hasData || metrics.lowConfidenceFields === 0 ? "success" : "warning"}
+                    variant="success"
                   />
                 </div>
               );
@@ -1129,44 +1243,44 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
               </CardContent>
             </Card>
             
-            {/* Retab Confidence Guide */}
+            {/* Data Quality Guide */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Retab Confidence Score Guide</CardTitle>
+                <CardTitle className="text-base">Data Quality Tiers</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
                   <div className="flex items-center gap-3 p-2 bg-green-50 dark:bg-green-900/20 rounded">
                     <div className="w-3 h-3 rounded-full bg-green-500" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">95-100%</p>
-                      <p className="text-xs text-gray-500 dark:text-neutral-400">All consensus sources agreed exactly</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">Verified</p>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400">Human has reviewed or corrected the document — highest trust</p>
                     </div>
-                    <Badge variant="success">High Confidence</Badge>
+                    <Badge variant="success">1.0 weight</Badge>
                   </div>
                   <div className="flex items-center gap-3 p-2 bg-green-50/50 dark:bg-green-900/10 rounded">
                     <div className="w-3 h-3 rounded-full bg-green-400" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">80-95%</p>
-                      <p className="text-xs text-gray-500 dark:text-neutral-400">Minor variations, strong consensus</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">High Confidence</p>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400">AI extraction confidence ≥ 80%, not flagged for review</p>
                     </div>
-                    <Badge variant="secondary">Generally Reliable</Badge>
+                    <Badge variant="secondary">0.9 weight</Badge>
+                  </div>
+                  <div className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-neutral-800 rounded">
+                    <div className="w-3 h-3 rounded-full bg-gray-400" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">Awaiting Scores</p>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400">No confidence data yet — enable consensus mode for per-field scores</p>
+                    </div>
+                    <Badge variant="outline">0.7 weight</Badge>
                   </div>
                   <div className="flex items-center gap-3 p-2 bg-amber-50 dark:bg-amber-900/20 rounded">
                     <div className="w-3 h-3 rounded-full bg-amber-500" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">60-80%</p>
-                      <p className="text-xs text-gray-500 dark:text-neutral-400">Some disagreement between sources</p>
+                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">Needs Review</p>
+                      <p className="text-xs text-gray-500 dark:text-neutral-400">Flagged for review or low confidence — human attention required</p>
                     </div>
-                    <Badge variant="warning">Review Recommended</Badge>
-                  </div>
-                  <div className="flex items-center gap-3 p-2 bg-red-50 dark:bg-red-900/20 rounded">
-                    <div className="w-3 h-3 rounded-full bg-red-500" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-gray-900 dark:text-neutral-100">Below 60%</p>
-                      <p className="text-xs text-gray-500 dark:text-neutral-400">Significant disagreement or ambiguity</p>
-                    </div>
-                    <Badge variant="destructive">Human Review Required</Badge>
+                    <Badge variant="warning">0.4 weight</Badge>
                   </div>
                 </div>
               </CardContent>
@@ -1180,24 +1294,25 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
             {/* Review Stats */}
             <div className="grid grid-cols-3 gap-4">
               <MetricCard
-                title="Total Reviews Needed"
-                value={metrics.needsReviewCount}
+                title="Awaiting Review"
+                value={metrics.quality.needsAttention}
+                subtitle="Flagged or low-confidence"
                 icon={Eye}
-                variant="warning"
+                variant={metrics.quality.needsAttention === 0 ? "success" : "warning"}
               />
               <MetricCard
-                title="Field Review Rate"
-                value={`${(metrics.fieldReviewRate * 100).toFixed(1)}%`}
-                subtitle={`${metrics.lowConfidenceFields} of ${metrics.totalFields} fields`}
-                icon={Users}
-                variant={metrics.fieldReviewRate <= 0.1 ? "success" : "warning"}
-              />
-              <MetricCard
-                title="High-Confidence Fields"
-                value={`${((1 - metrics.fieldReviewRate) * 100).toFixed(1)}%`}
-                subtitle="passed automatically"
+                title="Human-Verified"
+                value={metrics.quality.verified}
+                subtitle={metrics.quality.total > 0 ? `${Math.round((metrics.quality.verified / metrics.quality.total) * 100)}% of all documents` : "No documents"}
                 icon={CheckCircle}
-                variant="success"
+                variant={metrics.quality.verified > 0 ? "success" : "default"}
+              />
+              <MetricCard
+                title="Data Quality"
+                value={metrics.quality.total > 0 ? `${metrics.quality.score}%` : "N/A"}
+                subtitle="Holistic score"
+                icon={Target}
+                variant={metrics.quality.score >= 80 ? "success" : metrics.quality.score >= 60 ? "warning" : metrics.quality.total === 0 ? "default" : "danger"}
               />
             </div>
             

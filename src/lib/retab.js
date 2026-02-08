@@ -157,6 +157,40 @@ export async function extractDocument({
 }
 
 /**
+ * Parse an SSE data payload that may contain multiple concatenated JSON objects
+ * (e.g. progress events plus final result). Returns the last successfully parsed
+ * object so we tolerate "Unexpected non-whitespace character after JSON at position..."
+ * when the API sends multiple JSON objects in one line.
+ */
+function parseSSEDataLine(jsonStr) {
+  let last = null;
+  let rest = jsonStr.trim();
+  while (rest) {
+    try {
+      const parsed = JSON.parse(rest);
+      last = parsed;
+      return last; // single object — done
+    } catch (e) {
+      const posMatch = /position (\d+)/.exec(e?.message || "");
+      const pos = posMatch ? parseInt(posMatch[1], 10) : 0;
+      if (pos > 0 && pos < rest.length) {
+        try {
+          last = JSON.parse(rest.slice(0, pos));
+          rest = rest.slice(pos).trim();
+          if (!rest) return last;
+          // Continue to try parsing the remainder (final result often at end)
+        } catch {
+          return last;
+        }
+      } else {
+        return last;
+      }
+    }
+  }
+  return last;
+}
+
+/**
  * Handle a streaming extraction response (SSE / text/event-stream).
  * Accumulates streamed chunks and returns the final extraction result
  * in the same shape as a non-streaming response.
@@ -233,11 +267,8 @@ async function handleStreamingResponse(response, externalSignal = null) {
         if (trimmed.startsWith("data: ")) {
           const jsonStr = trimmed.slice(6);
           if (jsonStr === "[DONE]") continue;
-          try {
-            lastData = JSON.parse(jsonStr);
-          } catch {
-            // Ignore malformed chunks
-          }
+          const parsed = parseSSEDataLine(jsonStr);
+          if (parsed != null) lastData = parsed;
         }
       }
     }
@@ -262,11 +293,8 @@ async function handleStreamingResponse(response, externalSignal = null) {
   if (buffer.trim().startsWith("data: ")) {
     const jsonStr = buffer.trim().slice(6);
     if (jsonStr !== "[DONE]") {
-      try {
-        lastData = JSON.parse(jsonStr);
-      } catch {
-        // Ignore
-      }
+      const parsed = parseSSEDataLine(jsonStr);
+      if (parsed != null) lastData = parsed;
     }
   }
 

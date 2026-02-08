@@ -135,3 +135,105 @@ export function getMergedExtractionData(document) {
   const mergedData = { ...data, ...editedFields };
   return { data: mergedData, likelihoods, originalData: data, editedFields };
 }
+
+// ============================================================================
+// HOLISTIC DATA QUALITY
+// ============================================================================
+
+/**
+ * Quality tier for a single document, factoring in human review.
+ *  - "verified"        : human-reviewed or has corrections → highest trust
+ *  - "high"            : extractionConfidence >= 0.8, no review needed
+ *  - "unscored"        : no confidence scores AND not flagged for review (neutral)
+ *  - "needs_attention"  : flagged for review but not yet reviewed, OR low confidence
+ *
+ * @param {Object} doc - a document object
+ * @returns {{ tier: string, label: string, weight: number, color: string }}
+ */
+export function getDocumentQualityTier(doc) {
+  const isReviewed = doc?.status === "reviewed";
+  const hasCorrected = doc?.editedFields && Object.keys(doc.editedFields).length > 0;
+  const isFlaggedForReview = doc?.needsReview === true || doc?.status === "needs_review";
+  const conf = doc?.extractionConfidence;
+  const hasConfidence = conf !== null && conf !== undefined && typeof conf === "number";
+
+  // 1. Human has actually reviewed or corrected → highest trust
+  if (isReviewed || hasCorrected) {
+    return { tier: "verified", label: "Verified", weight: 1.0, color: "green" };
+  }
+  // 2. Flagged for review but NOT yet reviewed → needs attention regardless of scores
+  if (isFlaggedForReview) {
+    return { tier: "needs_attention", label: "Needs Review", weight: 0.4, color: "amber" };
+  }
+  // 3. High extraction confidence, not flagged
+  if (hasConfidence && conf >= 0.8) {
+    return { tier: "high", label: "High Confidence", weight: 0.9, color: "green" };
+  }
+  // 4. Has confidence but it's low (wasn't flagged, but still below threshold)
+  if (hasConfidence) {
+    return { tier: "needs_attention", label: "Low Confidence", weight: 0.4, color: "amber" };
+  }
+  // 5. No confidence data and not flagged — genuinely unknown
+  return { tier: "unscored", label: "Awaiting Scores", weight: 0.7, color: "gray" };
+}
+
+/**
+ * Aggregate quality across a set of documents.
+ * Returns a holistic score (0-100), per-tier counts, and a field-level accuracy stat.
+ *
+ * Field accuracy only counts fields where we have actual evidence:
+ *  - human-corrected field → counts as accurate
+ *  - likelihood >= 0.7     → counts as accurate
+ *  - likelihood < 0.7      → counts as NOT accurate
+ *  - no likelihood at all  → excluded from both numerator AND denominator (no data to judge)
+ *
+ * @param {Array<Object>} documents - array of document objects
+ * @returns {{ score: number, verified: number, high: number, unscored: number, needsAttention: number, total: number, fieldAccuracy: number|null, totalFields: number, scoredFields: number, highFields: number }}
+ */
+export function aggregateDocumentQuality(documents) {
+  let verified = 0, high = 0, unscored = 0, needsAttention = 0;
+  let totalFields = 0;   // all extracted fields (for display context)
+  let scoredFields = 0;  // fields with actual confidence data or human corrections
+  let highFields = 0;    // fields that are high-confidence or human-corrected
+
+  for (const doc of documents) {
+    const { tier } = getDocumentQualityTier(doc);
+    if (tier === "verified") verified++;
+    else if (tier === "high") high++;
+    else if (tier === "unscored") unscored++;
+    else needsAttention++;
+
+    // Field-level accuracy — only count fields where we have evidence
+    const hasCorrected = doc?.editedFields && Object.keys(doc.editedFields).length > 0;
+    const { data, likelihoods } = getMergedExtractionData(doc);
+    if (data) {
+      const fields = Object.keys(data).filter((k) => !k.startsWith("reasoning___") && !k.startsWith("source___"));
+      totalFields += fields.length;
+      for (const f of fields) {
+        const wasHumanCorrected = hasCorrected && doc.editedFields?.[f] !== undefined;
+        const l = likelihoods?.[f];
+        const hasScore = l !== undefined && l !== null;
+
+        if (wasHumanCorrected) {
+          // Human corrected this field — counts as scored AND accurate
+          scoredFields++;
+          highFields++;
+        } else if (hasScore) {
+          // We have an AI confidence score — include in accuracy calculation
+          scoredFields++;
+          if (l >= 0.7) highFields++;
+        }
+        // else: no data at all — skip this field entirely (don't inflate accuracy)
+      }
+    }
+  }
+
+  const total = documents.length;
+  const score = total > 0
+    ? Math.round(((verified * 1.0 + high * 0.9 + unscored * 0.7 + needsAttention * 0.4) / total) * 100)
+    : 0;
+  // fieldAccuracy is null when we have zero scored fields (nothing to measure)
+  const fieldAccuracy = scoredFields > 0 ? Math.round((highFields / scoredFields) * 100) : null;
+
+  return { score, verified, high, unscored, needsAttention, total, fieldAccuracy, totalFields, scoredFields, highFields };
+}

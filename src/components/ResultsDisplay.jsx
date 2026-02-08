@@ -418,8 +418,8 @@ export function ResultsDisplay({ result, file, onReset }) {
 
       {/* Confidence legend */}
       {likelihoods && (
-        <div className="flex items-center gap-4 text-xs text-gray-500">
-          <span className="font-medium">Confidence:</span>
+        <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
+          <span className="font-medium">Field Confidence:</span>
           <div className="flex items-center gap-1">
             <Badge variant="success" className="text-xs">75%+</Badge>
             <span>High</span>
@@ -432,6 +432,7 @@ export function ResultsDisplay({ result, file, onReset }) {
             <Badge variant="destructive" className="text-xs">&lt;50%</Badge>
             <span>Low</span>
           </div>
+          <span className="text-gray-400">· Human corrections override AI scores</span>
         </div>
       )}
 

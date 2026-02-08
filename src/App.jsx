@@ -4,7 +4,6 @@ import { PacketResultsView } from "./components/PacketResultsView";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { ToastProvider, useToast } from "./components/ui/toast";
 import { ConfirmDialog } from "./components/ui/confirm-dialog";
-import { BatchExport } from "./components/BatchExport";
 import { ExportModal } from "./components/ExportModal";
 import { HistoryLog, HistoryButton } from "./components/HistoryLog";
 import { DocumentDetailModal } from "./components/DocumentDetailModal";
@@ -36,8 +35,8 @@ import {
   AlertCircle, 
   Key, 
   FileText, 
-  Play, 
-  Pause, 
+  Play,
+  Square, 
   RotateCcw,
   AlertTriangle,
   X,
@@ -354,6 +353,7 @@ function App() {
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [runConfig, setRunConfig] = useState(null); // Per-run config override
   const [pendingDropFiles, setPendingDropFiles] = useState(null); // Files dropped on homepage
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, action: null });
@@ -406,26 +406,47 @@ function App() {
     hasHistory,
   } = useProcessingHistory();
 
-  // Document-level progress for footer bar (updates as docs are extracted, not only when packets finish)
+  // Task-based progress — each packet contributes (1 split + N extractions) as tasks.
+  // Before we know the doc count, a queued packet counts as 1 task (the split).
+  // Once split reveals N docs, it becomes (1 split + N extractions) = N+1 tasks.
   const footerProgress = useMemo(() => {
-    if (!packets.length || !stats.total) return { percent: 0, label: "0%", completedSteps: 0, totalSteps: 0 };
-    let completedSteps = 0;
-    let totalSteps = 0;
+    if (!packets.length) return { percent: 0, completedTasks: 0, totalTasks: 0, label: "" };
+    let completedTasks = 0;
+    let totalTasks = 0;
+
     for (const p of packets) {
-      const total = Math.max(1, p.progress?.totalDocs ?? p.documents?.length ?? 1);
+      const knownDocs = p.progress?.totalDocs ?? p.documents?.length ?? 0;
+
       if (p.status === "completed" || p.status === "needs_review" || p.status === "failed") {
-        completedSteps += total;
-        totalSteps += total;
-      } else if (p.status === "splitting" || p.status === "classifying" || p.status === "extracting") {
-        totalSteps += total;
-        completedSteps += p.progress?.docIndex ?? 0;
+        // Finished: split + all extractions done
+        const docCount = Math.max(knownDocs, 1);
+        totalTasks += 1 + docCount; // split + extractions
+        completedTasks += 1 + docCount;
+      } else if (p.status === "splitting" || p.status === "classifying") {
+        // Splitting — we don't know doc count yet, just count the split task
+        totalTasks += 1;
+        // Splitting is in-progress, give partial credit
+        completedTasks += p.status === "splitting" ? 0.3 : 0.7;
+      } else if (p.status === "extracting") {
+        // Split done, now extracting docs
+        const docCount = Math.max(knownDocs, 1);
+        totalTasks += 1 + docCount; // split + extractions
+        completedTasks += 1; // split is done
+        completedTasks += Math.min(p.progress?.docIndex ?? 0, docCount); // extracted docs
       } else {
-        totalSteps += 1;
+        // Queued — count as 1 unknown task (will expand once split runs)
+        totalTasks += 1;
       }
     }
-    const percent = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : Math.round((stats.completed / stats.total) * 100);
-    return { percent, completedSteps, totalSteps, label: `${percent}%` };
-  }, [packets, stats.total, stats.completed]);
+
+    const percent = totalTasks > 0 ? Math.min(100, Math.round((completedTasks / totalTasks) * 100)) : 0;
+    return {
+      percent,
+      completedTasks: Math.floor(completedTasks),
+      totalTasks,
+      label: `${Math.floor(completedTasks)} of ${totalTasks} tasks`,
+    };
+  }, [packets]);
 
   // Current step label for active processing (toolbar + footer)
   const currentActivityLabel = useMemo(() => {
@@ -451,10 +472,11 @@ function App() {
     }
   }, [isComplete, currentRunSaved, packets, stats, sessionId, usage, addToHistory]);
 
-  // Reset saved flag when starting new run
+  // Reset saved flag and banner when starting new run
   useEffect(() => {
     if (batchStatus === BatchStatus.PROCESSING) {
       setCurrentRunSaved(false);
+      setBannerDismissed(false);
     }
   }, [batchStatus]);
 
@@ -464,25 +486,37 @@ function App() {
     const wasProcessing = prevBatchStatusRef.current === BatchStatus.PROCESSING;
     const isNowComplete = batchStatus === BatchStatus.COMPLETED;
     prevBatchStatusRef.current = batchStatus;
+
     if (wasProcessing && isNowComplete && packets.length > 0) {
       setViewMode(ViewMode.RESULTS);
-    }
-    if (notificationsSupported() && wasProcessing && isNowComplete && packets.length > 0) {
-      requestPermission().then((granted) => {
-        if (granted) showProcessingComplete(stats);
-      });
+
+      // Show browser notification — permission was already requested at start
+      if (notificationsSupported() && Notification.permission === "granted") {
+        showProcessingComplete(stats);
+        // If there are items needing review, follow up with a second notification
+        if (stats.needsReview > 0) {
+          setTimeout(() => showNeedsReview(stats.needsReview), 1500);
+        }
+      }
     }
   }, [batchStatus, packets.length, stats]);
 
   // Remind user of items needing review when they return to the tab
   const wasHiddenRef = useRef(false);
   useEffect(() => {
-    if (!notificationsSupported() || stats.needsReview <= 0) return;
+    if (!notificationsSupported()) return;
+    // Only set up the listener when there are items to review
+    if (stats.needsReview <= 0) return;
+
     const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") wasHiddenRef.current = true;
+      if (document.visibilityState === "hidden") {
+        wasHiddenRef.current = true;
+      }
       if (document.visibilityState === "visible" && wasHiddenRef.current) {
         wasHiddenRef.current = false;
-        if (Notification.permission === "granted") showNeedsReview(stats.needsReview);
+        if (Notification.permission === "granted" && stats.needsReview > 0) {
+          showNeedsReview(stats.needsReview);
+        }
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -557,6 +591,8 @@ function App() {
     setUsername(usernameInput.trim());
     setUsernameConfigured(true);
     setShowApiKeyWarning(false);
+    // Request notification permission early so it's ready when processing finishes
+    if (notificationsSupported()) requestPermission();
   };
 
   // Handle API key clear (also clears username)
@@ -579,10 +615,18 @@ function App() {
     clearAll();
   }, [clearAll]);
 
-  // Handle remove single file
+  // Handle remove packet (from Upload or Results). Shows toast if server delete fails.
+  const handleRemovePacket = useCallback(async (packetId) => {
+    const ok = await removePacket(packetId);
+    if (!ok) {
+      toast.error("Could not delete. It may reappear after refresh.");
+    }
+  }, [removePacket, toast]);
+
+  // Handle remove single file (Upload page)
   const handleRemoveFile = useCallback((fileId) => {
-    removePacket(fileId);
-  }, [removePacket]);
+    handleRemovePacket(fileId);
+  }, [handleRemovePacket]);
 
   // Handle start processing
   const handleStartProcessing = useCallback(() => {
@@ -753,13 +797,16 @@ function App() {
                   
                   <button
                     onClick={() => setViewMode(ViewMode.UPLOAD)}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5 ${
                       viewMode === ViewMode.UPLOAD
                         ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
                         : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
                     }`}
                   >
                     Upload
+                    {!isProcessing && packets.some(p => p.status === "queued") && (
+                      <span className="w-2 h-2 bg-[#9e2339] rounded-full" title="Files queued — ready to start" />
+                    )}
                   </button>
                   
                   <button
@@ -958,13 +1005,14 @@ function App() {
                   )}
 
                   {hasQueuedPackets && (
-                    <div className="flex items-center justify-between pt-6">
-                      <p className="text-sm text-gray-600">
-                        {queuedPackets.length} packet{queuedPackets.length !== 1 ? "s" : ""} ready to process
-                      </p>
-                      <Button onClick={handleStartProcessing} size="lg">
-                        <Play className="h-4 w-4 mr-2" />
-                        Start Processing
+                    <div className="pt-4">
+                      <Button
+                        onClick={handleStartProcessing}
+                        size="lg"
+                        className="w-full py-3 text-base bg-[#9e2339] hover:bg-[#852030] text-white gap-2"
+                      >
+                        <Play className="h-4 w-4 fill-current" />
+                        Start Processing {queuedPackets.length} file{queuedPackets.length !== 1 ? "s" : ""}
                       </Button>
                     </div>
                   )}
@@ -977,45 +1025,105 @@ function App() {
         {/* Processing/Results view */}
         {isSetupComplete && (viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS) && (
           <div className="flex-1 flex flex-col p-4 max-w-7xl mx-auto w-full min-h-0">
-            {/* Minimal toolbar */}
-            <div className="flex items-center justify-between mb-3 shrink-0">
-              <div className="flex items-center gap-3">
-                {isProcessing && (
-                  <>
-                    <span className="text-sm text-gray-500 dark:text-gray-400">
+            {/* Toolbar */}
+            <div className="mb-3 shrink-0">
+              {/* Processing state */}
+              {isProcessing && (
+                <div className="flex items-center gap-3 py-2">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div className="h-2 w-2 rounded-full bg-[#9e2339] animate-pulse shrink-0" />
+                    <span className="text-sm text-gray-700 dark:text-gray-200 truncate">
                       {currentActivityLabel ?? "Processing"}
                     </span>
-                    <Button variant="ghost" size="sm" onClick={pause} className="h-7 px-2 text-gray-500 dark:text-gray-400">
-                      <Pause className="h-3.5 w-3.5" />
-                    </Button>
-                  </>
-                )}
-                {isPaused && (
-                  <>
-                    <span className="text-sm text-amber-600 dark:text-amber-400">Paused</span>
-                    <Button variant="ghost" size="sm" onClick={resume} className="h-7 px-2 text-gray-500 dark:text-gray-400">
-                      <Play className="h-3.5 w-3.5" />
-                    </Button>
-                  </>
-                )}
-                {isComplete && !isProcessing && !isPaused && (
-                  <span className="text-sm text-gray-500 dark:text-gray-400">
-                    {stats?.total ?? 0} document{(stats?.total ?? 0) !== 1 ? 's' : ''}
-                  </span>
-                )}
-                {/* Model / config info */}
-                {retabConfig?.model && (
-                  <span className="text-xs text-gray-400 dark:text-gray-500 border-l border-gray-200 dark:border-gray-700 pl-3 ml-1">
-                    {retabConfig.model}
-                    {retabConfig.nConsensus > 1 && ` × ${retabConfig.nConsensus}`}
-                    {retabConfig.costOptimize && " · Smart Routing"}
-                  </span>
-                )}
-              </div>
+                    <span className="text-xs tabular-nums text-gray-400 dark:text-gray-500 shrink-0">
+                      {footerProgress.label} &middot; {footerProgress.percent}%
+                    </span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={pause}
+                    className="h-8 px-3 gap-1.5 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30 dark:hover:border-red-700 shrink-0"
+                  >
+                    <Square className="h-3 w-3 fill-current" />
+                    Stop
+                  </Button>
+                </div>
+              )}
 
-              <div className="flex items-center gap-2">
-                <BatchExport packets={packets} stats={stats} />
-              </div>
+              {/* Stopped state */}
+              {isPaused && (
+                <div className="flex items-center gap-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <div className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
+                    <span className="text-sm text-amber-600 dark:text-amber-400">Stopped</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={resume}
+                    className="h-8 px-4 gap-1.5 bg-[#9e2339] hover:bg-[#852030] text-white shrink-0"
+                  >
+                    <Play className="h-3 w-3 fill-current" />
+                    Resume
+                  </Button>
+                </div>
+              )}
+
+              {/* Idle state */}
+              {!isProcessing && !isPaused && (
+                <div className="flex items-center gap-3 py-2">
+                  <div className="flex items-center gap-2.5 text-sm text-gray-500 dark:text-gray-400 flex-1 min-w-0">
+                    <span className="tabular-nums">{packets.length} file{packets.length !== 1 ? "s" : ""}</span>
+                    <span className="text-gray-300 dark:text-neutral-600">·</span>
+                    <span className="tabular-nums">{stats?.total ?? 0} doc{(stats?.total ?? 0) !== 1 ? "s" : ""}</span>
+                    {(stats?.completed ?? 0) > 0 && (
+                      <>
+                        <span className="text-gray-300 dark:text-neutral-600">·</span>
+                        <span className="text-green-600 dark:text-green-400 tabular-nums">{stats.completed} done</span>
+                      </>
+                    )}
+                    {(stats?.needsReview ?? 0) > 0 && (
+                      <>
+                        <span className="text-gray-300 dark:text-neutral-600">·</span>
+                        <span className="text-amber-600 dark:text-amber-400 tabular-nums">{stats.needsReview} review</span>
+                      </>
+                    )}
+                    {(stats?.failed ?? 0) > 0 && (
+                      <>
+                        <span className="text-gray-300 dark:text-neutral-600">·</span>
+                        <span className="text-red-500 tabular-nums">{stats.failed} failed</span>
+                      </>
+                    )}
+                  </div>
+                  {(() => {
+                    const queuedFiles = packets.filter(p => p.status === "queued");
+                    if (queuedFiles.length === 0) return null;
+                    return (
+                      <Button
+                        size="sm"
+                        onClick={handleStartProcessing}
+                        className="h-8 px-4 gap-1.5 bg-[#9e2339] hover:bg-[#852030] text-white shrink-0 animate-in fade-in"
+                      >
+                        <Play className="h-3 w-3 fill-current" />
+                        Process {queuedFiles.length} file{queuedFiles.length !== 1 ? "s" : ""}
+                      </Button>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Progress track */}
+              {isProcessing && (
+                <div className="h-[3px] bg-gray-100 dark:bg-neutral-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#9e2339]/70 rounded-full"
+                    style={{
+                      width: `${Math.max(2, footerProgress.percent)}%`,
+                      transition: "width 1.5s cubic-bezier(0.4, 0, 0.2, 1)",
+                    }}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Results list */}
@@ -1026,84 +1134,56 @@ function App() {
                 onViewDocument={handleViewDocument}
                 onRetryPacket={retryPacket}
                 onRetryDocument={retryDocument}
-                onRemovePacket={removePacket}
+                onRemovePacket={handleRemovePacket}
                 onRetryAllFailed={retryAllFailed}
               />
             </div>
 
-            {/* Completion message */}
-            {isComplete && !isProcessing && (
-              <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg shrink-0">
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-100 dark:bg-green-800/50 rounded-full">
-                      <FileText className="h-5 w-5 text-green-600 dark:text-green-400" />
+            {/* Completion banner — dismissable */}
+            {isComplete && !isProcessing && !bannerDismissed && (
+              <div className="mt-3 px-4 py-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg shrink-0 relative">
+                {/* Dismiss */}
+                <button
+                  onClick={() => setBannerDismissed(true)}
+                  className="absolute top-2 right-2 p-1 rounded-md text-green-400 hover:text-green-600 dark:text-green-600 dark:hover:text-green-400 hover:bg-green-100 dark:hover:bg-green-800/40 transition-colors"
+                  aria-label="Dismiss"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+
+                <div className="flex items-center justify-between gap-4 pr-6">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-1.5 bg-green-100 dark:bg-green-800/50 rounded-full shrink-0">
+                      <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
                     </div>
-                    <div>
-                      <p className="font-medium text-green-900 dark:text-green-100">
-                        Processing complete
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                        Done — {stats?.completed ?? 0} completed{(stats?.needsReview ?? 0) > 0 ? `, ${stats.needsReview} need review` : ""}{(stats?.failed ?? 0) > 0 ? `, ${stats.failed} failed` : ""}
                       </p>
-                      <p className="text-sm text-green-700 dark:text-green-300">
-                        {stats?.completed ?? 0} completed
-                        {(stats?.needsReview ?? 0) > 0 && `, ${stats.needsReview} need review`}
-                        {(stats?.failed ?? 0) > 0 && `, ${stats.failed} failed`}
-                        {currentRunSaved && " • Saved to history"}
-                      </p>
-                      {((usage?.totalCredits ?? 0) > 0 || (usage?.totalPages ?? 0) > 0) && (
-                        <div className="flex items-center gap-3 mt-1 text-xs text-green-600 dark:text-green-400">
-                          {(usage?.totalPages ?? 0) > 0 && (
-                            <span>{usage.totalPages} page{usage.totalPages !== 1 ? "s" : ""} processed</span>
-                          )}
-                          {(usage?.totalCredits ?? 0) > 0 && (
-                            <span>• {usage.totalCredits.toFixed(1)} credits</span>
-                          )}
-                          {(usage?.totalCost ?? 0) > 0 && (
-                            <span>• ${usage.totalCost.toFixed(2)}</span>
-                          )}
-                          {(usage?.apiCalls ?? 0) > 0 && (
-                            <span>• {usage.apiCalls} API call{usage.apiCalls !== 1 ? "s" : ""}</span>
-                          )}
-                          {retabConfig?.model && (
-                            <span className="text-green-500 dark:text-green-500">• {retabConfig.model}{retabConfig?.nConsensus > 1 ? ` × ${retabConfig.nConsensus} consensus` : ""}</span>
-                          )}
-                        </div>
-                      )}
-                      {stats.needsReview > 0 && (
-                        <p className="text-sm text-amber-800 dark:text-amber-300 mt-0.5 font-medium">
-                          Review results to approve or fix extractions.
-                        </p>
-                      )}
+                      <div className="flex items-center gap-2 mt-0.5 text-xs text-green-600/80 dark:text-green-400/70">
+                        {currentRunSaved && <span>Saved to history</span>}
+                        {(usage?.totalPages ?? 0) > 0 && <span>{currentRunSaved ? "·" : ""} {usage.totalPages} page{usage.totalPages !== 1 ? "s" : ""}</span>}
+                        {(usage?.totalCost ?? 0) > 0 && <span>· ${usage.totalCost.toFixed(2)}</span>}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {stats.needsReview > 0 && (
                       <Button
-                        size="default"
+                        size="sm"
                         onClick={() => setViewMode(ViewMode.REVIEW)}
-                        className="bg-amber-600 hover:bg-amber-700 text-white shadow-sm"
+                        className="h-8 px-3 bg-amber-600 hover:bg-amber-700 text-white text-xs"
                       >
-                        <ListChecks className="h-4 w-4 mr-1.5" />
-                        Review results
+                        <ListChecks className="h-3.5 w-3.5 mr-1" />
+                        Review
                       </Button>
                     )}
                     {hasFailed && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={retryAllFailed}
-                      >
-                        <RotateCcw className="h-4 w-4 mr-1" />
-                        Retry Failed
+                      <Button variant="ghost" size="sm" onClick={retryAllFailed} className="h-8 px-2.5 text-xs text-green-700 dark:text-green-300">
+                        <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                        Retry
                       </Button>
                     )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleAddMoreFiles}
-                    >
-                      <Plus className="h-4 w-4 mr-1" />
-                      Add More Files
-                    </Button>
                   </div>
                 </div>
               </div>
@@ -1169,13 +1249,12 @@ function App() {
         )}
       </main>
 
-      {/* Footer — full width across base of page */}
-      <footer className="border-t border-gray-100 dark:border-neutral-700 bg-gradient-to-r from-gray-50 via-white to-gray-50 dark:from-neutral-800 dark:via-neutral-800 dark:to-neutral-800 shrink-0 w-full">
-        <div className="w-full px-4 py-2.5">
-          <div className="flex items-center justify-between">
-            {/* Left: Health + Processing Stats */}
-            <div className="flex items-center gap-3 min-w-[200px]">
-              {/* Health Status */}
+      {/* Footer — balanced 3-column grid, SAIL always centered */}
+      <footer className="border-t border-gray-100 dark:border-neutral-700 bg-gray-50/80 dark:bg-neutral-800/80 shrink-0 w-full">
+        <div className="w-full px-4 py-2">
+          <div className="grid grid-cols-3 items-center">
+            {/* Left: Health */}
+            <div className="flex items-center gap-3">
               <div 
                 className="flex items-center gap-1.5 text-[10px] cursor-help"
                 title={
@@ -1188,83 +1267,66 @@ function App() {
               >
                 {healthStatus.server === 'online' && healthStatus.database === 'online' ? (
                   <>
-                    <div className="relative">
-                      <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-ping absolute" />
-                      <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                    </div>
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
                     <span className="text-gray-400 dark:text-neutral-500">Retab Online</span>
                   </>
                 ) : healthStatus.server === 'checking' ? (
                   <>
-                    <div className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse" />
-                    <span className="text-gray-400">Connecting to Retab...</span>
+                    <div className="w-1.5 h-1.5 rounded-full bg-gray-300 animate-pulse shrink-0" />
+                    <span className="text-gray-400">Connecting…</span>
                   </>
                 ) : (
                   <>
-                    <div className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                    <div className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
                     <span className="text-red-500">
-                      {healthStatus.server === 'offline' ? 'Retab Offline' : 
-                       healthStatus.database !== 'online' ? 'DB Error' : 'Retab Error'}
+                      {healthStatus.server === 'offline' ? 'Offline' : 
+                       healthStatus.database !== 'online' ? 'DB Error' : 'Error'}
                     </span>
                   </>
                 )}
               </div>
-              
-              {/* Separator */}
-              {hasPackets && <div className="w-px h-3 bg-gray-200 dark:bg-neutral-600" />}
-              
-              {/* Processing Stats */}
+
+              {/* Processing stats — appear contextually */}
               {hasPackets && (
-                <div className="flex items-center gap-1.5">
-                  {stats.processing > 0 ? (
-                    <div className="flex items-center gap-1 cursor-help" title="Processing in progress">
-                      <div className="relative">
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping absolute" />
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                      </div>
-                      <span className="text-[11px] font-medium text-blue-600">Processing</span>
-                    </div>
-                  ) : isComplete ? (
-                    <div className="flex items-center gap-1 cursor-help" title="All documents have been processed">
-                      <CheckCircle className="w-3 h-3 text-green-500" />
-                      <span className="text-[11px] font-medium text-green-600">Complete:</span>
-                    </div>
-                  ) : null}
-                  {stats.completed > 0 && (
-                    <span className="text-[11px] text-gray-500 dark:text-neutral-400 cursor-help" title={`${stats.completed} document${stats.completed > 1 ? 's' : ''} successfully extracted`}>
-                      {stats.completed} <span className="text-green-500">✓</span>
-                    </span>
-                  )}
-                  {stats.needsReview > 0 && (
-                    <span className="text-[11px] text-amber-600 cursor-help" title={`${stats.needsReview} document${stats.needsReview > 1 ? 's' : ''} flagged for human review due to low confidence`}>
-                      {stats.needsReview} Review
-                    </span>
-                  )}
-                  {stats.failed > 0 && (
-                    <span className="text-[11px] text-red-500 cursor-help" title={`${stats.failed} document${stats.failed > 1 ? 's' : ''} failed to process - click to retry`}>
-                      {stats.failed} failed
-                    </span>
-                  )}
-                </div>
+                <>
+                  <div className="w-px h-3 bg-gray-200 dark:bg-neutral-600" />
+                  <div className="flex items-center gap-2 text-[10px]">
+                    {stats.completed > 0 && (
+                      <span className="text-gray-400 dark:text-neutral-500" title={`${stats.completed} completed`}>
+                        <span className="text-green-500">✓</span> {stats.completed}
+                      </span>
+                    )}
+                    {stats.needsReview > 0 && (
+                      <span className="text-amber-500" title={`${stats.needsReview} need review`}>
+                        ⚠ {stats.needsReview}
+                      </span>
+                    )}
+                    {stats.failed > 0 && (
+                      <span className="text-red-400" title={`${stats.failed} failed`}>
+                        ✕ {stats.failed}
+                      </span>
+                    )}
+                  </div>
+                </>
               )}
             </div>
             
-            {/* Center: Branding */}
-            <div className="flex items-center gap-1.5 text-[11px] cursor-help" title="Stewart AI Lab - Intelligent Document Processing">
-              <span className="text-gray-400 dark:text-neutral-500">POWERED BY</span>
+            {/* Center: Branding — always centered */}
+            <div className="flex items-center justify-center gap-1.5 text-[10px] cursor-help" title="Stewart AI Lab - Intelligent Document Processing">
+              <span className="text-gray-300 dark:text-neutral-600">POWERED BY</span>
               <span className="font-semibold text-[#9e2339]">SAIL</span>
             </div>
             
-            {/* Right: Cost */}
-            <div className="flex items-center gap-3 min-w-[200px] justify-end">
+            {/* Right: Cost — appears when available */}
+            <div className="flex items-center gap-2 justify-end text-[10px]">
               {usage.totalCost > 0 && (
                 <div 
-                  className="flex items-center gap-1 text-[11px] cursor-help" 
+                  className="flex items-center gap-1.5 cursor-help" 
                   title={`Retab API Usage\nTotal Cost: $${usage.totalCost.toFixed(3)}\nCredits: ${usage.totalCredits}\nPages Processed: ${usage.totalPages || 'N/A'}\nAPI Calls: ${usage.totalCalls || 'N/A'}`}
                 >
-                  <span className="text-emerald-600 font-semibold">${usage.totalCost.toFixed(3)}</span>
+                  <span className="text-gray-400 dark:text-neutral-500">${usage.totalCost.toFixed(3)}</span>
                   {usage.totalCredits > 0 && (
-                    <span className="text-gray-400 dark:text-neutral-500">({usage.totalCredits.toFixed(2)} cr)</span>
+                    <span className="text-gray-300 dark:text-neutral-600">{usage.totalCredits.toFixed(1)} cr</span>
                   )}
                 </div>
               )}

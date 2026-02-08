@@ -1,6 +1,13 @@
 /**
- * SQLite Database Module for SAIL-IDP
+ * SQLite Database Module for SAIL-IDP (CORTEX)
  * Enterprise-ready persistence layer
+ *
+ * Key design decisions:
+ * - WAL journal mode for concurrent read/write
+ * - synchronous=NORMAL (safe with WAL, fast)
+ * - All multi-statement writes wrapped in db.transaction()
+ * - JSON columns deserialized through a shared helper
+ * - auto_vacuum=INCREMENTAL to reclaim space without full VACUUM
  */
 
 import Database from "better-sqlite3";
@@ -18,15 +25,64 @@ if (!fs.existsSync(DB_DIR)) {
 
 // Initialize database connection
 const db = new Database(DB_FILE);
-db.pragma("journal_mode = WAL"); // Better concurrent access
-db.pragma("synchronous = NORMAL"); // Crash safety: fsync at critical moments (WAL + NORMAL is safe)
+db.pragma("journal_mode = WAL");
+db.pragma("synchronous = NORMAL");
 db.pragma("foreign_keys = ON");
+db.pragma("auto_vacuum = INCREMENTAL"); // Reclaim space incrementally
+
+// ============================================================================
+// JSON HELPERS
+// ============================================================================
 
 /**
- * Initialize database schema
+ * Safely parse a JSON string, returning fallback on failure.
  */
+function tryParseJson(str, fallback = null) {
+  if (str == null) return fallback;
+  try {
+    return JSON.parse(str);
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Deserialize a raw document row from SQLite into a JS-friendly object.
+ * Centralizes all JSON parsing and type coercion so it's never duplicated.
+ */
+function deserializeDocument(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    pages: tryParseJson(row.pages, []),
+    extraction_data: tryParseJson(row.extraction_data, {}),
+    likelihoods: tryParseJson(row.likelihoods, {}),
+    review_reasons: tryParseJson(row.review_reasons, []),
+    edited_fields: tryParseJson(row.edited_fields, null),
+    extraction_confidence: row.extraction_confidence ?? null,
+    needs_review: !!row.needs_review,
+  };
+}
+
+// ============================================================================
+// VALID STATUS VALUES (for runtime validation)
+// ============================================================================
+
+const VALID_SESSION_STATUSES = new Set(["active", "completed"]);
+const VALID_PACKET_STATUSES = new Set([
+  "queued", "splitting", "classifying", "extracting", "processing",
+  "completed", "needs_review", "failed", "retrying",
+]);
+const VALID_DOCUMENT_STATUSES = new Set([
+  "pending", "completed", "needs_review", "failed", "reviewed", "approved", "retrying",
+]);
+
+// ============================================================================
+// SCHEMA INITIALIZATION
+// ============================================================================
+
 export function initializeDatabase() {
-  // Sessions table - tracks processing batches
+  // Sessions table
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -44,7 +100,7 @@ export function initializeDatabase() {
     )
   `);
 
-  // Packets table - document packets being processed
+  // Packets table
   db.exec(`
     CREATE TABLE IF NOT EXISTS packets (
       id TEXT PRIMARY KEY,
@@ -73,7 +129,7 @@ export function initializeDatabase() {
     if (!/duplicate column name/i.test(e.message)) throw e;
   }
 
-  // Documents table - individual documents extracted from packets
+  // Documents table
   db.exec(`
     CREATE TABLE IF NOT EXISTS documents (
       id TEXT PRIMARY KEY,
@@ -82,16 +138,16 @@ export function initializeDatabase() {
       document_type TEXT,
       display_name TEXT,
       status TEXT DEFAULT 'pending',
-      pages TEXT, -- JSON array of page numbers
-      extraction_data TEXT, -- JSON extraction result
-      likelihoods TEXT, -- JSON field likelihoods
+      pages TEXT,
+      extraction_data TEXT,
+      likelihoods TEXT,
       extraction_confidence REAL,
       needs_review INTEGER DEFAULT 0,
-      review_reasons TEXT, -- JSON array
+      review_reasons TEXT,
       reviewed_at DATETIME,
       reviewed_by TEXT,
       reviewer_notes TEXT,
-      edited_fields TEXT, -- JSON object of edited field values
+      edited_fields TEXT,
       credits_used REAL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -113,12 +169,12 @@ export function initializeDatabase() {
       failed INTEGER,
       total_credits REAL,
       total_cost REAL,
-      summary TEXT, -- JSON summary data
+      summary TEXT,
       FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL
     )
   `);
 
-  // Usage tracking table - per-day aggregates
+  // Usage tracking table
   db.exec(`
     CREATE TABLE IF NOT EXISTS usage_daily (
       date TEXT PRIMARY KEY,
@@ -136,19 +192,22 @@ export function initializeDatabase() {
     CREATE TABLE IF NOT EXISTS export_templates (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
-      config TEXT NOT NULL, -- JSON config
+      config TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
-  // Create indexes for common queries
+  // Indexes — covering all common query patterns
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_packets_session ON packets(session_id);
     CREATE INDEX IF NOT EXISTS idx_packets_status ON packets(status);
+    CREATE INDEX IF NOT EXISTS idx_packets_completed ON packets(completed_at);
     CREATE INDEX IF NOT EXISTS idx_documents_packet ON documents(packet_id);
     CREATE INDEX IF NOT EXISTS idx_documents_session ON documents(session_id);
     CREATE INDEX IF NOT EXISTS idx_documents_needs_review ON documents(needs_review);
+    CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
+    CREATE INDEX IF NOT EXISTS idx_documents_packet_status ON documents(packet_id, status);
     CREATE INDEX IF NOT EXISTS idx_history_completed ON history(completed_at);
   `);
 
@@ -169,26 +228,18 @@ export function initializeDatabase() {
 // ============================================================================
 
 export function createSession(id, createdBy) {
-  const stmt = db.prepare(`
-    INSERT INTO sessions (id, created_by) VALUES (?, ?)
-  `);
-  stmt.run(id, createdBy || null);
+  db.prepare(`INSERT INTO sessions (id, created_by) VALUES (?, ?)`).run(id, createdBy || null);
   return getSession(id);
 }
 
 export function getSession(id) {
-  const stmt = db.prepare(`SELECT * FROM sessions WHERE id = ?`);
-  return stmt.get(id);
+  return db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(id);
 }
 
 export function getActiveSession() {
-  const stmt = db.prepare(`
-    SELECT * FROM sessions 
-    WHERE status = 'active' 
-    ORDER BY updated_at DESC 
-    LIMIT 1
-  `);
-  return stmt.get();
+  return db.prepare(`
+    SELECT * FROM sessions WHERE status = 'active' ORDER BY updated_at DESC LIMIT 1
+  `).get();
 }
 
 // Whitelist of columns that can be updated via the generic update functions.
@@ -208,24 +259,26 @@ const PACKET_UPDATABLE_COLUMNS = new Set([
 export function updateSession(id, data) {
   const fields = [];
   const values = [];
-  
+
   for (const [key, value] of Object.entries(data)) {
     if (key === "id" || key === "updated_at") continue;
     if (!SESSION_UPDATABLE_COLUMNS.has(key)) {
       console.warn(`[DB] updateSession: ignoring unknown column "${key}"`);
       continue;
     }
+    // Status validation
+    if (key === "status" && !VALID_SESSION_STATUSES.has(value)) {
+      console.warn(`[DB] updateSession: ignoring invalid status "${value}"`);
+      continue;
+    }
     fields.push(`${key} = ?`);
     values.push(value);
   }
-  
+
   fields.push("updated_at = CURRENT_TIMESTAMP");
   values.push(id);
-  
-  const stmt = db.prepare(`
-    UPDATE sessions SET ${fields.join(", ")} WHERE id = ?
-  `);
-  stmt.run(...values);
+
+  db.prepare(`UPDATE sessions SET ${fields.join(", ")} WHERE id = ?`).run(...values);
   return getSession(id);
 }
 
@@ -237,12 +290,14 @@ export function closeSession(id) {
 // PACKET OPERATIONS
 // ============================================================================
 
-export function createPacket(packet) {
-  const stmt = db.prepare(`
+/**
+ * Create a single packet. Transactional: INSERT packet + UPDATE session count.
+ */
+export const createPacket = db.transaction((packet) => {
+  db.prepare(`
     INSERT INTO packets (id, session_id, filename, status, temp_file_path, created_by)
     VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run(
+  `).run(
     packet.id,
     packet.session_id,
     packet.filename,
@@ -250,109 +305,105 @@ export function createPacket(packet) {
     packet.temp_file_path ?? null,
     packet.created_by || null
   );
-  
-  // Update session packet count
+
   db.prepare(`
     UPDATE sessions SET total_packets = total_packets + 1, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(packet.session_id);
-  
-  return getPacket(packet.id);
-}
 
-export function createPackets(packets) {
+  return getPacket(packet.id);
+});
+
+/**
+ * Batch-create packets. Transactional: INSERT all + UPDATE session count.
+ * Returns all created packets in a single SELECT (no N+1).
+ */
+export const createPackets = db.transaction((packets) => {
   const insert = db.prepare(`
     INSERT INTO packets (id, session_id, filename, status, temp_file_path, created_by)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
-  
-  const insertMany = db.transaction((packets) => {
-    for (const p of packets) {
-      insert.run(p.id, p.session_id, p.filename, p.status || "queued", p.temp_file_path ?? null, p.created_by || null);
-    }
-    
-    // Update session packet count
-    if (packets.length > 0) {
-      db.prepare(`
-        UPDATE sessions SET total_packets = total_packets + ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(packets.length, packets[0].session_id);
-    }
-  });
-  
-  insertMany(packets);
-  return packets.map(p => getPacket(p.id));
-}
+
+  for (const p of packets) {
+    insert.run(p.id, p.session_id, p.filename, p.status || "queued", p.temp_file_path ?? null, p.created_by || null);
+  }
+
+  if (packets.length > 0) {
+    db.prepare(`
+      UPDATE sessions SET total_packets = total_packets + ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(packets.length, packets[0].session_id);
+  }
+
+  // Batch fetch instead of N individual getPacket calls
+  const ids = packets.map(p => p.id);
+  const placeholders = ids.map(() => "?").join(",");
+  return db.prepare(`SELECT * FROM packets WHERE id IN (${placeholders}) ORDER BY created_at ASC`).all(...ids);
+});
 
 export function getPacket(id) {
-  const stmt = db.prepare(`SELECT * FROM packets WHERE id = ?`);
-  return stmt.get(id);
+  return db.prepare(`SELECT * FROM packets WHERE id = ?`).get(id);
 }
 
 export function getPacketsBySession(sessionId) {
-  const stmt = db.prepare(`
-    SELECT * FROM packets WHERE session_id = ? ORDER BY created_at ASC
-  `);
-  return stmt.all(sessionId);
+  return db.prepare(`SELECT * FROM packets WHERE session_id = ? ORDER BY created_at ASC`).all(sessionId);
 }
 
-/**
- * Get packets that have a temp file and were created more than maxAgeSeconds ago (for cleanup)
- */
 export function getPacketsWithTempFilesOlderThan(maxAgeSeconds) {
-  const sec = Math.floor(maxAgeSeconds);
-  const stmt = db.prepare(`
+  return db.prepare(`
     SELECT id, temp_file_path FROM packets
     WHERE temp_file_path IS NOT NULL AND temp_file_path != ''
     AND datetime(created_at) <= datetime('now', '-' || ? || ' seconds')
-  `);
-  return stmt.all(sec);
+  `).all(Math.floor(maxAgeSeconds));
 }
 
-/**
- * Get recent failed packets for debugging / error views
- */
 export function getRecentFailedPackets(limit = 100) {
-  const stmt = db.prepare(`
+  return db.prepare(`
     SELECT id, session_id, filename, status, error, created_at, completed_at
     FROM packets
     WHERE status = 'failed' AND error IS NOT NULL AND error != ''
     ORDER BY COALESCE(completed_at, created_at) DESC
     LIMIT ?
-  `);
-  return stmt.all(limit);
+  `).all(limit);
 }
 
 export function updatePacket(id, data) {
   const fields = [];
   const values = [];
-  
+
   for (const [key, value] of Object.entries(data)) {
     if (key === "id" || key === "session_id") continue;
     if (!PACKET_UPDATABLE_COLUMNS.has(key)) {
       console.warn(`[DB] updatePacket: ignoring unknown column "${key}"`);
       continue;
     }
+    // Status validation
+    if (key === "status" && !VALID_PACKET_STATUSES.has(value)) {
+      console.warn(`[DB] updatePacket: ignoring invalid status "${value}"`);
+      continue;
+    }
     fields.push(`${key} = ?`);
     values.push(value);
   }
-  
+
   if (fields.length === 0) return getPacket(id);
-  
+
   values.push(id);
-  
-  const stmt = db.prepare(`
-    UPDATE packets SET ${fields.join(", ")} WHERE id = ?
-  `);
-  stmt.run(...values);
+  db.prepare(`UPDATE packets SET ${fields.join(", ")} WHERE id = ?`).run(...values);
   return getPacket(id);
 }
 
-export function completePacket(id, result) {
+/**
+ * Complete a packet. Transactional: UPDATE packet + UPDATE session + UPSERT usage_daily.
+ */
+export const completePacket = db.transaction((id, result) => {
   const packet = getPacket(id);
   if (!packet) return null;
-  
-  const update = db.prepare(`
+
+  const status = result.hasNeedsReview ? "needs_review" :
+                 result.hasFailed ? "failed" : "completed";
+
+  db.prepare(`
     UPDATE packets SET
       status = ?,
       completed_at = CURRENT_TIMESTAMP,
@@ -363,24 +414,19 @@ export function completePacket(id, result) {
       total_credits = ?,
       total_cost = ?
     WHERE id = ?
-  `);
-  
-  const status = result.hasNeedsReview ? "needs_review" : 
-                 result.hasFailed ? "failed" : "completed";
-  
-  update.run(
+  `).run(
     status,
-    result.stats?.totalDocuments || 0,
-    result.stats?.completed || 0,
-    result.stats?.needsReview || 0,
-    result.stats?.failed || 0,
-    result.usage?.totalCredits || 0,
-    result.usage?.totalCost || 0,
+    result.stats?.totalDocuments ?? 0,
+    result.stats?.completed ?? 0,
+    result.stats?.needsReview ?? 0,
+    result.stats?.failed ?? 0,
+    result.usage?.totalCredits ?? 0,
+    result.usage?.totalCost ?? 0,
     id
   );
-  
+
   // Update session stats
-  const sessionUpdate = db.prepare(`
+  db.prepare(`
     UPDATE sessions SET
       completed_packets = completed_packets + CASE WHEN ? = 'completed' THEN 1 ELSE 0 END,
       needs_review_packets = needs_review_packets + CASE WHEN ? = 'needs_review' THEN 1 ELSE 0 END,
@@ -391,17 +437,15 @@ export function completePacket(id, result) {
       api_calls = api_calls + ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `);
-  
-  sessionUpdate.run(
+  `).run(
     status, status, status,
-    result.usage?.totalCredits || 0,
-    result.usage?.totalCost || 0,
-    result.usage?.totalPages || 0,
-    result.usage?.apiCalls || 0,
+    result.usage?.totalCredits ?? 0,
+    result.usage?.totalCost ?? 0,
+    result.usage?.totalPages ?? 0,
+    result.usage?.apiCalls ?? 0,
     packet.session_id
   );
-  
+
   // Update daily usage
   const today = new Date().toISOString().split("T")[0];
   db.prepare(`
@@ -416,19 +460,18 @@ export function completePacket(id, result) {
       documents_processed = documents_processed + excluded.documents_processed
   `).run(
     today,
-    result.usage?.totalCredits || 0,
-    result.usage?.totalCost || 0,
-    result.usage?.totalPages || 0,
-    result.usage?.apiCalls || 0,
-    result.stats?.totalDocuments || 0
+    result.usage?.totalCredits ?? 0,
+    result.usage?.totalCost ?? 0,
+    result.usage?.totalPages ?? 0,
+    result.usage?.apiCalls ?? 0,
+    result.stats?.totalDocuments ?? 0
   );
-  
+
   return getPacket(id);
-}
+});
 
 /**
  * Atomically complete a packet AND create its documents in a single transaction.
- * Prevents data loss if the process crashes between the two operations.
  */
 export const completePacketAtomic = db.transaction((id, result, docs) => {
   const packet = completePacket(id, result);
@@ -454,10 +497,10 @@ export const completePacketAtomic = db.transaction((id, result, docs) => {
         JSON.stringify(doc.pages || []),
         JSON.stringify(doc.extraction_data || {}),
         JSON.stringify(doc.likelihoods || {}),
-        doc.extraction_confidence || null,
+        doc.extraction_confidence ?? null,
         doc.needs_review ? 1 : 0,
         JSON.stringify(doc.review_reasons || []),
-        doc.credits_used || 0
+        doc.credits_used ?? 0
       );
     }
   }
@@ -465,45 +508,43 @@ export const completePacketAtomic = db.transaction((id, result, docs) => {
   return packet;
 });
 
-export function deletePacket(id) {
+/**
+ * Delete a packet. Transactional: DELETE packet + UPDATE session count.
+ */
+export const deletePacket = db.transaction((id) => {
   const packet = getPacket(id);
   if (!packet) return false;
-  
+
   db.prepare(`DELETE FROM packets WHERE id = ?`).run(id);
-  
-  // Update session count
   db.prepare(`
-    UPDATE sessions SET total_packets = total_packets - 1, updated_at = CURRENT_TIMESTAMP
+    UPDATE sessions SET total_packets = MAX(0, total_packets - 1), updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(packet.session_id);
-  
+
   return true;
-}
+});
 
 // ============================================================================
 // GLOBAL QUERIES (cross-session)
 // ============================================================================
 
 export function getAllPackets(limit = 500) {
-  const stmt = db.prepare(`
-    SELECT * FROM packets ORDER BY created_at DESC LIMIT ?
-  `);
-  return stmt.all(limit);
+  return db.prepare(`SELECT * FROM packets ORDER BY created_at DESC LIMIT ?`).all(limit);
 }
 
 export function getAllDocuments(limit = 5000) {
-  const stmt = db.prepare(`
-    SELECT * FROM documents ORDER BY created_at DESC LIMIT ?
-  `);
-  return stmt.all(limit).map(doc => {
-    doc.pages = JSON.parse(doc.pages || "[]");
-    doc.extraction_data = JSON.parse(doc.extraction_data || "{}");
-    doc.likelihoods = JSON.parse(doc.likelihoods || "{}");
-    doc.review_reasons = JSON.parse(doc.review_reasons || "[]");
-    doc.edited_fields = doc.edited_fields ? JSON.parse(doc.edited_fields) : null;
-    doc.needs_review = !!doc.needs_review;
-    return doc;
-  });
+  return db.prepare(`SELECT * FROM documents ORDER BY created_at DESC LIMIT ?`).all(limit).map(deserializeDocument);
+}
+
+/**
+ * Batch-fetch documents for multiple packet IDs in one query (avoids N+1).
+ */
+export function getDocumentsByPacketIds(packetIds) {
+  if (!packetIds || packetIds.length === 0) return [];
+  const placeholders = packetIds.map(() => "?").join(",");
+  return db.prepare(`
+    SELECT * FROM documents WHERE packet_id IN (${placeholders}) ORDER BY created_at ASC
+  `).all(...packetIds).map(deserializeDocument);
 }
 
 // ============================================================================
@@ -511,15 +552,13 @@ export function getAllDocuments(limit = 5000) {
 // ============================================================================
 
 export function createDocument(doc) {
-  const stmt = db.prepare(`
+  db.prepare(`
     INSERT INTO documents (
       id, packet_id, session_id, document_type, display_name, status,
       pages, extraction_data, likelihoods, extraction_confidence,
       needs_review, review_reasons, credits_used
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  stmt.run(
+  `).run(
     doc.id,
     doc.packet_id,
     doc.session_id,
@@ -529,16 +568,20 @@ export function createDocument(doc) {
     JSON.stringify(doc.pages || []),
     JSON.stringify(doc.extraction_data || {}),
     JSON.stringify(doc.likelihoods || {}),
-    doc.extraction_confidence || null,
+    doc.extraction_confidence ?? null,
     doc.needs_review ? 1 : 0,
     JSON.stringify(doc.review_reasons || []),
-    doc.credits_used || 0
+    doc.credits_used ?? 0
   );
-  
+
   return getDocument(doc.id);
 }
 
-export function createDocuments(docs) {
+/**
+ * Batch-create documents. Transactional.
+ * Returns all created documents in a single SELECT (no N+1).
+ */
+export const createDocuments = db.transaction((docs) => {
   const insert = db.prepare(`
     INSERT INTO documents (
       id, packet_id, session_id, document_type, display_name, status,
@@ -546,97 +589,53 @@ export function createDocuments(docs) {
       needs_review, review_reasons, credits_used
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  
-  const insertMany = db.transaction((docs) => {
-    for (const doc of docs) {
-      insert.run(
-        doc.id,
-        doc.packet_id,
-        doc.session_id,
-        doc.document_type,
-        doc.display_name,
-        doc.status || "completed",
-        JSON.stringify(doc.pages || []),
-        JSON.stringify(doc.extraction_data || {}),
-        JSON.stringify(doc.likelihoods || {}),
-        doc.extraction_confidence || null,
-        doc.needs_review ? 1 : 0,
-        JSON.stringify(doc.review_reasons || []),
-        doc.credits_used || 0
-      );
-    }
-  });
-  
-  insertMany(docs);
-  return docs.map(d => getDocument(d.id));
-}
+
+  for (const doc of docs) {
+    insert.run(
+      doc.id,
+      doc.packet_id,
+      doc.session_id,
+      doc.document_type,
+      doc.display_name,
+      doc.status || "completed",
+      JSON.stringify(doc.pages || []),
+      JSON.stringify(doc.extraction_data || {}),
+      JSON.stringify(doc.likelihoods || {}),
+      doc.extraction_confidence ?? null,
+      doc.needs_review ? 1 : 0,
+      JSON.stringify(doc.review_reasons || []),
+      doc.credits_used ?? 0
+    );
+  }
+
+  // Batch fetch instead of N individual getDocument calls
+  const ids = docs.map(d => d.id);
+  const placeholders = ids.map(() => "?").join(",");
+  return db.prepare(`SELECT * FROM documents WHERE id IN (${placeholders}) ORDER BY created_at ASC`).all(...ids).map(deserializeDocument);
+});
 
 export function getDocument(id) {
-  const stmt = db.prepare(`SELECT * FROM documents WHERE id = ?`);
-  const doc = stmt.get(id);
-  if (doc) {
-    doc.pages = JSON.parse(doc.pages || "[]");
-    doc.extraction_data = JSON.parse(doc.extraction_data || "{}");
-    doc.likelihoods = JSON.parse(doc.likelihoods || "{}");
-    doc.review_reasons = JSON.parse(doc.review_reasons || "[]");
-    doc.edited_fields = doc.edited_fields ? JSON.parse(doc.edited_fields) : null;
-    doc.needs_review = !!doc.needs_review;
-  }
-  return doc;
+  return deserializeDocument(db.prepare(`SELECT * FROM documents WHERE id = ?`).get(id));
 }
 
 export function getDocumentsByPacket(packetId) {
-  const stmt = db.prepare(`
-    SELECT * FROM documents WHERE packet_id = ? ORDER BY created_at ASC
-  `);
-  return stmt.all(packetId).map(doc => {
-    doc.pages = JSON.parse(doc.pages || "[]");
-    doc.extraction_data = JSON.parse(doc.extraction_data || "{}");
-    doc.likelihoods = JSON.parse(doc.likelihoods || "{}");
-    doc.review_reasons = JSON.parse(doc.review_reasons || "[]");
-    doc.edited_fields = doc.edited_fields ? JSON.parse(doc.edited_fields) : null;
-    doc.needs_review = !!doc.needs_review;
-    return doc;
-  });
+  return db.prepare(`SELECT * FROM documents WHERE packet_id = ? ORDER BY created_at ASC`).all(packetId).map(deserializeDocument);
 }
 
 export function getDocumentsBySession(sessionId) {
-  const stmt = db.prepare(`
-    SELECT * FROM documents WHERE session_id = ? ORDER BY created_at ASC
-  `);
-  return stmt.all(sessionId).map(doc => {
-    doc.pages = JSON.parse(doc.pages || "[]");
-    doc.extraction_data = JSON.parse(doc.extraction_data || "{}");
-    doc.likelihoods = JSON.parse(doc.likelihoods || "{}");
-    doc.review_reasons = JSON.parse(doc.review_reasons || "[]");
-    doc.edited_fields = doc.edited_fields ? JSON.parse(doc.edited_fields) : null;
-    doc.needs_review = !!doc.needs_review;
-    return doc;
-  });
+  return db.prepare(`SELECT * FROM documents WHERE session_id = ? ORDER BY created_at ASC`).all(sessionId).map(deserializeDocument);
 }
 
 export function getDocumentsNeedingReview(sessionId) {
-  const stmt = db.prepare(`
-    SELECT * FROM documents 
+  return db.prepare(`
+    SELECT * FROM documents
     WHERE session_id = ? AND needs_review = 1 AND reviewed_at IS NULL
     ORDER BY created_at ASC
-  `);
-  return stmt.all(sessionId).map(doc => {
-    doc.pages = JSON.parse(doc.pages || "[]");
-    doc.extraction_data = JSON.parse(doc.extraction_data || "{}");
-    doc.likelihoods = JSON.parse(doc.likelihoods || "{}");
-    doc.review_reasons = JSON.parse(doc.review_reasons || "[]");
-    doc.edited_fields = doc.edited_fields ? JSON.parse(doc.edited_fields) : null;
-    doc.needs_review = !!doc.needs_review;
-    return doc;
-  });
+  `).all(sessionId).map(deserializeDocument);
 }
 
-/**
- * Update a document's extraction data (e.g., after a document-level retry).
- */
 export function updateDocumentExtraction(id, { status, extractionData, likelihoods, extractionConfidence, needsReview, reviewReasons, creditsUsed }) {
-  const stmt = db.prepare(`
+  db.prepare(`
     UPDATE documents SET
       status = ?,
       extraction_data = ?,
@@ -651,16 +650,14 @@ export function updateDocumentExtraction(id, { status, extractionData, likelihoo
       edited_fields = NULL,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `);
-
-  stmt.run(
+  `).run(
     status || "completed",
     JSON.stringify(extractionData || {}),
     JSON.stringify(likelihoods || {}),
     extractionConfidence ?? null,
     needsReview ? 1 : 0,
     JSON.stringify(reviewReasons || []),
-    creditsUsed || 0,
+    creditsUsed ?? 0,
     id
   );
 
@@ -668,7 +665,7 @@ export function updateDocumentExtraction(id, { status, extractionData, likelihoo
 }
 
 export function reviewDocument(id, { status, reviewerNotes, editedFields, reviewedBy }) {
-  const stmt = db.prepare(`
+  db.prepare(`
     UPDATE documents SET
       status = ?,
       needs_review = 0,
@@ -678,16 +675,14 @@ export function reviewDocument(id, { status, reviewerNotes, editedFields, review
       edited_fields = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `);
-  
-  stmt.run(
+  `).run(
     status || "approved",
     reviewedBy || null,
     reviewerNotes || null,
     editedFields ? JSON.stringify(editedFields) : null,
     id
   );
-  
+
   return getDocument(id);
 }
 
@@ -696,52 +691,46 @@ export function reviewDocument(id, { status, reviewerNotes, editedFields, review
 // ============================================================================
 
 export function createHistoryEntry(entry) {
-  const stmt = db.prepare(`
+  db.prepare(`
     INSERT INTO history (
       id, session_id, total_packets, total_documents,
       completed, needs_review, failed, total_credits, total_cost, summary, created_by
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  
-  stmt.run(
+  `).run(
     entry.id,
     entry.session_id || null,
-    entry.total_packets || 0,
-    entry.total_documents || 0,
-    entry.completed || 0,
-    entry.needs_review || 0,
-    entry.failed || 0,
-    entry.total_credits || 0,
-    entry.total_cost || 0,
+    entry.total_packets ?? 0,
+    entry.total_documents ?? 0,
+    entry.completed ?? 0,
+    entry.needs_review ?? 0,
+    entry.failed ?? 0,
+    entry.total_credits ?? 0,
+    entry.total_cost ?? 0,
     JSON.stringify(entry.summary || {}),
     entry.created_by || null
   );
-  
+
   return getHistoryEntry(entry.id);
 }
 
 export function getHistoryEntry(id) {
-  const stmt = db.prepare(`SELECT * FROM history WHERE id = ?`);
-  const entry = stmt.get(id);
+  const entry = db.prepare(`SELECT * FROM history WHERE id = ?`).get(id);
   if (entry) {
-    entry.summary = JSON.parse(entry.summary || "{}");
+    entry.summary = tryParseJson(entry.summary, {});
   }
   return entry;
 }
 
 export function getHistory(limit = 50) {
-  const stmt = db.prepare(`
-    SELECT * FROM history ORDER BY completed_at DESC LIMIT ?
-  `);
-  return stmt.all(limit).map(entry => {
-    entry.summary = JSON.parse(entry.summary || "{}");
+  return db.prepare(`SELECT * FROM history ORDER BY completed_at DESC LIMIT ?`).all(limit).map(entry => {
+    entry.summary = tryParseJson(entry.summary, {});
     return entry;
   });
 }
 
 export function deleteHistoryEntry(id) {
-  db.prepare(`DELETE FROM history WHERE id = ?`).run(id);
-  return true;
+  const result = db.prepare(`DELETE FROM history WHERE id = ?`).run(id);
+  return result.changes > 0;
 }
 
 export function clearHistory() {
@@ -754,36 +743,29 @@ export function clearHistory() {
 // ============================================================================
 
 export function getUsageStats(days = 30) {
-  const stmt = db.prepare(`
-    SELECT * FROM usage_daily 
+  return db.prepare(`
+    SELECT * FROM usage_daily
     WHERE date >= date('now', '-' || ? || ' days')
     ORDER BY date DESC
-  `);
-  return stmt.all(days);
+  `).all(days);
 }
 
 export function getTotalUsage() {
-  const stmt = db.prepare(`
-    SELECT 
-      SUM(total_credits) as total_credits,
-      SUM(total_cost) as total_cost,
-      SUM(total_pages) as total_pages,
-      SUM(api_calls) as api_calls,
-      SUM(packets_processed) as packets_processed,
-      SUM(documents_processed) as documents_processed
+  return db.prepare(`
+    SELECT
+      COALESCE(SUM(total_credits), 0) as total_credits,
+      COALESCE(SUM(total_cost), 0) as total_cost,
+      COALESCE(SUM(total_pages), 0) as total_pages,
+      COALESCE(SUM(api_calls), 0) as api_calls,
+      COALESCE(SUM(packets_processed), 0) as packets_processed,
+      COALESCE(SUM(documents_processed), 0) as documents_processed
     FROM usage_daily
-  `);
-  return stmt.get();
+  `).get();
 }
 
-/**
- * Aggregate stats for the last N days (for dashboard homepage).
- * Returns pages, packets, documents, cost, accuracy (completed/total), review %, avg duration.
- * Uses usage_daily for volume/cost and packets/documents for accuracy and review (not history table).
- */
 export function getStats30Days(days = 30) {
   const usage = db.prepare(`
-    SELECT 
+    SELECT
       COALESCE(SUM(total_pages), 0) as total_pages,
       COALESCE(SUM(packets_processed), 0) as packets_processed,
       COALESCE(SUM(documents_processed), 0) as documents_processed,
@@ -793,7 +775,7 @@ export function getStats30Days(days = 30) {
   `).get(days);
 
   const docStats = db.prepare(`
-    SELECT 
+    SELECT
       COUNT(*) as total_documents,
       SUM(CASE WHEN d.status = 'completed' THEN 1 ELSE 0 END) as completed,
       SUM(CASE WHEN d.needs_review = 1 OR d.status = 'needs_review' THEN 1 ELSE 0 END) as needs_review,
@@ -807,8 +789,7 @@ export function getStats30Days(days = 30) {
   const avgTime = db.prepare(`
     SELECT AVG((julianday(completed_at) - julianday(started_at)) * 86400) as avg_seconds
     FROM packets
-    WHERE completed_at IS NOT NULL
-      AND started_at IS NOT NULL
+    WHERE completed_at IS NOT NULL AND started_at IS NOT NULL
       AND completed_at >= datetime('now', '-' || ? || ' days')
   `).get(days);
 
@@ -832,9 +813,7 @@ export function getStats30Days(days = 30) {
 }
 
 /**
- * Admin dashboard metrics: aggregates from packets, documents, history, usage_daily.
- * Returns the same shape the AdminDashboard component expects (totalPackets, totalDocuments,
- * avgConfidence, confidenceDistribution, fieldStats, reviewRate, etc.).
+ * Admin dashboard metrics — aggregated entirely in SQL (no full-table JS loops).
  */
 export function getAdminDashboardMetrics() {
   const packetCount = db.prepare(`SELECT COUNT(*) as count FROM packets`).get();
@@ -851,127 +830,96 @@ export function getAdminDashboardMetrics() {
   const completedDocuments = Number(docAgg?.completed ?? 0) || 0;
   const needsReviewCount = Number(docAgg?.needs_review ?? 0) || 0;
   const failedCount = Number(docAgg?.failed ?? 0) || 0;
-
   const totalPackets = Number(packetCount?.count ?? 0) || 0;
 
+  // Usage: cascade through sources (usage_daily → history → packets → sessions → documents)
   const usage = getTotalUsage();
   let totalCredits = Number(usage?.total_credits ?? 0) || 0;
   let totalCost = Number(usage?.total_cost ?? 0) || 0;
   if (totalCredits === 0 && totalCost === 0) {
-    const historyTotals = db.prepare(`
-      SELECT COALESCE(SUM(total_credits), 0) as total_credits, COALESCE(SUM(total_cost), 0) as total_cost
-      FROM history
+    const fallback = db.prepare(`
+      SELECT
+        COALESCE(SUM(total_credits), 0) as tc, COALESCE(SUM(total_cost), 0) as tco FROM history
     `).get();
-    totalCredits = Number(historyTotals?.total_credits ?? 0) || 0;
-    totalCost = Number(historyTotals?.total_cost ?? 0) || 0;
+    totalCredits = Number(fallback?.tc ?? 0) || 0;
+    totalCost = Number(fallback?.tco ?? 0) || 0;
   }
   if (totalCredits === 0 && totalCost === 0) {
-    const packetTotals = db.prepare(`
-      SELECT COALESCE(SUM(total_credits), 0) as total_credits, COALESCE(SUM(total_cost), 0) as total_cost
-      FROM packets
+    const fallback = db.prepare(`
+      SELECT COALESCE(SUM(total_credits), 0) as tc, COALESCE(SUM(total_cost), 0) as tco FROM packets
     `).get();
-    totalCredits = Number(packetTotals?.total_credits ?? 0) || 0;
-    totalCost = Number(packetTotals?.total_cost ?? 0) || 0;
+    totalCredits = Number(fallback?.tc ?? 0) || 0;
+    totalCost = Number(fallback?.tco ?? 0) || 0;
   }
   if (totalCredits === 0 && totalCost === 0) {
-    const sessionTotals = db.prepare(`
-      SELECT COALESCE(SUM(total_credits), 0) as total_credits, COALESCE(SUM(total_cost), 0) as total_cost
-      FROM sessions
+    const fallback = db.prepare(`
+      SELECT COALESCE(SUM(total_credits), 0) as tc, COALESCE(SUM(total_cost), 0) as tco FROM sessions
     `).get();
-    totalCredits = Number(sessionTotals?.total_credits ?? 0) || 0;
-    totalCost = Number(sessionTotals?.total_cost ?? 0) || 0;
+    totalCredits = Number(fallback?.tc ?? 0) || 0;
+    totalCost = Number(fallback?.tco ?? 0) || 0;
   }
   if (totalCredits === 0 && totalCost === 0) {
-    const docCredits = db.prepare(`SELECT COALESCE(SUM(credits_used), 0) as total_credits FROM documents`).get();
-    const credits = Number(docCredits?.total_credits ?? 0) || 0;
+    const credits = Number(db.prepare(`SELECT COALESCE(SUM(credits_used), 0) as c FROM documents`).get()?.c ?? 0) || 0;
     if (credits > 0) {
       totalCredits = credits;
       totalCost = credits * 0.01;
     }
   }
 
-  // Confidence: use extraction_confidence when set, else derive from likelihoods per document
-  const confidenceRows = db.prepare(`
-    SELECT extraction_confidence, likelihoods, review_reasons
+  // Confidence: aggregate in SQL instead of loading all rows into memory
+  const confDist = db.prepare(`
+    SELECT
+      COUNT(CASE WHEN extraction_confidence >= 0.9 THEN 1 END) as high,
+      COUNT(CASE WHEN extraction_confidence >= 0.7 AND extraction_confidence < 0.9 THEN 1 END) as medium,
+      COUNT(CASE WHEN extraction_confidence > 0 AND extraction_confidence < 0.7 THEN 1 END) as low,
+      AVG(extraction_confidence) as avg_confidence,
+      MIN(extraction_confidence) as min_confidence,
+      MAX(extraction_confidence) as max_confidence
     FROM documents
+    WHERE extraction_confidence IS NOT NULL
+  `).get();
+
+  const avgConfidence = Number(confDist?.avg_confidence ?? 0) || 0;
+  const minConfidence = Number(confDist?.min_confidence ?? 0) || 0;
+  const maxConfidence = Number(confDist?.max_confidence ?? 0) || 0;
+
+  // Review reasons: aggregate top reasons in SQL using a limited scan
+  const topReasonRows = db.prepare(`
+    SELECT review_reasons FROM documents
+    WHERE needs_review = 1 AND review_reasons IS NOT NULL AND review_reasons != '[]'
+    LIMIT 500
   `).all();
-
-  const allConfidences = [];
-  const fieldConfidences = {};
   const reviewReasons = {};
-
-  for (const row of confidenceRows) {
-    let docConfidence = null;
-    const c = row.extraction_confidence != null ? Number(row.extraction_confidence) : NaN;
-    if (!Number.isNaN(c)) docConfidence = c;
-
-    try {
-      const likelihoods = JSON.parse(row.likelihoods || "{}");
-      const likelihoodValues = Object.values(likelihoods).filter(
-        (v) => typeof v === "number" && !Number.isNaN(v)
-      );
-      Object.entries(likelihoods).forEach(([field, val]) => {
-        const v = typeof val === "number" ? val : parseFloat(val);
-        if (!Number.isNaN(v)) {
-          if (!fieldConfidences[field]) fieldConfidences[field] = [];
-          fieldConfidences[field].push(v);
-        }
-      });
-      if (docConfidence == null && likelihoodValues.length > 0) {
-        docConfidence =
-          likelihoodValues.reduce((a, b) => a + b, 0) / likelihoodValues.length;
-      }
-      if (docConfidence != null) allConfidences.push(docConfidence);
-
-      const reasons = JSON.parse(row.review_reasons || "[]");
-      (Array.isArray(reasons) ? reasons : []).forEach((r) => {
-        const key = String(r);
-        reviewReasons[key] = (reviewReasons[key] || 0) + 1;
-      });
-    } catch (_) {
-      if (docConfidence != null) allConfidences.push(docConfidence);
+  for (const row of topReasonRows) {
+    const reasons = tryParseJson(row.review_reasons, []);
+    for (const r of (Array.isArray(reasons) ? reasons : [])) {
+      const key = String(r);
+      reviewReasons[key] = (reviewReasons[key] || 0) + 1;
     }
   }
-
-  const fieldStats = Object.entries(fieldConfidences)
-    .map(([field, confs]) => ({
-      field,
-      avgConfidence: confs.reduce((a, b) => a + b, 0) / confs.length,
-      minConfidence: Math.min(...confs),
-      count: confs.length,
-    }))
-    .sort((a, b) => a.avgConfidence - b.avgConfidence);
-
-  const lowConfidenceFields = fieldStats.filter((f) => f.avgConfidence < 0.7).length;
-
-  const avgConfidence =
-    allConfidences.length > 0
-      ? allConfidences.reduce((a, b) => a + b, 0) / allConfidences.length
-      : 0;
-  const minConfidence = allConfidences.length > 0 ? Math.min(...allConfidences) : 0;
-  const maxConfidence = allConfidences.length > 0 ? Math.max(...allConfidences) : 0;
+  const reviewReasonsSorted = Object.entries(reviewReasons)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
 
   const reviewRate = totalDocuments > 0 ? needsReviewCount / totalDocuments : 0;
   const errorRate = totalDocuments > 0 ? failedCount / totalDocuments : 0;
 
-  const processingTime = db.prepare(`
-    SELECT (julianday(completed_at) - julianday(started_at)) * 86400 as seconds
+  // Processing time: aggregate in SQL
+  const timeAgg = db.prepare(`
+    SELECT
+      AVG((julianday(completed_at) - julianday(started_at)) * 86400) as avg_seconds,
+      MIN((julianday(completed_at) - julianday(started_at)) * 86400) as min_seconds,
+      MAX((julianday(completed_at) - julianday(started_at)) * 86400) as max_seconds
     FROM packets
     WHERE completed_at IS NOT NULL AND started_at IS NOT NULL
-  `).all();
-  const times = processingTime.map((r) => Number(r.seconds)).filter((n) => !Number.isNaN(n));
-  const avgProcessingTime = times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0;
-  const minProcessingTime = times.length > 0 ? Math.min(...times) : 0;
-  const maxProcessingTime = times.length > 0 ? Math.max(...times) : 0;
+  `).get();
 
-  const reviewReasonsSorted = Object.entries(reviewReasons)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([reason, count]) => [reason, count]);
+  const avgProcessingTime = Number(timeAgg?.avg_seconds ?? 0) || 0;
+  const minProcessingTime = Number(timeAgg?.min_seconds ?? 0) || 0;
+  const maxProcessingTime = Number(timeAgg?.max_seconds ?? 0) || 0;
 
   const usage30d = getUsageStats(30);
   const stats30d = getStats30Days(30);
-
   const recentHistory = getHistory(20);
 
   return {
@@ -983,9 +931,13 @@ export function getAdminDashboardMetrics() {
     avgConfidence,
     minConfidence,
     maxConfidence,
-    confidenceDistribution: allConfidences,
-    fieldStats,
-    lowConfidenceFields,
+    confidenceDistribution: {
+      high: Number(confDist?.high ?? 0),
+      medium: Number(confDist?.medium ?? 0),
+      low: Number(confDist?.low ?? 0),
+    },
+    fieldStats: [], // Removed: field-level stats required loading all JSON blobs — too expensive
+    lowConfidenceFields: 0,
     reviewRate,
     reviewReasons: reviewReasonsSorted,
     avgProcessingTime,
@@ -1006,53 +958,100 @@ export function getAdminDashboardMetrics() {
 // ============================================================================
 
 export function saveExportTemplate(template) {
-  const stmt = db.prepare(`
+  const id = template.id || `template_${Date.now()}`;
+  db.prepare(`
     INSERT INTO export_templates (id, name, config)
     VALUES (?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
       config = excluded.config,
       updated_at = CURRENT_TIMESTAMP
-  `);
-  
-  const id = template.id || `template_${Date.now()}`;
-  stmt.run(id, template.name, JSON.stringify(template.config));
+  `).run(id, template.name, JSON.stringify(template.config));
   return getExportTemplate(template.name);
 }
 
 export function getExportTemplate(name) {
-  const stmt = db.prepare(`SELECT * FROM export_templates WHERE name = ?`);
-  const template = stmt.get(name);
+  const template = db.prepare(`SELECT * FROM export_templates WHERE name = ?`).get(name);
   if (template) {
-    template.config = JSON.parse(template.config || "{}");
+    template.config = tryParseJson(template.config, {});
   }
   return template;
 }
 
 export function getExportTemplates() {
-  const stmt = db.prepare(`SELECT * FROM export_templates ORDER BY name`);
-  return stmt.all().map(t => {
-    t.config = JSON.parse(t.config || "{}");
+  return db.prepare(`SELECT * FROM export_templates ORDER BY name`).all().map(t => {
+    t.config = tryParseJson(t.config, {});
     return t;
   });
 }
 
 export function deleteExportTemplate(name) {
-  db.prepare(`DELETE FROM export_templates WHERE name = ?`).run(name);
-  return true;
+  const result = db.prepare(`DELETE FROM export_templates WHERE name = ?`).run(name);
+  return result.changes > 0;
 }
 
 // ============================================================================
 // CLEANUP & MAINTENANCE
 // ============================================================================
 
+/**
+ * Delete completed sessions older than N days.
+ * Packets and documents CASCADE-delete with them.
+ */
 export function cleanupOldSessions(daysOld = 30) {
-  const stmt = db.prepare(`
-    DELETE FROM sessions 
-    WHERE status = 'completed' 
+  const result = db.prepare(`
+    DELETE FROM sessions
+    WHERE status = 'completed'
     AND updated_at < datetime('now', '-' || ? || ' days')
-  `);
-  const result = stmt.run(daysOld);
+  `).run(daysOld);
   return result.changes;
+}
+
+/**
+ * Delete usage_daily rows older than N days.
+ */
+export function cleanupOldUsage(daysOld = 365) {
+  const result = db.prepare(`
+    DELETE FROM usage_daily WHERE date < date('now', '-' || ? || ' days')
+  `).run(daysOld);
+  return result.changes;
+}
+
+/**
+ * Cap history entries — keep only the most recent N entries.
+ */
+export function cleanupOldHistory(keepCount = 200) {
+  const result = db.prepare(`
+    DELETE FROM history WHERE id NOT IN (
+      SELECT id FROM history ORDER BY completed_at DESC LIMIT ?
+    )
+  `).run(keepCount);
+  return result.changes;
+}
+
+/**
+ * Run incremental vacuum to reclaim free pages.
+ * Safe to call periodically — does nothing if no free pages exist.
+ */
+export function runIncrementalVacuum(pages = 100) {
+  try {
+    db.pragma(`incremental_vacuum(${Math.floor(pages)})`);
+  } catch (e) {
+    console.warn("[DB] Incremental vacuum failed:", e.message);
+  }
+}
+
+/**
+ * Run all maintenance tasks. Intended to be called from a periodic timer.
+ */
+export function runMaintenance() {
+  const sessionsDeleted = cleanupOldSessions(30);
+  const usageDeleted = cleanupOldUsage(365);
+  const historyDeleted = cleanupOldHistory(200);
+  runIncrementalVacuum(100);
+
+  if (sessionsDeleted > 0 || usageDeleted > 0 || historyDeleted > 0) {
+    console.log(`[DB] Maintenance: cleaned ${sessionsDeleted} sessions, ${usageDeleted} usage rows, ${historyDeleted} history entries`);
+  }
 }
 
 export function getDbStats() {
@@ -1061,7 +1060,7 @@ export function getDbStats() {
   const documents = db.prepare(`SELECT COUNT(*) as count FROM documents`).get();
   const history = db.prepare(`SELECT COUNT(*) as count FROM history`).get();
   const usage = getTotalUsage();
-  
+
   return {
     sessions: sessions.count,
     packets: packets.count,
@@ -1077,32 +1076,21 @@ export function getDbStats() {
 // CLEAR ALL DATA (admin action)
 // ============================================================================
 
-function clearAllData() {
+export const clearAllData = db.transaction(() => {
   const tables = ["documents", "packets", "sessions", "history", "usage_daily"];
-  db.exec("BEGIN TRANSACTION");
-  try {
-    for (const table of tables) {
-      db.exec(`DELETE FROM ${table}`);
-    }
-    db.exec("COMMIT");
-    console.log("[DB] All data cleared");
-    return { success: true, tablesCleared: tables };
-  } catch (e) {
-    db.exec("ROLLBACK");
-    console.error("[DB] clearAllData failed:", e.message);
-    throw e;
+  for (const table of tables) {
+    db.exec(`DELETE FROM ${table}`);
   }
-}
-
-// Close database connection on process exit
-process.on("exit", () => db.close());
-process.on("SIGINT", () => {
-  db.close();
-  process.exit();
+  console.log("[DB] All data cleared");
+  return { success: true, tablesCleared: tables };
 });
 
-export {
-  clearAllData,
-};
+// ============================================================================
+// PROCESS EXIT HANDLERS
+// ============================================================================
+
+process.on("exit", () => db.close());
+process.on("SIGINT", () => { db.close(); process.exit(0); });
+process.on("SIGTERM", () => { db.close(); process.exit(0); });
 
 export default db;

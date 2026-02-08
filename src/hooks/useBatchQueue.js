@@ -54,70 +54,17 @@ const ActionTypes = {
   SET_SESSION_ID: "SET_SESSION_ID",
   DB_INIT_COMPLETE: "DB_INIT_COMPLETE",
   RESTORE_FROM_DB: "RESTORE_FROM_DB",
-  RESTORE_FROM_STORAGE: "RESTORE_FROM_STORAGE",
 };
 
-// Storage key for persistence (fallback)
-const STORAGE_KEY = "stewart_ingestion_session";
-
-/**
- * Save state to localStorage (excluding large base64 data)
- */
-function saveToStorage(state) {
-  try {
-    const packetsToSave = [];
-    for (const [id, packet] of state.packets) {
-      // Only save completed/needs_review packets
-      if (packet.status === PacketStatus.COMPLETED || 
-          packet.status === PacketStatus.NEEDS_REVIEW ||
-          packet.status === PacketStatus.FAILED) {
-        packetsToSave.push({
-          ...packet,
-          base64: null, // Don't save base64 - too large
-        });
-      }
-    }
-    
-    const saveData = {
-      savedAt: new Date().toISOString(),
-      packets: packetsToSave,
-      stats: state.stats,
-    };
-    
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(saveData));
-  } catch (e) {
-    console.warn("Failed to save session state:", e);
-  }
-}
-
-/**
- * Load state from localStorage
- */
-function loadFromStorage() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return null;
-    
-    const data = JSON.parse(saved);
-    
-    // Check if data is too old (14 days)
-    const savedAt = new Date(data.savedAt);
-    const hoursSinceSave = (Date.now() - savedAt.getTime()) / (1000 * 60 * 60);
-    if (hoursSinceSave > 336) { // 14 days
-      localStorage.removeItem(STORAGE_KEY);
-      return null;
-    }
-    
-    return data;
-  } catch (e) {
-    console.warn("Failed to load session state:", e);
-    return null;
-  }
-}
+// Legacy localStorage key — cleared on startup so stale data doesn't linger.
+// Packet/session persistence is handled entirely by the SQLite database.
+// (localStorage is still used for API key, username, settings, and dark mode
+//  via their own modules — those are not touched here.)
+const LEGACY_STORAGE_KEY = "stewart_ingestion_session";
 
 /**
  * Build initial state — always starts empty.
- * Data is restored asynchronously: DB first (authoritative), localStorage as fallback.
+ * Data is restored asynchronously from the SQLite database on mount.
  */
 function getInitialState() {
   return {
@@ -737,33 +684,6 @@ function batchQueueReducer(state, action) {
       return { ...state, packets: newPackets };
     }
 
-    case ActionTypes.RESTORE_FROM_STORAGE: {
-      // Restore from localStorage — only used when DB is unavailable or empty.
-      const saved = action.saved;
-      if (!saved?.packets?.length) return state;
-
-      const restoredPackets = new Map();
-      for (const packet of saved.packets) {
-        restoredPackets.set(packet.id, packet);
-      }
-
-      return {
-        ...state,
-        packets: restoredPackets,
-        queue: [],
-        processing: new Set(),
-        batchStatus: BatchStatus.COMPLETED,
-        stats: {
-          total: saved.packets.length,
-          queued: 0,
-          processing: 0,
-          completed: saved.packets.filter(p => p.status === PacketStatus.COMPLETED).length,
-          needsReview: saved.packets.filter(p => p.status === PacketStatus.NEEDS_REVIEW).length,
-          failed: saved.packets.filter(p => p.status === PacketStatus.FAILED).length,
-        },
-      };
-    }
-
     case ActionTypes.RESTORE_FROM_DB: {
       // DB is authoritative — always replaces any existing state.
       const newPackets = new Map();
@@ -1005,8 +925,7 @@ export function useBatchQueue() {
   // immediately after dispatch, without waiting for a React re-render.
   stateRef.current = state;
 
-  // Initialize database session on mount
-  // Priority: DB (authoritative) → localStorage (fallback)
+  // Initialize database session on mount (DB is the sole persistence layer)
   useEffect(() => {
     if (dbInitRef.current) return;
     dbInitRef.current = true;
@@ -1072,30 +991,18 @@ export function useBatchQueue() {
             console.warn("Failed to restore packets from database:", restoreError.message);
           }
 
-          // If DB had no packets, fall back to localStorage
           if (!dbRestored) {
-            const saved = loadFromStorage();
-            if (saved?.packets?.length > 0) {
-              dispatch({ type: ActionTypes.RESTORE_FROM_STORAGE, saved });
-              console.log(`Restored ${saved.packets.length} packet(s) from localStorage (DB empty)`);
-            }
+            console.log("DB session has 0 packets");
           }
         }
       } catch (error) {
-        console.warn("Database not available, using localStorage fallback:", error.message);
-        // Generate a local session ID
+        console.warn("Database not available:", error.message);
+        // Generate a local session ID so the app is still usable
         dispatch({ 
           type: ActionTypes.SET_SESSION_ID, 
           sessionId: `local_${Date.now()}`,
           dbConnected: false,
         });
-
-        // Fall back to localStorage when DB is unavailable
-        const saved = loadFromStorage();
-        if (saved?.packets?.length > 0) {
-          dispatch({ type: ActionTypes.RESTORE_FROM_STORAGE, saved });
-          console.log(`Restored ${saved.packets.length} packet(s) from localStorage (DB unavailable)`);
-        }
       }
 
       // Signal that init is complete (DB or fallback)
@@ -1105,19 +1012,11 @@ export function useBatchQueue() {
     initDbSession();
   }, []);
 
-  // Persist state to localStorage when packets change (fallback)
+  // One-time cleanup: remove legacy localStorage session data.
+  // Packet persistence is now handled entirely by the SQLite database.
   useEffect(() => {
-    // Only save if we have completed/review/failed packets
-    const hasCompletedPackets = Array.from(state.packets.values()).some(
-      p => p.status === PacketStatus.COMPLETED || 
-           p.status === PacketStatus.NEEDS_REVIEW ||
-           p.status === PacketStatus.FAILED
-    );
-    
-    if (hasCompletedPackets) {
-      saveToStorage(state);
-    }
-  }, [state.packets, state.stats]);
+    try { localStorage.removeItem(LEGACY_STORAGE_KEY); } catch {}
+  }, []);
 
   /**
    * Process a specific packet from the queue.
@@ -1420,17 +1319,47 @@ export function useBatchQueue() {
         }
       }
     }
-  }, []);
+
+    // Auto-resume: if the processing loop already completed (or was paused)
+    // and we're adding new files, automatically restart the loop so the user
+    // doesn't have to navigate back to the Upload page to hit "Start".
+    const currentStatus = stateRef.current.batchStatus;
+    if (
+      currentStatus === BatchStatus.COMPLETED ||
+      currentStatus === BatchStatus.PAUSED
+    ) {
+      console.log("[addPackets] Auto-resuming processing loop for newly added files");
+      pausedRef.current = false;
+      isProcessingRef.current = false;
+      abortControllerRef.current = new AbortController();
+      dispatch({ type: ActionTypes.RESUME_PROCESSING });
+      stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PROCESSING };
+      broadcastProcessingState("PROCESSING_STARTED");
+      // Small delay to let the reducer update before the loop reads state
+      setTimeout(() => runProcessingLoop(), 100);
+    }
+  }, [runProcessingLoop, broadcastProcessingState]);
 
   /**
    * Retry a failed packet
    */
   const retryPacket = useCallback((packetId) => {
+    // Clear this packet from claimedRef so the loop doesn't skip it
+    claimedRef.current.delete(packetId);
     dispatch({ type: ActionTypes.RETRY_PACKET, packetId });
-    if (stateRef.current.batchStatus === BatchStatus.PROCESSING) {
-      setTimeout(runProcessingLoop, 100);
-    }
-  }, [runProcessingLoop]);
+
+    // Force-restart the loop regardless of current status.
+    // The old approach of "nudging" the running loop didn't work because
+    // isProcessingRef.current blocks re-entry — if the loop was stuck
+    // in idle spinning, the nudge was silently ignored.
+    isProcessingRef.current = false;
+    pausedRef.current = false;
+    abortControllerRef.current = new AbortController();
+    dispatch({ type: ActionTypes.RESUME_PROCESSING });
+    stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PROCESSING };
+    broadcastProcessingState("PROCESSING_STARTED");
+    setTimeout(() => runProcessingLoop(), 150);
+  }, [runProcessingLoop, broadcastProcessingState]);
 
   /**
    * Retry all failed packets
@@ -1440,15 +1369,19 @@ export function useBatchQueue() {
       .filter(p => p.status === PacketStatus.FAILED);
     
     for (const packet of failedPackets) {
+      claimedRef.current.delete(packet.id);
       dispatch({ type: ActionTypes.RETRY_PACKET, packetId: packet.id });
     }
     
-    if (stateRef.current.batchStatus !== BatchStatus.PROCESSING) {
-      start();
-    } else {
-      setTimeout(runProcessingLoop, 100);
-    }
-  }, [start, runProcessingLoop]);
+    // Force-restart the loop (same logic as retryPacket)
+    isProcessingRef.current = false;
+    pausedRef.current = false;
+    abortControllerRef.current = new AbortController();
+    dispatch({ type: ActionTypes.RESUME_PROCESSING });
+    stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PROCESSING };
+    broadcastProcessingState("PROCESSING_STARTED");
+    setTimeout(() => runProcessingLoop(), 150);
+  }, [runProcessingLoop, broadcastProcessingState]);
 
   /**
    * Retry a single failed document within a packet (no re-split, no re-classify)
@@ -1504,23 +1437,26 @@ export function useBatchQueue() {
 
   /**
    * Remove a packet from the queue and database.
-   * Also deletes the server-side temp file so it doesn't waste storage.
+   * Always tries to delete on the server first so the packet stays gone after refresh;
+   * only removes from local state after a successful API delete (or when not using DB).
+   * @returns {Promise<boolean>} true if removed (from UI and/or server), false if server delete failed
    */
   const removePacket = useCallback(async (packetId) => {
-    dispatch({ type: ActionTypes.REMOVE_PACKET, packetId });
-
-    // Sync deletion to database so the packet doesn't reappear on refresh
+    // Always attempt server delete when we have a session so refresh doesn't bring the packet back
     if (stateRef.current.dbConnected) {
       try {
         await api.deletePacket(packetId);
       } catch (err) {
         console.warn(`Failed to delete packet ${packetId} from DB:`, err.message);
+        return false; // Caller can show toast; keep item in UI
       }
     }
+    dispatch({ type: ActionTypes.REMOVE_PACKET, packetId });
+    return true;
   }, []);
 
   /**
-   * Clear all packets from state, localStorage, and database.
+   * Clear all packets from state and database.
    */
   const clearAll = useCallback(async () => {
     // Capture packet IDs before clearing state so we can delete from DB
@@ -1535,13 +1471,6 @@ export function useBatchQueue() {
     claimedRef.current.clear();
     dispatch({ type: ActionTypes.CLEAR_ALL });
     broadcastProcessingState("PROCESSING_STOPPED");
-
-    // Clear localStorage
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (e) {
-      console.warn("Failed to clear session storage:", e);
-    }
 
     // Delete all packets from DB so they don't reappear on refresh
     if (stateRef.current.dbConnected && packetIds.length > 0) {

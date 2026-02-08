@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle } from "lucide-react";
 import { Button } from "./ui/button";
+import { SailboatIcon } from "./ui/sailboat-icon";
 import { getMergedExtractionData } from "../lib/utils";
 import { PDFPreview } from "./DocumentDetailModal";
 import * as api from "../lib/api";
@@ -173,10 +174,10 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-neutral-900 pt-16 pb-16">
         <div className="text-center max-w-md">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gray-100 dark:bg-neutral-700 mb-4">
-            <CheckCircle className="h-7 w-7 text-gray-400 dark:text-neutral-500" />
+            <SailboatIcon className="h-7 w-7 text-gray-400 dark:text-neutral-500" />
           </div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-neutral-100 mb-2">No items to review</h2>
-          <p className="text-gray-500 dark:text-neutral-400 mb-6">All documents passed automatic validation.</p>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-neutral-100 mb-2">All clear</h2>
+          <p className="text-gray-500 dark:text-neutral-400 mb-6">Every document passed automatic validation. Nothing needs review.</p>
           <Button onClick={onClose}>Return to Results</Button>
         </div>
       </div>

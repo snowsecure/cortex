@@ -253,12 +253,19 @@ export function DocumentDetailModal({ document, packet, onClose }) {
     return String(value);
   };
   
-  // Get confidence color
+  // Confidence styling helpers
   const getConfidenceColor = (confidence) => {
-    if (confidence >= 0.75) return "text-green-600";
-    if (confidence >= 0.5) return "text-amber-600";
-    return "text-red-600";
+    if (confidence >= 0.9) return "text-green-600 dark:text-green-400";
+    if (confidence >= 0.7) return "text-amber-600 dark:text-amber-400";
+    return "text-red-600 dark:text-red-400";
   };
+  const getConfidenceBorder = (confidence) => {
+    if (confidence >= 0.9) return "border-l-green-400 dark:border-l-green-600";
+    if (confidence >= 0.7) return "border-l-amber-400 dark:border-l-amber-500";
+    return "border-l-red-400 dark:border-l-red-500";
+  };
+  
+  const hasAnyLikelihoods = Object.keys(likelihoods).length > 0;
   
   // Sort fields by confidence (lowest first to highlight issues)
   const sortedFields = Object.entries(extractedData).sort((a, b) => {
@@ -307,15 +314,27 @@ export function DocumentDetailModal({ document, packet, onClose }) {
           </div>
         </div>
         
-        {/* Review reasons */}
+        {/* Review guidance */}
         {document.reviewReasons?.length > 0 && (
-          <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 dark:border-amber-800 shrink-0">
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">Review Reasons:</p>
-            <ul className="text-sm text-amber-700 dark:text-amber-300 list-disc list-inside">
-              {document.reviewReasons.map((reason, i) => (
-                <li key={i}>{reason}</li>
-              ))}
-            </ul>
+          <div className="px-4 py-2.5 bg-orange-50/80 dark:bg-orange-950/20 border-b border-orange-200/60 dark:border-orange-800/40 shrink-0">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="h-4 w-4 text-orange-500 dark:text-orange-400 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-orange-800 dark:text-orange-200">
+                  {document.reviewReasons.length === 1
+                    ? "This document needs your attention"
+                    : `${document.reviewReasons.length} items need your attention`}
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {document.reviewReasons.map((reason, i) => (
+                    <li key={i} className="text-xs text-orange-700/90 dark:text-orange-300/80 flex items-start gap-1.5">
+                      <span className="text-orange-400 dark:text-orange-500 mt-px shrink-0">&#8250;</span>
+                      <span>{reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           </div>
         )}
         
@@ -340,7 +359,16 @@ export function DocumentDetailModal({ document, packet, onClose }) {
           <div className="w-1/2 flex flex-col">
             {/* Data header */}
             <div className="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 shrink-0">
-              <h3 className="font-medium text-gray-700 dark:text-gray-300">Extracted Data</h3>
+              <div className="flex items-center gap-3">
+                <h3 className="font-medium text-gray-700 dark:text-gray-300">Extracted Data</h3>
+                {hasAnyLikelihoods && (
+                  <div className="flex items-center gap-2 text-[10px] text-gray-400 dark:text-gray-500">
+                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" /> high</span>
+                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" /> medium</span>
+                    <span className="flex items-center gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" /> low</span>
+                  </div>
+                )}
+              </div>
               <Button variant="outline" size="sm" onClick={copyToClipboard}>
                 {copied ? (
                   <>
@@ -365,37 +393,42 @@ export function DocumentDetailModal({ document, packet, onClose }) {
                     : "No data extracted"}
                 </p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {sortedFields.map(([key, value]) => {
                     const confidence = likelihoods[key];
-                    const hasConfidence = confidence !== undefined;
+                    const hasConfidence = confidence !== undefined && confidence !== null;
                     const isCorrected = editedFields && key in editedFields;
+                    
+                    // Subtle left-border color when confidence is available
+                    const borderClass = hasConfidence && !isCorrected
+                      ? `border-l-2 ${getConfidenceBorder(confidence)}`
+                      : isCorrected ? "border-l-2 border-l-blue-400 dark:border-l-blue-500" : "border-l-2 border-l-transparent";
                     
                     return (
                       <div 
                         key={key} 
-                        className={`flex items-start justify-between py-2 px-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-600 ${
-                          isCorrected ? "bg-blue-50 dark:bg-blue-900/20 ring-1 ring-blue-200 dark:ring-blue-800" : "bg-gray-50 dark:bg-gray-700"
+                        className={`py-2 px-3 rounded-r-lg hover:bg-gray-100 dark:hover:bg-gray-600 ${borderClass} ${
+                          isCorrected ? "bg-blue-50 dark:bg-blue-900/20" : "bg-gray-50 dark:bg-gray-700/50"
                         }`}
                       >
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                        <div className="flex items-center justify-between gap-2 mb-0.5">
+                          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
                             {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
                             {isCorrected && (
                               <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded">corrected</span>
                             )}
                           </p>
-                          <p className={`text-sm break-words whitespace-pre-wrap ${
-                            isCorrected ? "text-blue-700 dark:text-blue-300 font-medium" : "text-gray-900 dark:text-gray-100"
-                          }`}>
-                            {formatValue(value)}
-                          </p>
+                          {hasConfidence && !isCorrected && (
+                            <span className={`text-[10px] tabular-nums font-medium shrink-0 ${getConfidenceColor(confidence)}`}>
+                              {Math.round(confidence * 100)}%
+                            </span>
+                          )}
                         </div>
-                        {!isCorrected && hasConfidence && (
-                          <span className={`text-xs font-medium ml-2 shrink-0 ${getConfidenceColor(confidence)}`}>
-                            {Math.round(confidence * 100)}%
-                          </span>
-                        )}
+                        <p className={`text-sm break-words whitespace-pre-wrap ${
+                          isCorrected ? "text-blue-700 dark:text-blue-300 font-medium" : "text-gray-900 dark:text-gray-100"
+                        }`}>
+                          {formatValue(value)}
+                        </p>
                       </div>
                     );
                   })}
