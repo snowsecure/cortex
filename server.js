@@ -14,6 +14,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import * as db from "./db/database.js";
+import logger, { requestLogger } from "./lib/logger.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -206,16 +207,10 @@ app.use("/api/debug/", (req, res, next) => {
 // Parse JSON bodies (with increased limit for base64 documents)
 app.use(express.json({ limit: "100mb" }));
 
-// Request logging (no headers/body to avoid logging Api-Key)
+// Structured request logging with request IDs (skips health checks to reduce noise)
 app.use((req, res, next) => {
-  const start = Date.now();
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (!req.path.includes("/health")) {
-      console.log(`${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
-    }
-  });
-  next();
+  if (req.path.includes("/health")) return next();
+  requestLogger(req, res, next);
 });
 
 // ============================================================================
@@ -318,6 +313,22 @@ app.post("/api/sessions/:id/close", (req, res) => {
     res.json(session);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Beacon sync — best-effort endpoint called from beforeunload.
+// navigator.sendBeacon sends a POST with text/plain body.
+app.post("/api/sessions/:id/beacon-sync", express.text({ type: "*/*" }), (req, res) => {
+  try {
+    const data = JSON.parse(req.body);
+    const packetIds = data?.packetIds;
+    if (Array.isArray(packetIds)) {
+      logger.info({ sessionId: req.params.id, packetIds }, "Beacon sync received");
+    }
+    // Acknowledge immediately — the browser is closing and won't read the response.
+    res.status(204).end();
+  } catch {
+    res.status(204).end();
   }
 });
 
@@ -1327,7 +1338,7 @@ if (isProduction) {
 // START SERVER
 // ============================================================================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   const dbPath = process.env.DB_PATH || "./data";
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -1341,4 +1352,44 @@ app.listen(PORT, () => {
 ║  Database:      SQLite (${dbPath}/sail-idp.db)${" ".repeat(Math.max(0, 19 - dbPath.length))}║
 ╚══════════════════════════════════════════════════════════════╝
   `);
+
+  // --- Startup tasks ---
+  db.checkIntegrity();
+  db.resetZombiePackets();
+  db.createBackup().catch(err => logger.warn({ err }, "Startup backup failed"));
+
+  // Schedule daily backup (every 24h)
+  setInterval(() => {
+    db.createBackup().catch(err => logger.warn({ err }, "Scheduled backup failed"));
+  }, 24 * 60 * 60 * 1000);
 });
+
+// ============================================================================
+// GRACEFUL SHUTDOWN
+// ============================================================================
+
+let shuttingDown = false;
+
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, `${signal} received — shutting down gracefully`);
+
+  // Stop accepting new connections
+  server.close(() => {
+    logger.info("HTTP server closed");
+    try { db.default.close(); } catch (_) {}
+    logger.info("Database closed");
+    process.exit(0);
+  });
+
+  // Force exit if draining takes too long (10s)
+  setTimeout(() => {
+    logger.warn("Forceful shutdown after timeout");
+    try { db.default.close(); } catch (_) {}
+    process.exit(1);
+  }, 10000);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));

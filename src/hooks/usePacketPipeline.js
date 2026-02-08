@@ -20,6 +20,7 @@ import {
   annotateWithSourceQuotes,
   annotateWithReasoningPrompts,
   getArrayFieldKeys,
+  schemaFingerprint,
 } from "../schemas/index";
 
 /**
@@ -299,6 +300,9 @@ export function usePacketPipeline() {
           
           documentResult.extraction = extractionResponse;
           
+          // Stamp with schema version fingerprint for future change detection
+          documentResult.schemaFingerprint = schemaFingerprint(category) || null;
+
           // Track extraction usage — use the actual model/consensus used for this doc
           const docPages = split.pages?.length || 1;
           documentResult.usage = {
@@ -578,6 +582,7 @@ export function usePacketPipeline() {
       id: document.id,
       extraction: extractionResponse,
       extractionConfidence,
+      schemaFingerprint: schemaFingerprint(category) || null,
       status: reviewCheck.needsReview ? "needs_review" : "completed",
       needsReview: reviewCheck.needsReview,
       reviewReasons: reviewCheck.reasons,

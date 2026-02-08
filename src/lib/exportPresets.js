@@ -42,16 +42,34 @@ function flattenObject(obj, prefix = "") {
   return result;
 }
 
+/**
+ * Escape a single CSV cell value.
+ * - Handles null/undefined
+ * - Escapes double-quote characters by doubling them
+ * - Wraps in quotes if the value contains comma, quote, newline, tab, or semicolon
+ * - Prevents CSV formula injection by prefixing dangerous leading characters
+ */
+function escapeCSVCell(value) {
+  if (value == null) return "";
+  let s = String(value);
+  // CSV injection prevention: prefix =, +, -, @ with a single quote so
+  // spreadsheet applications don't interpret the cell as a formula.
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = "'" + s;
+  }
+  // Always double internal quotes
+  s = s.replace(/"/g, '""');
+  // Wrap in quotes if the value contains any delimiter-like characters
+  if (/[,"\n\r\t;]/.test(s)) {
+    return `"${s}"`;
+  }
+  return s;
+}
+
 function convertToCSV(rows, columns) {
-  const header = columns.join(",");
+  const header = columns.map(escapeCSVCell).join(",");
   const lines = rows.map(row =>
-    columns.map(col => {
-      const v = row[col];
-      if (v == null) return "";
-      const s = String(v);
-      if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
-      return s;
-    }).join(",")
+    columns.map(col => escapeCSVCell(row[col])).join(",")
   );
   return [header, ...lines].join("\n");
 }

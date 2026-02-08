@@ -9,18 +9,36 @@ import { getExtractionData } from "./utils";
 // For local dev the Vite proxy forwards /api → localhost:3005 automatically.
 export const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
+/** Default timeout for normal API requests (30 seconds) */
+const DEFAULT_TIMEOUT_MS = 30_000;
+/** Extended timeout for extraction/split endpoints (10 minutes) */
+const LONG_TIMEOUT_MS = 600_000;
+
 /**
- * Generic fetch wrapper with error handling
+ * Generic fetch wrapper with error handling and timeouts.
+ * All requests get a default 30s timeout; extraction endpoints get 10 minutes.
+ * Pass `options.timeoutMs` to override.
  */
 async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
+
+  // Determine timeout: explicit override > endpoint-based default
+  const isLongEndpoint = /\/(extract|split|classify|fill)/i.test(endpoint);
+  const timeoutMs = options.timeoutMs ?? (isLongEndpoint ? LONG_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
   
+  // Merge signals: user-provided signal + timeout signal
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
+
   const config = {
     headers: {
       "Content-Type": "application/json",
       ...options.headers,
     },
     ...options,
+    signal,
   };
   
   if (options.body && typeof options.body === "object") {
@@ -42,6 +60,10 @@ async function apiRequest(endpoint, options = {}) {
     
     return await response.json();
   } catch (error) {
+    // Make timeout errors more user-friendly
+    if (error.name === "TimeoutError") {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s (${endpoint})`);
+    }
     console.error(`API Error [${endpoint}]:`, error);
     throw error;
   }

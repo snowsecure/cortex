@@ -920,6 +920,39 @@ export function useBatchQueue() {
     };
   }, []);
   
+  // --- Data loss prevention ---
+  // Warn the user and attempt a final sync if they try to close while processing.
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      const s = stateRef.current;
+      const isActive = s.batchStatus === BatchStatus.PROCESSING || s.processing.size > 0;
+      const hasUnsyncedWork = s.packets.size > 0 && s.dbConnected && s.sessionId;
+      if (isActive || hasUnsyncedWork) {
+        // Attempt a best-effort sync via sendBeacon (fires even during unload)
+        try {
+          const unsynced = [];
+          for (const [id, pkt] of s.packets) {
+            if (pkt.status === "completed" || pkt.status === "needs_review") {
+              unsynced.push(id);
+            }
+          }
+          if (unsynced.length > 0) {
+            navigator.sendBeacon?.(
+              `/api/sessions/${s.sessionId}/beacon-sync`,
+              JSON.stringify({ packetIds: unsynced })
+            );
+          }
+        } catch (_) { /* best effort */ }
+      }
+      if (isActive) {
+        e.preventDefault();
+        e.returnValue = "Processing is in progress. Leaving may result in data loss.";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
+
   // Keep stateRef in sync — synchronous (not useEffect!) so that
   // runProcessingLoop / processNextPacket always see the latest state
   // immediately after dispatch, without waiting for a React re-render.
@@ -1298,9 +1331,21 @@ export function useBatchQueue() {
   }, [runProcessingLoop, otherTabProcessing, broadcastProcessingState]);
 
   /**
-   * Add packets to the queue
+   * Add packets to the queue.
+   * Includes a memory heuristic warning for very large batches.
    */
   const addPackets = useCallback(async (files) => {
+    // Memory heuristic: base64 is ~1.33x the file size.
+    // Warn when the cumulative upload could exceed ~500 MB of browser memory.
+    const MEMORY_WARN_BYTES = 500 * 1024 * 1024;
+    const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
+    if (totalBytes > MEMORY_WARN_BYTES) {
+      console.warn(
+        `[Memory] Large batch: ${files.length} files totaling ${Math.round(totalBytes / 1024 / 1024)} MB. ` +
+        `Browser memory usage may spike. Consider uploading via the server endpoint for very large batches.`
+      );
+    }
+
     dispatch({ type: ActionTypes.ADD_PACKETS, files });
     
     // Sync to database if connected.

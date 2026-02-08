@@ -11,4 +11,17 @@ export default defineConfig({
       '/health': 'http://localhost:3005',
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split large vendor libraries into their own chunks
+          react: ['react', 'react-dom'],
+          lucide: ['lucide-react'],
+        },
+      },
+    },
+    // Warn at 500 KB instead of the default 500 KB (just making it explicit)
+    chunkSizeWarningLimit: 500,
+  },
 })

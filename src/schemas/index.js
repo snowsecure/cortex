@@ -1134,4 +1134,44 @@ export function getArrayFieldKeys(schema) {
   return keys;
 }
 
+// ============================================================================
+// SCHEMA VERSIONING
+// ============================================================================
+
+/**
+ * Schema version string. Bump this whenever any schema definition changes so
+ * that documents extracted under an older version can be flagged for re-extraction.
+ * Format: "MAJOR.MINOR" — MAJOR for breaking changes, MINOR for additive changes.
+ */
+export const SCHEMA_VERSION = "1.0";
+
+/**
+ * Generate a lightweight fingerprint of a schema by hashing its property keys.
+ * This lets us detect field additions/removals without a full deep compare.
+ */
+export function schemaFingerprint(schemaId) {
+  const entry = schemas[schemaId];
+  if (!entry?.schema?.properties) return null;
+  const keys = Object.keys(entry.schema.properties).sort().join(",");
+  // Simple djb2 hash — not cryptographic, just a change-detection fingerprint
+  let hash = 5381;
+  for (let i = 0; i < keys.length; i++) {
+    hash = ((hash << 5) + hash + keys.charCodeAt(i)) & 0xffffffff;
+  }
+  return `${SCHEMA_VERSION}:${(hash >>> 0).toString(36)}`;
+}
+
+/**
+ * Check whether a document's stored schema fingerprint matches the current schema.
+ * Returns { match: boolean, current: string, stored: string | null }.
+ */
+export function checkSchemaMatch(schemaId, storedFingerprint) {
+  const current = schemaFingerprint(schemaId);
+  return {
+    match: current === storedFingerprint,
+    current,
+    stored: storedFingerprint || null,
+  };
+}
+
 export default schemas;

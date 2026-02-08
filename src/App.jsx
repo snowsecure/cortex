@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { BatchFileUpload } from "./components/BatchFileUpload";
 import { PacketResultsView } from "./components/PacketResultsView";
 import { ReviewQueue } from "./components/ReviewQueue";
@@ -7,12 +7,23 @@ import { ConfirmDialog } from "./components/ui/confirm-dialog";
 import { ExportModal } from "./components/ExportModal";
 import { HistoryLog, HistoryButton } from "./components/HistoryLog";
 import { DocumentDetailModal } from "./components/DocumentDetailModal";
-import { AdminDashboard } from "./components/AdminDashboard";
-import { HelpDocumentation } from "./components/HelpDocumentation";
 import { ProcessingConfigOverride } from "./components/RetabSettings";
-import { ExportPage } from "./components/ExportPage";
-import { SchemaExplorer } from "./components/SchemaExplorer";
 import OnboardingModal from "./components/OnboardingModal";
+import { ErrorBoundary } from "./components/ui/error-boundary";
+
+// --- Lazy-loaded heavy components (not needed on initial render) ---
+const AdminDashboard = lazy(() =>
+  import("./components/AdminDashboard").then(m => ({ default: m.AdminDashboard }))
+);
+const HelpDocumentation = lazy(() =>
+  import("./components/HelpDocumentation").then(m => ({ default: m.HelpDocumentation }))
+);
+const ExportPage = lazy(() =>
+  import("./components/ExportPage").then(m => ({ default: m.ExportPage }))
+);
+const SchemaExplorer = lazy(() =>
+  import("./components/SchemaExplorer").then(m => ({ default: m.SchemaExplorer }))
+);
 import { RETAB_MODELS } from "./lib/retabConfig";
 import { useBatchQueue, BatchStatus } from "./hooks/useBatchQueue";
 import { useProcessingHistory } from "./hooks/useProcessingHistory";
@@ -63,6 +74,18 @@ import {
   Sun,
 } from "lucide-react";
 import { useDarkMode } from "./hooks/useDarkMode";
+
+/** Lightweight spinner shown while lazy components load */
+function LazyFallback({ name }) {
+  return (
+    <div className="flex-1 flex items-center justify-center p-8 text-gray-400 dark:text-gray-500">
+      <div className="text-center space-y-2">
+        <div className="animate-spin h-6 w-6 border-2 border-gray-300 border-t-gray-600 dark:border-gray-600 dark:border-t-gray-300 rounded-full mx-auto" />
+        {name && <p className="text-sm">Loading {name}…</p>}
+      </div>
+    </div>
+  );
+}
 
 /**
  * View modes for the application
@@ -1054,6 +1077,7 @@ function App() {
 
         {/* Processing/Results view */}
         {isSetupComplete && (viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS) && (
+          <ErrorBoundary name="Results">
           <div className="flex-1 flex flex-col p-4 max-w-7xl mx-auto w-full min-h-0">
             {/* Toolbar */}
             <div className="mb-3 shrink-0">
@@ -1219,63 +1243,80 @@ function App() {
               </div>
             )}
           </div>
+          </ErrorBoundary>
         )}
 
         {/* Review queue view */}
         {isSetupComplete && viewMode === ViewMode.REVIEW && (
-          <div className="flex-1 min-h-0">
-            <ReviewQueue
-              packets={packets}
-              onApprove={handleApproveReview}
-              onClose={handleCloseReview}
-            />
-          </div>
+          <ErrorBoundary name="Review">
+            <div className="flex-1 min-h-0">
+              <ReviewQueue
+                packets={packets}
+                onApprove={handleApproveReview}
+                onClose={handleCloseReview}
+              />
+            </div>
+          </ErrorBoundary>
         )}
 
         {/* Export view */}
         {isSetupComplete && viewMode === ViewMode.EXPORT && (
-          <ExportPage
-            packets={packets}
-            stats={stats}
-          />
+          <ErrorBoundary name="Export">
+            <Suspense fallback={<LazyFallback name="Export" />}>
+              <ExportPage
+                packets={packets}
+                stats={stats}
+              />
+            </Suspense>
+          </ErrorBoundary>
         )}
 
         {/* History view */}
         {isSetupComplete && viewMode === ViewMode.HISTORY && (
-          <div className="flex-1 min-h-0 max-w-4xl mx-auto w-full">
-            <Card className="h-full flex flex-col m-4">
-              <HistoryLog
-                history={history}
-                onDelete={removeFromHistory}
-                onClearAll={clearHistory}
-                onClose={handleCloseHistory}
-              />
-            </Card>
-          </div>
+          <ErrorBoundary name="History">
+            <div className="flex-1 min-h-0 max-w-4xl mx-auto w-full">
+              <Card className="h-full flex flex-col m-4">
+                <HistoryLog
+                  history={history}
+                  onDelete={removeFromHistory}
+                  onClearAll={clearHistory}
+                  onClose={handleCloseHistory}
+                />
+              </Card>
+            </div>
+          </ErrorBoundary>
         )}
 
         {/* Admin Dashboard view */}
         {isSetupComplete && viewMode === ViewMode.ADMIN && (
-          <div className="flex-1 min-h-0">
-            <AdminDashboard
-              packets={packets}
-              stats={stats}
-              usage={usage}
-              retabConfig={retabConfig}
-              history={history}
-              dbConnected={dbConnected || healthStatus.database === 'online'}
-              onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.DASHBOARD)}
-            />
-          </div>
+          <ErrorBoundary name="Admin Dashboard">
+            <Suspense fallback={<LazyFallback name="Admin Dashboard" />}>
+              <div className="flex-1 min-h-0">
+                <AdminDashboard
+                  packets={packets}
+                  stats={stats}
+                  usage={usage}
+                  retabConfig={retabConfig}
+                  history={history}
+                  dbConnected={dbConnected || healthStatus.database === 'online'}
+                  onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.DASHBOARD)}
+                />
+              </div>
+            </Suspense>
+          </ErrorBoundary>
         )}
 
         {/* Help Documentation view */}
         {viewMode === ViewMode.HELP && (
-          <div className="flex-1 min-h-0">
-            <HelpDocumentation
-              onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.DASHBOARD)}
-            />
-          </div>
+          <ErrorBoundary name="Help">
+            <Suspense fallback={<LazyFallback name="Help" />}>
+              <div className="flex-1 min-h-0">
+                <HelpDocumentation
+                  onClose={() => setViewMode(hasPackets ? ViewMode.RESULTS : ViewMode.DASHBOARD)}
+                />
+              </div>
+            </Suspense>
+          </ErrorBoundary>
         )}
       </main>
 
@@ -1386,7 +1427,11 @@ function App() {
       {showSchemaExplorer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-lg shadow-xl w-[95vw] max-w-6xl h-[90vh] flex flex-col overflow-hidden">
-            <SchemaExplorer onClose={() => setShowSchemaExplorer(false)} />
+            <ErrorBoundary name="Schema Explorer">
+              <Suspense fallback={<LazyFallback name="Schema Explorer" />}>
+                <SchemaExplorer onClose={() => setShowSchemaExplorer(false)} />
+              </Suspense>
+            </ErrorBoundary>
           </div>
         </div>
       )}

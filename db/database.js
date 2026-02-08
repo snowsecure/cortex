@@ -203,12 +203,18 @@ export function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_packets_session ON packets(session_id);
     CREATE INDEX IF NOT EXISTS idx_packets_status ON packets(status);
     CREATE INDEX IF NOT EXISTS idx_packets_completed ON packets(completed_at);
+    CREATE INDEX IF NOT EXISTS idx_packets_session_status ON packets(session_id, status);
+    CREATE INDEX IF NOT EXISTS idx_packets_created ON packets(created_at);
     CREATE INDEX IF NOT EXISTS idx_documents_packet ON documents(packet_id);
     CREATE INDEX IF NOT EXISTS idx_documents_session ON documents(session_id);
     CREATE INDEX IF NOT EXISTS idx_documents_needs_review ON documents(needs_review);
     CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
     CREATE INDEX IF NOT EXISTS idx_documents_packet_status ON documents(packet_id, status);
-    CREATE INDEX IF NOT EXISTS idx_history_completed ON history(completed_at);
+    CREATE INDEX IF NOT EXISTS idx_documents_session_review ON documents(session_id, needs_review);
+    CREATE INDEX IF NOT EXISTS idx_documents_reviewed ON documents(reviewed_at);
+    CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at);
+    CREATE INDEX IF NOT EXISTS idx_history_completed ON history(completed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_history_session ON history(session_id);
   `);
 
   // Migration: add created_by column to all main tables (must run AFTER all tables are created)
@@ -1084,6 +1090,82 @@ export const clearAllData = db.transaction(() => {
   console.log("[DB] All data cleared");
   return { success: true, tablesCleared: tables };
 });
+
+// ============================================================================
+// INTEGRITY & BACKUP
+// ============================================================================
+
+/**
+ * Run PRAGMA integrity_check on startup. Returns true if the database is OK.
+ */
+export function checkIntegrity() {
+  try {
+    const result = db.pragma("integrity_check");
+    const ok = result?.[0]?.integrity_check === "ok";
+    if (!ok) console.error("[DB] Integrity check FAILED:", result);
+    else console.log("[DB] Integrity check passed");
+    return ok;
+  } catch (err) {
+    console.error("[DB] Integrity check error:", err.message);
+    return false;
+  }
+}
+
+/**
+ * Create a backup of the database using SQLite's backup API.
+ * Keeps the last `keep` copies (rotated by filename).
+ * Returns a Promise that resolves to the backup file path (or null on failure).
+ */
+export async function createBackup(keep = 7) {
+  const backupDir = path.join(DB_DIR, "backups");
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const backupFile = path.join(backupDir, `sail-idp-${timestamp}.db`);
+
+  try {
+    await db.backup(backupFile);
+    console.log(`[DB] Backup created: ${backupFile}`);
+
+    // Rotate: remove oldest backups beyond `keep`
+    const files = fs.readdirSync(backupDir)
+      .filter(f => f.startsWith("sail-idp-") && f.endsWith(".db"))
+      .sort()
+      .reverse();
+    for (let i = keep; i < files.length; i++) {
+      const old = path.join(backupDir, files[i]);
+      fs.unlinkSync(old);
+      console.log(`[DB] Rotated old backup: ${files[i]}`);
+    }
+    return backupFile;
+  } catch (err) {
+    console.error("[DB] Backup failed:", err.message);
+    return null;
+  }
+}
+
+// ============================================================================
+// ZOMBIE PACKET RECOVERY
+// ============================================================================
+
+/**
+ * Reset packets that are stuck in 'processing' or 'splitting'/'extracting' status.
+ * These are zombies from a previous server/browser crash. Re-queue them so they
+ * can be retried on the next processing run.
+ */
+export function resetZombiePackets() {
+  const zombieStatuses = ["processing", "splitting", "classifying", "extracting"];
+  const placeholders = zombieStatuses.map(() => "?").join(",");
+  const result = db.prepare(`
+    UPDATE packets SET status = 'queued', started_at = NULL
+    WHERE status IN (${placeholders})
+  `).run(...zombieStatuses);
+
+  if (result.changes > 0) {
+    console.log(`[DB] Reset ${result.changes} zombie packet(s) to 'queued'`);
+  }
+  return result.changes;
+}
 
 // ============================================================================
 // PROCESS EXIT HANDLERS
