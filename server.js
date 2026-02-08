@@ -171,7 +171,7 @@ app.use(
   })
 );
 
-// Rate limiting: general API
+// Rate limiting: general API (internal endpoints)
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: isProduction ? 120 : 300,
@@ -181,10 +181,11 @@ const apiLimiter = rateLimit({
 });
 app.use("/api/", apiLimiter);
 
-// Stricter limit for proxy (document) and debug endpoints
+// Retab proxy limit — raised to allow high-concurrency batch processing.
+// Retab's own API limits are the real ceiling; this just prevents runaway loops.
 const proxyLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: isProduction ? 60 : 120,
+  max: isProduction ? 300 : 600,
   message: { error: "Too many requests" },
   standardHeaders: true,
   legacyHeaders: false,

@@ -30,10 +30,10 @@ import {
   getActivePreset,
 } from "../lib/retabConfig";
 
-function SettingSection({ icon: Icon, title, children }) {
+function SettingSection({ icon: Icon, title, tooltip, children }) {
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+      <div className="flex items-center gap-2 text-sm font-medium text-gray-700" title={tooltip}>
         {Icon && <Icon className="h-4 w-4 text-gray-500" />}
         {title}
       </div>
@@ -165,12 +165,12 @@ function ReviewThresholdSelector({ value, onChange }) {
 
 function ConcurrencySelector({ value, onChange }) {
   return (
-    <SettingSection icon={Settings} title="Concurrency">
+    <SettingSection icon={Settings} title="Concurrency" tooltip="Files processed simultaneously. Higher = faster but uses more API quota. Reduce if you see rate-limit errors.">
       <div className="flex items-center gap-3">
         <input
           type="range"
           min={1}
-          max={10}
+          max={20}
           value={value}
           onChange={(e) => onChange("concurrency", parseInt(e.target.value, 10))}
           className="flex-1 h-2 rounded-full appearance-none bg-gray-200 accent-[#9e2339]"
@@ -584,7 +584,7 @@ export function ProcessingConfigOverride({ config, onChange, globalConfig }) {
               </select>
             </div>
             <div className="space-y-2">
-              <div className="flex items-center gap-1.5 text-gray-400 dark:text-gray-500 cursor-help" title="Number of documents to process in parallel. Higher = faster but uses more API quota.">
+              <div className="flex items-center gap-1.5 text-gray-400 dark:text-gray-500 cursor-help" title="Files processed simultaneously. Higher = faster but uses more API quota. Reduce if you see rate-limit errors.">
                 <Settings className="h-3.5 w-3.5" />
                 <p className="text-xs font-medium">Concurrency</p>
               </div>
@@ -592,12 +592,12 @@ export function ProcessingConfigOverride({ config, onChange, globalConfig }) {
                 <input
                   type="range"
                   min={1}
-                  max={10}
+                  max={20}
                   value={currentConfig.concurrency ?? 5}
                   onChange={(e) => handleCustomChange("concurrency", parseInt(e.target.value, 10))}
                   className="flex-1 h-2 rounded-full appearance-none bg-gray-200 dark:bg-gray-600 accent-[#9e2339]"
                 />
-                <span className="text-sm font-medium text-gray-600 dark:text-gray-300 w-4">{currentConfig.concurrency ?? 5}</span>
+                <span className="text-sm font-medium text-gray-600 dark:text-gray-300 w-6">{currentConfig.concurrency ?? 5}</span>
               </div>
             </div>
           </div>

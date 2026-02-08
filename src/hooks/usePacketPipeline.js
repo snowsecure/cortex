@@ -42,9 +42,12 @@ export const PipelineStatus = {
 };
 
 /**
- * Parallel extraction batch size
+ * Derive parallel extraction batch size from concurrency setting.
+ * Scales with the user's concurrency preference (min 3, max 10).
  */
-const EXTRACTION_BATCH_SIZE = 5;
+function getExtractionBatchSize(concurrency = 5) {
+  return Math.max(3, Math.min(concurrency, 10));
+}
 
 /**
  * Hook for processing a single document packet through the pipeline
@@ -75,6 +78,7 @@ export function usePacketPipeline() {
       sourceQuotes: retabConfig.sourceQuotes || false,
       reasoningPrompts: retabConfig.reasoningPrompts || false,
       costOptimize: retabConfig.costOptimize ?? DEFAULT_CONFIG.costOptimize,
+      concurrency: retabConfig.concurrency ?? DEFAULT_CONFIG.concurrency ?? 5,
     };
     
     // Get model info for credit calculation (user-selected model — per-doc overrides tracked individually)
@@ -243,10 +247,11 @@ export function usePacketPipeline() {
           if (config.reasoningPrompts) schema = annotateWithReasoningPrompts(schema);
           const chunkingKeysArray = config.chunkingKeys ? getArrayFieldKeys(schema) : null;
 
-          // Retry extraction on transient network/server errors
-          const DOC_MAX_RETRIES = 2;
-          const DOC_RETRY_DELAYS = [2000, 4000];
-          const RETRIABLE_PATTERNS = /fetch failed|network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|50[0-9]|529/i;
+          // Retry extraction on transient network/server errors (including 429 rate limits)
+          const DOC_MAX_RETRIES = 3;
+          const DOC_RETRY_DELAYS = [2000, 4000, 8000];
+          const RETRIABLE_PATTERNS = /fetch failed|network|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|429|50[0-9]|529/i;
+          const RATE_LIMIT_PATTERN = /429/;
 
           let extractionResponse;
           for (let attempt = 0; attempt <= DOC_MAX_RETRIES; attempt++) {
@@ -270,7 +275,20 @@ export function usePacketPipeline() {
                 throw retryErr;
               }
               const isRetriable = RETRIABLE_PATTERNS.test(retryErr.message);
-              if (isRetriable && attempt < DOC_MAX_RETRIES) {
+              const isRateLimited = RATE_LIMIT_PATTERN.test(retryErr.message);
+
+              if (isRateLimited) {
+                // Longer backoff for rate limits — 5s base, doubling each retry
+                const rateLimitDelay = 5000 * Math.pow(2, attempt);
+                console.warn(
+                  `⚠️ Rate limited (429) on document ${index + 1}, attempt ${attempt + 1}/${DOC_MAX_RETRIES + 1}. ` +
+                  `Waiting ${rateLimitDelay / 1000}s before retry. Consider lowering concurrency in Settings if this persists.`
+                );
+                if (attempt < DOC_MAX_RETRIES) {
+                  await new Promise(r => setTimeout(r, rateLimitDelay));
+                  continue;
+                }
+              } else if (isRetriable && attempt < DOC_MAX_RETRIES) {
                 console.warn(`Document ${index + 1} extraction attempt ${attempt + 1} failed (${retryErr.message}), retrying in ${DOC_RETRY_DELAYS[attempt]}ms...`);
                 await new Promise(r => setTimeout(r, DOC_RETRY_DELAYS[attempt]));
                 continue;
@@ -321,10 +339,11 @@ export function usePacketPipeline() {
         return documentResult;
       };
 
-      // Process in parallel batches
+      // Process in parallel batches — batch size scales with concurrency setting
+      const batchSize = getExtractionBatchSize(config.concurrency);
       let processedCount = 0;
-      for (let i = 0; i < splits.length; i += EXTRACTION_BATCH_SIZE) {
-        const batch = splits.slice(i, i + EXTRACTION_BATCH_SIZE);
+      for (let i = 0; i < splits.length; i += batchSize) {
+        const batch = splits.slice(i, i + batchSize);
         const batchPromises = batch.map((split, batchIndex) => 
           extractSingleDoc(split, i + batchIndex)
         );

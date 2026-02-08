@@ -13,6 +13,8 @@ import {
   Trash2,
   Filter,
   User,
+  ShieldCheck,
+  PenLine,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -21,6 +23,24 @@ import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
 import { RETAB_MODELS } from "../lib/retabConfig";
+
+/**
+ * Format a timestamp into a short relative string (e.g., "2m ago", "3h ago", "Feb 7")
+ */
+function timeAgo(timestamp) {
+  if (!timestamp) return null;
+  const now = Date.now();
+  const then = new Date(timestamp).getTime();
+  const diffSec = Math.floor((now - then) / 1000);
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return new Date(timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 
 /**
  * Get status badge variant
@@ -67,7 +87,7 @@ function getStatusText(status) {
     case "completed":
       return "Completed";
     case "reviewed":
-      return "Reviewed";
+      return "Sealed";
     case PacketStatus.NEEDS_REVIEW:
     case "needs_review":
       return "Needs Review";
@@ -191,7 +211,7 @@ function getPriorityFields(category) {
  */
 function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expanded, onToggle }) {
   // Extract data from Retab API response (with corrections merged in)
-  const { data, likelihoods, editedFields } = getMergedExtractionData(document);
+  const { data, likelihoods, editedFields, originalData } = getMergedExtractionData(document);
   
   // Get display name - prefer split type, fallback to category
   const splitType = document.splitType || document.classification?.splitType;
@@ -313,9 +333,15 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
                 {document.reviewReasons[0]}
               </p>
             )}
-            {document.status === "reviewed" && (document.reviewedBy || document.reviewed_by) && (
-              <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
-                Reviewed by {document.reviewedBy || document.reviewed_by}
+            {document.status === "reviewed" && (
+              <p className="text-xs text-green-600 dark:text-green-400 mt-0.5 flex items-center gap-1">
+                <ShieldCheck className="h-3 w-3 shrink-0" />
+                <span>
+                  Sealed{(document.reviewedBy || document.reviewed_by) ? ` by ${document.reviewedBy || document.reviewed_by}` : ""}
+                  {(document.reviewedAt || document.reviewed_at) && (
+                    <span className="text-green-500/70 dark:text-green-400/60"> · {timeAgo(document.reviewedAt || document.reviewed_at)}</span>
+                  )}
+                </span>
               </p>
             )}
           </div>
@@ -323,8 +349,9 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
         
         <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
           {correctedCount > 0 && (
-            <Badge variant="default" className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-              {correctedCount} corrected
+            <Badge variant="default" className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 flex items-center gap-1">
+              <PenLine className="h-3 w-3" />
+              {correctedCount} edited by reviewer
             </Badge>
           )}
           {lowConfCount > 0 && (
@@ -425,12 +452,19 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
               {extractedFields.slice(0, 12).map(({ key, value, likelihood }) => {
                 const isCorrected = editedFields && key in editedFields;
+                const originalValue = isCorrected ? originalData?.[key] : null;
+                const valueChanged = isCorrected && JSON.stringify(originalValue) !== JSON.stringify(value);
                 return (
-                <div key={key} className="flex flex-col">
+                <div key={key} className={cn(
+                  "flex flex-col rounded-md px-2 py-1 -mx-1",
+                  isCorrected && "bg-blue-50/70 dark:bg-blue-900/15 border border-blue-200/60 dark:border-blue-800/40"
+                )}>
                   <span className="text-xs text-gray-500 dark:text-neutral-400 flex items-center gap-1">
                     {formatFieldName(key)}
                     {isCorrected && (
-                      <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">corrected</span>
+                      <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium inline-flex items-center gap-0.5">
+                        <PenLine className="h-2.5 w-2.5" /> edited
+                      </span>
                     )}
                     {!isCorrected && likelihood !== undefined && (
                       <span className={cn(
@@ -449,6 +483,13 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
                   )} title={String(value)}>
                     {formatValue(value)}
                   </span>
+                  {/* Show original AI value when human changed it */}
+                  {valueChanged && originalValue != null && originalValue !== "" && (
+                    <span className="text-[10px] text-gray-400 dark:text-neutral-500 truncate mt-0.5" title={`AI extracted: ${String(originalValue)}`}>
+                      <span className="line-through">{formatValue(originalValue)}</span>
+                      <span className="text-blue-500 dark:text-blue-400 ml-1">→ reviewer</span>
+                    </span>
+                  )}
                 </div>
                 );
               })}

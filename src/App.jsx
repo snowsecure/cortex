@@ -658,36 +658,66 @@ function App() {
     setViewMode(ViewMode.RESULTS);
   }, []);
 
-  // Handle approve review item - apply edits and mark as reviewed
+  // Handle approve review item - apply edits, verify persistence, and mark as reviewed
   const handleApproveReview = useCallback(async (document, packet, reviewData) => {
-    try {
-      // Save to database
-      await api.reviewDocument(document.id, {
-        status: "reviewed",
-        editedFields: reviewData.editedFields || {},
-        reviewerNotes: reviewData.reviewerNotes || null,
-        reviewedBy: getUsername() || "reviewer",
-      });
-      
-      // Update local state using UPDATE_DOCUMENT action
-      updateDocument(packet.id, document.id, {
-        status: "reviewed",
-        needsReview: false,
-        editedFields: reviewData.editedFields || {},
-        reviewerNotes: reviewData.reviewerNotes || null,
-        reviewedAt: new Date().toISOString(),
-        reviewedBy: getUsername() || "reviewer",
-      });
-      
-      toast.success("Review saved");
-      console.log("Review saved:", document.id, {
-        editedFields: reviewData.editedFields,
-        status: "reviewed",
-      });
-    } catch (error) {
-      console.error("Failed to save review:", error);
-      toast.error("Failed to save review: " + error.message);
+    const sentEdits = reviewData.editedFields || {};
+    const editedCount = Object.keys(sentEdits).length;
+    const reviewer = getUsername() || "reviewer";
+    const docName = document.splitType || document.classification?.category || "Document";
+
+    // Save to database — the server returns the saved document for verification
+    const savedDoc = await api.reviewDocument(document.id, {
+      status: "reviewed",
+      editedFields: sentEdits,
+      reviewerNotes: reviewData.reviewerNotes || null,
+      reviewedBy: reviewer,
+    });
+
+    // --- Verify the save was persisted correctly ---
+    const savedEdits = savedDoc?.edited_fields
+      ? (typeof savedDoc.edited_fields === "string" ? JSON.parse(savedDoc.edited_fields) : savedDoc.edited_fields)
+      : {};
+    const savedStatus = savedDoc?.status;
+
+    // Check status was set
+    if (savedStatus !== "reviewed") {
+      throw new Error(`Server returned status "${savedStatus}" instead of "reviewed"`);
     }
+
+    // Check edited fields round-tripped correctly (key count + value equality)
+    if (editedCount > 0) {
+      const savedKeys = Object.keys(savedEdits);
+      if (savedKeys.length !== editedCount) {
+        throw new Error(`Sent ${editedCount} field edits but server persisted ${savedKeys.length}`);
+      }
+      for (const [key, value] of Object.entries(sentEdits)) {
+        if (JSON.stringify(savedEdits[key]) !== JSON.stringify(value)) {
+          throw new Error(`Field "${key}" was not persisted correctly`);
+        }
+      }
+    }
+
+    // --- Verified: update local state ---
+    updateDocument(packet.id, document.id, {
+      status: "reviewed",
+      needsReview: false,
+      editedFields: sentEdits,
+      reviewerNotes: reviewData.reviewerNotes || null,
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: reviewer,
+    });
+
+    // Informative toast
+    if (editedCount > 0) {
+      toast.success(`Sealed — ${editedCount} field${editedCount !== 1 ? "s" : ""} updated on ${docName}`);
+    } else {
+      toast.success(`Sealed — ${docName} approved as-is`);
+    }
+
+    console.log("Review sealed:", document.id, { editedCount, status: "reviewed", verified: true });
+
+    // Return result for ReviewQueue UI feedback
+    return { ok: true, editedCount, documentName: docName };
   }, [updateDocument, toast]);
 
   // Handle reject review item - mark for re-processing or removal

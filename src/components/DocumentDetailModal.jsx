@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Maximize2,
   Loader2,
+  PenLine,
 } from "lucide-react";
 import { useToast } from "./ui/toast";
 import { Button } from "./ui/button";
@@ -214,7 +215,7 @@ export function DocumentDetailModal({ document, packet, onClose }) {
   if (!document) return null;
   
   // Get extracted data and likelihoods (with corrections merged in)
-  const { data: extractedData, likelihoods, editedFields } = getMergedExtractionData(document);
+  const { data: extractedData, likelihoods, editedFields, originalData } = getMergedExtractionData(document);
   
   // Get display name
   const splitType = document.splitType || document.classification?.splitType;
@@ -398,6 +399,8 @@ export function DocumentDetailModal({ document, packet, onClose }) {
                     const confidence = likelihoods[key];
                     const hasConfidence = confidence !== undefined && confidence !== null;
                     const isCorrected = editedFields && key in editedFields;
+                    const originalValue = isCorrected ? originalData?.[key] : null;
+                    const valueChanged = isCorrected && JSON.stringify(originalValue) !== JSON.stringify(value);
                     
                     // Subtle left-border color when confidence is available
                     const borderClass = hasConfidence && !isCorrected
@@ -415,7 +418,9 @@ export function DocumentDetailModal({ document, packet, onClose }) {
                           <p className="text-xs font-medium text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
                             {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
                             {isCorrected && (
-                              <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded">corrected</span>
+                              <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded inline-flex items-center gap-0.5">
+                                <PenLine className="h-2.5 w-2.5" /> edited by reviewer
+                              </span>
                             )}
                           </p>
                           {hasConfidence && !isCorrected && (
@@ -429,6 +434,13 @@ export function DocumentDetailModal({ document, packet, onClose }) {
                         }`}>
                           {formatValue(value)}
                         </p>
+                        {/* Show original AI value when human changed it */}
+                        {valueChanged && originalValue != null && originalValue !== "" && (
+                          <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                            <span className="line-through">{formatValue(originalValue)}</span>
+                            <span className="text-blue-500 dark:text-blue-400 ml-1">→ reviewer correction</span>
+                          </p>
+                        )}
                       </div>
                     );
                   })}

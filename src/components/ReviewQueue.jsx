@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle } from "lucide-react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle, ShieldCheck, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { SailboatIcon } from "./ui/sailboat-icon";
 import { getMergedExtractionData } from "../lib/utils";
@@ -45,8 +45,40 @@ function getReviewItems(packets) {
   return items;
 }
 
+/**
+ * Full-screen sealed confirmation overlay. Rendered at the top level of the
+ * review UI so it's visible even when the queue empties (last item sealed).
+ */
+function SealedOverlay({ result }) {
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-300 pointer-events-none">
+      <div className="text-center">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/40 mb-3">
+          <ShieldCheck className="h-8 w-8 text-green-600 dark:text-green-400" />
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Sealed</h3>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          {result.editedCount > 0
+            ? `${result.editedCount} field${result.editedCount !== 1 ? "s" : ""} updated and verified`
+            : "Approved as-is — no changes needed"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function ReviewQueue({ packets, onApprove, onClose }) {
-  const reviewItems = useMemo(() => getReviewItems(packets), [packets]);
+  // Track locally sealed document IDs so items are immediately removed from queue
+  // regardless of how fast the parent state update propagates back through props.
+  const [sealedDocIds, setSealedDocIds] = useState(new Set());
+
+  const reviewItems = useMemo(() => {
+    const items = getReviewItems(packets);
+    // Filter out docs we've already sealed in this session
+    if (sealedDocIds.size === 0) return items;
+    return items.filter(item => !sealedDocIds.has(item.document.id));
+  }, [packets, sealedDocIds]);
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [editedFields, setEditedFields] = useState({});
   const [base64ByPacketId, setBase64ByPacketId] = useState({});
@@ -152,40 +184,66 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     }));
   }, [current]);
 
-  const handleApprove = useCallback(() => {
-    if (current) {
-      onApprove?.(current.document, current.packet, { 
+  // Saving / sealed / error states for async approval flow
+  const [saving, setSaving] = useState(false);
+  const [sealedResult, setSealedResult] = useState(null); // { ok, editedCount, documentName }
+  const [saveError, setSaveError] = useState(null);
+  const sealTimerRef = useRef(null);
+
+  // Clear sealed overlay timer on unmount
+  useEffect(() => () => { if (sealTimerRef.current) clearTimeout(sealTimerRef.current); }, []);
+
+  // Auto-clear the sealed overlay after it's been shown
+  useEffect(() => {
+    if (!sealedResult) return;
+    const id = setTimeout(() => setSealedResult(null), 3000);
+    return () => clearTimeout(id);
+  }, [sealedResult]);
+
+  const handleApprove = useCallback(async () => {
+    if (!current || saving) return;
+    const docId = current.document.id;
+    setSaving(true);
+    setSaveError(null);
+    setSealedResult(null);
+
+    try {
+      const result = await onApprove?.(current.document, current.packet, {
         editedFields: { ...editedFields },
         approvedFields: { ...currentApprovedFields },
       });
+
+      // Immediately mark this document as sealed locally — removes it from the queue
+      // without waiting for the parent state update to propagate back through props.
+      setSealedDocIds(prev => new Set(prev).add(docId));
+
+      // Show "Sealed" confirmation overlay
+      setSealedResult(result || { ok: true, editedCount: Object.keys(editedFields).length, documentName: "Document" });
+      setSaving(false);
+
+      // Clean up local state for this document
       setEditedFields({});
-      // Clear approved fields for this document
       setApprovedFields((prev) => {
         const updated = { ...prev };
-        delete updated[current.document.id];
+        delete updated[docId];
         return updated;
       });
-      setCurrentIndex((i) => Math.min(i + 1, reviewItems.length - 1));
+      // Clamp index — the item was just removed so the list is now shorter
+      setCurrentIndex((i) => Math.min(i, Math.max(0, reviewItems.length - 2)));
+    } catch (error) {
+      console.error("Failed to seal review:", error);
+      setSaveError(error.message || "Failed to save review");
+      setSaving(false);
+      // Stay on current document so the user can retry
     }
-  }, [current, onApprove, editedFields, currentApprovedFields, reviewItems.length]);
+  }, [current, saving, onApprove, editedFields, currentApprovedFields, reviewItems.length]);
 
-  if (reviewItems.length === 0 || !current) {
-    return (
-      <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-neutral-900 pt-16 pb-16">
-        <div className="text-center max-w-md">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gray-100 dark:bg-neutral-700 mb-4">
-            <SailboatIcon className="h-7 w-7 text-gray-400 dark:text-neutral-500" />
-          </div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-neutral-100 mb-2">All clear</h2>
-          <p className="text-gray-500 dark:text-neutral-400 mb-6">Every document passed automatic validation. Nothing needs review.</p>
-          <Button onClick={onClose}>Return to Results</Button>
-        </div>
-      </div>
-    );
-  }
+  // --- All hooks MUST be above the early return (Rules of Hooks) ---
 
-  const { data, likelihoods } = getMergedExtractionData(current.document);
-  const displayName = current.document?.splitType || current.document?.classification?.category || "Document";
+  const { data, likelihoods } = current
+    ? getMergedExtractionData(current.document)
+    : { data: {}, likelihoods: {} };
+
   const REVIEW_THRESHOLD = 0.75;
   const LOW_THRESHOLD = 0.5;
 
@@ -224,6 +282,27 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     warning: true,
     ok: false, // Collapsed by default
   });
+
+  // --- Early return: empty state (AFTER all hooks) ---
+
+  if (reviewItems.length === 0 || !current) {
+    return (
+      <div className="h-full relative flex items-center justify-center bg-gray-50 dark:bg-neutral-900 pt-16 pb-16">
+        {/* Sealed overlay — persists even after queue empties (last item sealed) */}
+        {sealedResult && <SealedOverlay result={sealedResult} />}
+        <div className="text-center max-w-md">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 mb-4">
+            <ShieldCheck className="h-7 w-7 text-green-600 dark:text-green-400" />
+          </div>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-neutral-100 mb-2">All clear</h2>
+          <p className="text-gray-500 dark:text-neutral-400 mb-6">Every document has been reviewed and sealed. Nothing left to check.</p>
+          <Button onClick={onClose}>Return to Results</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const displayName = current.document?.splitType || current.document?.classification?.category || "Document";
 
   const toggleSection = (section) => {
     setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
@@ -388,7 +467,9 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
   };
 
   return (
-    <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900">
+    <div className="h-full relative flex flex-col bg-gray-50 dark:bg-gray-900">
+      {/* Sealed overlay — covers entire review UI */}
+      {sealedResult && <SealedOverlay result={sealedResult} />}
       {/* Fixed header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Document: {displayName}</h2>
@@ -510,6 +591,15 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
                 </button>
               )}
             </div>
+
+            {/* Error message from failed save */}
+            {saveError && (
+              <p className="text-[10px] text-red-600 dark:text-red-400 leading-tight bg-red-50 dark:bg-red-900/20 rounded px-2 py-1.5">
+                <AlertCircle className="h-3 w-3 inline-block mr-0.5 -mt-px" />
+                {saveError} — your edits are still here, try again.
+              </p>
+            )}
+
             <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-tight">
               <AlertTriangle className="h-3 w-3 inline-block mr-0.5 -mt-px" />
               Saving will lock these fields as the final extracted data for this document. This action cannot be undone.
@@ -518,8 +608,13 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
               variant="success" 
               onClick={handleApprove} 
               className="w-full"
+              disabled={saving}
             >
-              Save Edits
+              {saving ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Saving &amp; verifying...</>
+              ) : (
+                <><ShieldCheck className="h-4 w-4 mr-1.5" /> Seal &amp; Save</>
+              )}
             </Button>
           </div>
         </div>
