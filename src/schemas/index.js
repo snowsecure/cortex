@@ -1069,4 +1069,69 @@ export const documentCategories = [
   { category: "Other", schemas: ["other_recorded", "notices_agreements"] },
 ];
 
+// ============================================================================
+// SCHEMA ANNOTATION UTILITIES (for Retab advanced features)
+// ============================================================================
+
+/**
+ * Annotate all leaf fields with X-SourceQuote: true
+ * Retab returns `source___fieldname` fields with verbatim text from the document.
+ */
+export function annotateWithSourceQuotes(schema) {
+  const annotated = JSON.parse(JSON.stringify(schema)); // deep clone
+  function walk(obj) {
+    if (obj.properties) {
+      for (const [key, prop] of Object.entries(obj.properties)) {
+        if (prop.type === "object") {
+          walk(prop);
+        } else if (prop.type === "array" && prop.items?.type === "object") {
+          walk(prop.items);
+        } else if (prop.type !== "array") {
+          prop["X-SourceQuote"] = true;
+        }
+      }
+    }
+  }
+  walk(annotated);
+  return annotated;
+}
+
+/**
+ * Annotate numeric, integer, and date-like fields with X-ReasoningPrompt.
+ * Retab returns `reasoning___fieldname` fields with chain-of-thought explanations.
+ */
+export function annotateWithReasoningPrompts(schema) {
+  const annotated = JSON.parse(JSON.stringify(schema)); // deep clone
+  function walk(obj) {
+    if (obj.properties) {
+      for (const [key, prop] of Object.entries(obj.properties)) {
+        if (prop.type === "object") {
+          walk(prop);
+        } else if (prop.type === "array" && prop.items?.type === "object") {
+          walk(prop.items);
+        } else if (["number", "integer"].includes(prop.type)) {
+          prop["X-ReasoningPrompt"] =
+            "Explain your reasoning for extracting this value, including any calculations or unit conversions.";
+        }
+      }
+    }
+  }
+  walk(annotated);
+  return annotated;
+}
+
+/**
+ * Extract top-level array field keys from a schema (for chunking_keys parameter).
+ * Retab uses chunking_keys to parallelize OCR on long lists/tables.
+ */
+export function getArrayFieldKeys(schema) {
+  const keys = [];
+  if (schema.properties) {
+    for (const [key, prop] of Object.entries(schema.properties)) {
+      if (prop.type === "array") keys.push(key);
+    }
+  }
+  return keys;
+}
+
 export default schemas;

@@ -353,18 +353,47 @@ export async function deleteExportTemplate(name) {
 // ============================================================================
 
 /**
- * Sync a completed packet result to the database
+ * Sync a completed packet result to the database.
+ * Uses the atomic endpoint: packet completion + document creation happen
+ * in a single SQLite transaction, preventing data loss on crash.
  */
 export async function syncPacketResult(sessionId, packetId, result) {
-  // First, complete the packet
-  await completePacket(packetId, result);
-  
-  // Then, create all documents
-  if (result.documents && result.documents.length > 0) {
-    await createDocuments(sessionId, packetId, result.documents);
-  }
-  
-  return true;
+  // Build document rows for the atomic endpoint
+  const documents = (result.documents || []).map(d => {
+    const { data, likelihoods } = getExtractionData(d.extraction);
+    const likelihoodValues = Object.values(likelihoods || {}).filter(v => typeof v === "number");
+    const derivedConfidence =
+      likelihoodValues.length > 0
+        ? likelihoodValues.reduce((s, v) => s + v, 0) / likelihoodValues.length
+        : null;
+    return {
+      id: d.id,
+      packet_id: packetId,
+      session_id: sessionId,
+      document_type: d.documentType || d.category || d.classification?.category,
+      display_name: d.displayName || d.name || d.splitType,
+      status: d.status,
+      pages: d.pages,
+      extraction_data: data,
+      likelihoods: likelihoods || {},
+      extraction_confidence: d.extractionConfidence ?? derivedConfidence,
+      needs_review: d.needsReview,
+      review_reasons: d.reviewReasons,
+      credits_used: d.usage?.credits || 0,
+    };
+  });
+
+  // Single request: packet + documents in one transaction
+  return apiRequest(`/api/packets/${packetId}/complete`, {
+    method: "POST",
+    body: {
+      stats: result.stats,
+      usage: result.usage,
+      hasNeedsReview: result.documents?.some(d => d.needsReview),
+      hasFailed: result.documents?.some(d => d.status === "failed"),
+      documents,
+    },
+  });
 }
 
 /**

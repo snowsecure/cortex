@@ -458,13 +458,26 @@ app.patch("/api/packets/:id", (req, res) => {
   }
 });
 
-// Complete packet with results
+// Complete packet with results.
+// When `documents` array is included in the body, packet completion and document
+// creation happen in a single SQLite transaction — no data loss if the server
+// crashes between the two operations.
 app.post("/api/packets/:id/complete", (req, res) => {
   try {
     if (!req.body || typeof req.body !== "object") {
       return validationError(res, "Request body must be an object with result data");
     }
-    const packet = db.completePacket(req.params.id, req.body);
+    const { documents, ...result } = req.body;
+    let packet;
+
+    if (Array.isArray(documents) && documents.length > 0) {
+      // Atomic path: packet + documents in one transaction
+      packet = db.completePacketAtomic(req.params.id, result, documents);
+    } else {
+      // Legacy path: packet only (documents created via separate endpoint)
+      packet = db.completePacket(req.params.id, result);
+    }
+
     if (!packet) {
       return res.status(404).json({ error: "Packet not found" });
     }
@@ -474,12 +487,22 @@ app.post("/api/packets/:id/complete", (req, res) => {
   }
 });
 
-// Delete packet
+// Delete packet (also cleans up the server-side temp file)
 app.delete("/api/packets/:id", (req, res) => {
   try {
+    // Look up the packet first to get the temp file path before deleting the record
+    const packet = db.getPacket(req.params.id);
     const success = db.deletePacket(req.params.id);
     if (!success) {
       return res.status(404).json({ error: "Packet not found" });
+    }
+    // Clean up temp file if it exists
+    if (packet?.temp_file_path) {
+      fs.unlink(packet.temp_file_path, (err) => {
+        if (err && err.code !== "ENOENT") {
+          console.warn(`Failed to delete temp file ${packet.temp_file_path}:`, err.message);
+        }
+      });
     }
     res.status(204).send();
   } catch (error) {
@@ -822,6 +845,8 @@ app.post("/api/documents/extract", async (req, res) => {
       body.temperature = 0.1;
     }
 
+    const isStreaming = !!body.stream;
+
     const response = await fetchWithRetry(`${RETAB_API_BASE}/documents/extract`, {
       method: "POST",
       headers: {
@@ -831,6 +856,52 @@ app.post("/api/documents/extract", async (req, res) => {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(600000), // 10 min for large documents
     });
+
+    // Streaming mode: pipe the Retab SSE response directly to the client,
+    // but ONLY if the upstream actually returned SSE. Some models/doc types
+    // return application/json even when stream=true was requested. In that
+    // case, fall through to the normal JSON response path below.
+    const upstreamContentType = response.headers.get("content-type") || "";
+    const isActuallySSE = upstreamContentType.includes("text/event-stream");
+
+    if (isStreaming && isActuallySSE && response.ok && response.body) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+
+      // Use Node.js readable stream from fetch response body
+      const reader = response.body.getReader();
+      const pump = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              res.end();
+              return;
+            }
+            // Write chunk to Express response; respect backpressure
+            if (!res.write(value)) {
+              await new Promise((resolve) => res.once("drain", resolve));
+            }
+          }
+        } catch (streamError) {
+          console.error("Streaming pipe error:", streamError);
+          if (!res.headersSent) {
+            res.status(500).json({ error: "Streaming failed" });
+          } else {
+            res.end();
+          }
+        }
+      };
+
+      // If client disconnects, cancel the reader
+      res.on("close", () => {
+        reader.cancel().catch(() => {});
+      });
+
+      return pump();
+    }
 
     const data = await response.json();
     console.log("Extract response keys:", Object.keys(data));
@@ -1036,6 +1107,126 @@ app.post("/api/documents/parse", async (req, res) => {
   } catch (error) {
     console.error("Document parse error:", error);
     res.status(500).json({ error: error.message || "Document parsing failed" });
+  }
+});
+
+// ============================================================================
+// EDIT API PROXY ENDPOINTS (form filling)
+// ============================================================================
+
+// Agent Fill: AI-powered form filling (PDF, DOCX, XLSX, PPTX)
+// Supports both /documents/edit (current) and legacy /edit/agent/fill paths.
+// The upstream Retab API consolidated the endpoint to /v1/documents/edit.
+app.post("/api/edit/agent/fill", async (req, res) => {
+  try {
+    const apiKey = req.headers["api-key"];
+    if (!apiKey) {
+      return res.status(401).json({ error: "API key required" });
+    }
+
+    console.log("Edit Agent Fill request");
+
+    // Try the current endpoint first, fall back to legacy if 404
+    let response = await fetchWithRetry(`${RETAB_API_BASE}/documents/edit`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Api-Key": apiKey,
+      },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(600000), // 10 min for complex forms
+    }, { maxRetries: 0 });
+
+    // If /documents/edit returns 404, try the legacy /edit/agent/fill path
+    if (response.status === 404) {
+      console.log("Edit endpoint /documents/edit returned 404, trying legacy /edit/agent/fill...");
+      response = await fetchWithRetry(`${RETAB_API_BASE}/edit/agent/fill`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Api-Key": apiKey,
+        },
+        body: JSON.stringify(req.body),
+        signal: AbortSignal.timeout(600000),
+      });
+    }
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json(data);
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error("Edit Agent Fill error:", error);
+    res.status(500).json({ error: error.message || "Form filling failed" });
+  }
+});
+
+// Generate Template: detect form fields in a PDF
+app.post("/api/edit/templates/generate", async (req, res) => {
+  try {
+    const apiKey = req.headers["api-key"];
+    if (!apiKey) {
+      return res.status(401).json({ error: "API key required" });
+    }
+
+    console.log("Edit Template Generate request");
+
+    const response = await fetchWithRetry(`${RETAB_API_BASE}/edit/templates/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Api-Key": apiKey,
+      },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(600000),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json(data);
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error("Edit Template Generate error:", error);
+    res.status(500).json({ error: error.message || "Template generation failed" });
+  }
+});
+
+// Fill Template: fill using a pre-defined template (fast, PDF only)
+app.post("/api/edit/templates/fill", async (req, res) => {
+  try {
+    const apiKey = req.headers["api-key"];
+    if (!apiKey) {
+      return res.status(401).json({ error: "API key required" });
+    }
+
+    console.log("Edit Template Fill request");
+
+    const response = await fetchWithRetry(`${RETAB_API_BASE}/edit/templates/fill`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Api-Key": apiKey,
+      },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(600000),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json(data);
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error("Edit Template Fill error:", error);
+    res.status(500).json({ error: error.message || "Template fill failed" });
   }
 });
 

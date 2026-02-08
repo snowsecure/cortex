@@ -168,7 +168,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     }
   }, [current, onApprove, editedFields, currentApprovedFields, reviewItems.length]);
 
-  if (reviewItems.length === 0) {
+  if (reviewItems.length === 0 || !current) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-neutral-900 pt-16 pb-16">
         <div className="text-center max-w-md">
@@ -184,7 +184,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
   }
 
   const { data, likelihoods } = getMergedExtractionData(current.document);
-  const displayName = current.document.splitType || current.document.classification?.category || "Document";
+  const displayName = current.document?.splitType || current.document?.classification?.category || "Document";
   const REVIEW_THRESHOLD = 0.75;
   const LOW_THRESHOLD = 0.5;
 

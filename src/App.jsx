@@ -11,6 +11,7 @@ import { DocumentDetailModal } from "./components/DocumentDetailModal";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { HelpDocumentation } from "./components/HelpDocumentation";
 import { ProcessingConfigOverride } from "./components/RetabSettings";
+import { ExportPage } from "./components/ExportPage";
 import { SchemaExplorer } from "./components/SchemaExplorer";
 import { RETAB_MODELS } from "./lib/retabConfig";
 import { useBatchQueue, BatchStatus } from "./hooks/useBatchQueue";
@@ -72,6 +73,7 @@ const ViewMode = {
   PROCESSING: "processing",
   RESULTS: "results",
   REVIEW: "review",
+  EXPORT: "export",
   HISTORY: "history",
   ADMIN: "admin",
   HELP: "help",
@@ -208,7 +210,7 @@ function WelcomeDashboard({
                 >
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4 text-slate-500 dark:text-neutral-400" />
-                    <span className="text-sm font-medium text-slate-900 dark:text-neutral-100">{packets.length} packet{packets.length !== 1 ? "s" : ""} queued</span>
+                    <span className="text-sm font-medium text-slate-900 dark:text-neutral-100">{queuedCount} packet{queuedCount !== 1 ? "s" : ""} queued</span>
                   </div>
                   <span className="text-slate-500 dark:text-neutral-400 text-xs">View →</span>
                 </button>
@@ -787,14 +789,14 @@ function App() {
                   </button>
                   
                   <button
-                    onClick={() => setViewMode(ViewMode.HISTORY)}
+                    onClick={() => setViewMode(ViewMode.EXPORT)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
-                      viewMode === ViewMode.HISTORY
+                      viewMode === ViewMode.EXPORT
                         ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
                         : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
                     }`}
                   >
-                    History
+                    Export
                   </button>
                 </nav>
             )}
@@ -810,6 +812,13 @@ function App() {
                   </Button>
                   <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-neutral-800 rounded-lg shadow-lg border border-gray-200 dark:border-neutral-700 py-1 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                     {/* Tools */}
+                    <button
+                      onClick={() => setViewMode(ViewMode.HISTORY)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
+                    >
+                      <History className="h-4 w-4" />
+                      History
+                    </button>
                     <button
                       onClick={() => setViewMode(ViewMode.HELP)}
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-neutral-200 hover:bg-gray-50 dark:hover:bg-neutral-700"
@@ -971,53 +980,62 @@ function App() {
         )}
 
         {/* Upload view */}
-        {isSetupComplete && viewMode === ViewMode.UPLOAD && (
-          <div className="flex-1 min-h-0 overflow-y-auto max-w-4xl mx-auto px-4 py-8 w-full">
-            <Card>
-              <CardHeader>
-                <CardTitle>Upload Document Packets</CardTitle>
-                <CardDescription>
-                  Each PDF can contain multiple documents from a single real estate transaction.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <BatchFileUpload
-                  onFilesSelected={handleFilesSelected}
-                  selectedFiles={packets}
-                  onClearAll={handleClearAll}
-                  onRemoveFile={handleRemoveFile}
-                  disabled={isProcessing}
-                  sessionId={sessionId}
-                  dbConnected={dbConnected}
-                  processingConfig={runConfig || retabConfig}
-                  initialFilesToProcess={pendingDropFiles}
-                  onInitialFilesProcessed={() => setPendingDropFiles(null)}
-                />
-                
-                {/* Processing config override for this run */}
-                {hasPackets && (
-                  <ProcessingConfigOverride
-                    config={runConfig || retabConfig}
-                    onChange={setRunConfig}
-                    globalConfig={retabConfig}
-                  />
-                )}
+        {isSetupComplete && viewMode === ViewMode.UPLOAD && (() => {
+          // Only show queued packets on the upload page — completed/failed/processing
+          // packets belong on the Results page, not cluttering the upload staging area.
+          const queuedPackets = packets.filter(
+            p => p.status === "queued" || p.status === "splitting" || p.status === "classifying" || p.status === "extracting"
+          );
+          const hasQueuedPackets = queuedPackets.length > 0;
 
-                {hasPackets && (
-                  <div className="flex items-center justify-between pt-6">
-                    <p className="text-sm text-gray-600">
-                      {packets.length} packet{packets.length !== 1 ? "s" : ""} ready to process
-                    </p>
-                    <Button onClick={handleStartProcessing} size="lg">
-                      <Play className="h-4 w-4 mr-2" />
-                      Start Processing
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
+          return (
+            <div className="flex-1 min-h-0 overflow-y-auto max-w-4xl mx-auto px-4 py-8 w-full">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Upload Document Packets</CardTitle>
+                  <CardDescription>
+                    Each PDF can contain multiple documents from a single real estate transaction.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <BatchFileUpload
+                    onFilesSelected={handleFilesSelected}
+                    selectedFiles={queuedPackets}
+                    onClearAll={handleClearAll}
+                    onRemoveFile={handleRemoveFile}
+                    disabled={false}
+                    sessionId={sessionId}
+                    dbConnected={dbConnected}
+                    processingConfig={runConfig || retabConfig}
+                    initialFilesToProcess={pendingDropFiles}
+                    onInitialFilesProcessed={() => setPendingDropFiles(null)}
+                  />
+                  
+                  {/* Processing config override for this run */}
+                  {hasQueuedPackets && (
+                    <ProcessingConfigOverride
+                      config={runConfig || retabConfig}
+                      onChange={setRunConfig}
+                      globalConfig={retabConfig}
+                    />
+                  )}
+
+                  {hasQueuedPackets && (
+                    <div className="flex items-center justify-between pt-6">
+                      <p className="text-sm text-gray-600">
+                        {queuedPackets.length} packet{queuedPackets.length !== 1 ? "s" : ""} ready to process
+                      </p>
+                      <Button onClick={handleStartProcessing} size="lg">
+                        <Play className="h-4 w-4 mr-2" />
+                        Start Processing
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          );
+        })()}
 
         {/* Processing/Results view */}
         {isSetupComplete && (viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS) && (
@@ -1027,25 +1045,33 @@ function App() {
               <div className="flex items-center gap-3">
                 {isProcessing && (
                   <>
-                    <span className="text-sm text-gray-500">
+                    <span className="text-sm text-gray-500 dark:text-gray-400">
                       {currentActivityLabel ?? "Processing"}
                     </span>
-                    <Button variant="ghost" size="sm" onClick={pause} className="h-7 px-2 text-gray-500">
+                    <Button variant="ghost" size="sm" onClick={pause} className="h-7 px-2 text-gray-500 dark:text-gray-400">
                       <Pause className="h-3.5 w-3.5" />
                     </Button>
                   </>
                 )}
                 {isPaused && (
                   <>
-                    <span className="text-sm text-amber-600">Paused</span>
-                    <Button variant="ghost" size="sm" onClick={resume} className="h-7 px-2 text-gray-500">
+                    <span className="text-sm text-amber-600 dark:text-amber-400">Paused</span>
+                    <Button variant="ghost" size="sm" onClick={resume} className="h-7 px-2 text-gray-500 dark:text-gray-400">
                       <Play className="h-3.5 w-3.5" />
                     </Button>
                   </>
                 )}
                 {isComplete && !isProcessing && !isPaused && (
-                  <span className="text-sm text-gray-500">
-                    {stats.total} document{stats.total !== 1 ? 's' : ''}
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    {stats?.total ?? 0} document{(stats?.total ?? 0) !== 1 ? 's' : ''}
+                  </span>
+                )}
+                {/* Model / config info */}
+                {retabConfig?.model && (
+                  <span className="text-xs text-gray-400 dark:text-gray-500 border-l border-gray-200 dark:border-gray-700 pl-3 ml-1">
+                    {retabConfig.model}
+                    {retabConfig.nConsensus > 1 && ` × ${retabConfig.nConsensus}`}
+                    {retabConfig.costOptimize && " · Smart Routing"}
                   </span>
                 )}
               </div>
@@ -1081,27 +1107,27 @@ function App() {
                         Processing complete
                       </p>
                       <p className="text-sm text-green-700 dark:text-green-300">
-                        {stats.completed} completed
-                        {stats.needsReview > 0 && `, ${stats.needsReview} need review`}
-                        {stats.failed > 0 && `, ${stats.failed} failed`}
+                        {stats?.completed ?? 0} completed
+                        {(stats?.needsReview ?? 0) > 0 && `, ${stats.needsReview} need review`}
+                        {(stats?.failed ?? 0) > 0 && `, ${stats.failed} failed`}
                         {currentRunSaved && " • Saved to history"}
                       </p>
-                      {(usage.totalCredits > 0 || usage.totalPages > 0) && (
+                      {((usage?.totalCredits ?? 0) > 0 || (usage?.totalPages ?? 0) > 0) && (
                         <div className="flex items-center gap-3 mt-1 text-xs text-green-600 dark:text-green-400">
-                          {usage.totalPages > 0 && (
+                          {(usage?.totalPages ?? 0) > 0 && (
                             <span>{usage.totalPages} page{usage.totalPages !== 1 ? "s" : ""} processed</span>
                           )}
-                          {usage.totalCredits > 0 && (
+                          {(usage?.totalCredits ?? 0) > 0 && (
                             <span>• {usage.totalCredits.toFixed(1)} credits</span>
                           )}
-                          {usage.totalCost > 0 && (
+                          {(usage?.totalCost ?? 0) > 0 && (
                             <span>• ${usage.totalCost.toFixed(2)}</span>
                           )}
-                          {usage.apiCalls > 0 && (
+                          {(usage?.apiCalls ?? 0) > 0 && (
                             <span>• {usage.apiCalls} API call{usage.apiCalls !== 1 ? "s" : ""}</span>
                           )}
                           {retabConfig?.model && (
-                            <span className="text-green-500 dark:text-green-500">• {retabConfig.model}{retabConfig.nConsensus > 1 ? ` × ${retabConfig.nConsensus} consensus` : ""}</span>
+                            <span className="text-green-500 dark:text-green-500">• {retabConfig.model}{retabConfig?.nConsensus > 1 ? ` × ${retabConfig.nConsensus} consensus` : ""}</span>
                           )}
                         </div>
                       )}
@@ -1157,6 +1183,14 @@ function App() {
               onClose={handleCloseReview}
             />
           </div>
+        )}
+
+        {/* Export view */}
+        {isSetupComplete && viewMode === ViewMode.EXPORT && (
+          <ExportPage
+            packets={packets}
+            stats={stats}
+          />
         )}
 
         {/* History view */}

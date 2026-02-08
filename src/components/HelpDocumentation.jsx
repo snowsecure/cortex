@@ -34,6 +34,7 @@ import {
   FileCode,
   Puzzle,
   TrendingUp,
+  TrendingDown,
   Gauge,
   Terminal,
   Server,
@@ -660,7 +661,7 @@ const RETAB_PRICING = {
 
 function ModelComparison() {
   const models = [
-    { name: "retab-micro", speed: "Fastest", accuracy: "Good", useCase: "Simple tasks, high volume, cost-sensitive" },
+    { name: "retab-micro", speed: "Fastest", accuracy: "Good", useCase: "Simple docs, splitting, high volume" },
     { name: "retab-small", speed: "Fast", accuracy: "Better", useCase: "Balanced performance and cost (recommended default)" },
     { name: "retab-large", speed: "Slower", accuracy: "Best", useCase: "Complex tasks, maximum accuracy" },
   ];
@@ -668,7 +669,7 @@ function ModelComparison() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-gray-500 dark:text-neutral-400">
-        <strong>1 credit = $0.01.</strong> Extract/Split/Parse/Schema: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded">total_credits = model_credits × page_count</code>; with consensus: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded">× n_consensus</code>. Source:{" "}
+        <strong>1 credit = $0.01.</strong> Formula: <code className="bg-gray-100 dark:bg-neutral-700 px-1 rounded">total_credits = model_credits × page_count × n_consensus</code>. Source:{" "}
         <a href="https://docs.retab.com/core-concepts/Pricing" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">Retab Pricing</a>.
       </p>
       <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-neutral-700">
@@ -695,13 +696,160 @@ function ModelComparison() {
                   <td className="px-4 py-3 font-mono text-gray-700 dark:text-neutral-300">${p.usdPerPage.toFixed(3)}</td>
                   <td className="px-4 py-3 text-gray-600 dark:text-neutral-400">
                     {m.useCase}
-                    {i === 1 && <span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400 font-medium">← Recommended</span>}
+                    {i === 1 && <span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400 font-medium">← Default</span>}
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+      </div>
+      <p className="text-xs text-gray-500 dark:text-neutral-400 mt-2">
+        With <strong>Smart Routing</strong> enabled, CORTEX automatically picks the cheapest model that fits each document — see the Smart Routing section below for details.
+      </p>
+    </div>
+  );
+}
+
+// ============================================================================
+// SMART ROUTING & COST OPTIMIZATION
+// ============================================================================
+
+function SmartRoutingExplainer() {
+  const simpleCategories = [
+    "Cover Sheet / Order Form",
+    "Transaction Summary",
+    "Tax Reports",
+    "Affidavit",
+    "Notices & Agreements",
+    "Other Recorded",
+  ];
+  const complexCategories = [
+    "Transfer Deed",
+    "Deed of Trust / Mortgage",
+    "Tax Lien",
+    "Mechanic's Lien",
+    "Easement",
+    "CC&Rs / Restrictions",
+    "Court Order",
+    "Probate / Bankruptcy",
+    "Power of Attorney",
+    "Settlement Statement",
+    "Survey / Plat",
+    "UCC Filing",
+  ];
+
+  return (
+    <div className="space-y-5">
+      {/* Overview */}
+      <div className="bg-teal-50 dark:bg-teal-900/20 rounded-xl p-4 border border-teal-200 dark:border-teal-800">
+        <p className="text-sm text-teal-800 dark:text-teal-200 leading-relaxed">
+          <strong>Smart Routing</strong> reduces cost by matching each document to the cheapest Retab model that can handle it accurately.
+          Instead of using one model for every document, it classifies each document as <em>simple</em> or <em>complex</em> and routes accordingly.
+          Enabled by default — toggle it in <strong>Settings → Advanced Features</strong> or per-run on the upload page.
+        </p>
+      </div>
+
+      {/* How it works */}
+      <div>
+        <h4 className="text-sm font-semibold text-gray-800 dark:text-neutral-200 mb-3">How it works</h4>
+        <div className="space-y-2.5 text-sm text-gray-600 dark:text-neutral-300">
+          <div className="flex items-start gap-3">
+            <span className="shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex items-center justify-center text-xs font-bold">1</span>
+            <div><strong>Splitting always uses retab-micro.</strong> Document boundary detection doesn't need the precision of a larger model, so CORTEX always splits with micro (0.2 credits/page) and capped DPI of 150. This alone saves 80% on the split step vs. retab-small.</div>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex items-center justify-center text-xs font-bold">2</span>
+            <div><strong>Simple documents route to retab-micro.</strong> Cover sheets, transaction summaries, and other straightforward form documents use micro with consensus disabled (n=1). These docs have flat schemas and short text, so micro handles them well.</div>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex items-center justify-center text-xs font-bold">3</span>
+            <div><strong>Complex documents use your chosen model.</strong> Deeds, liens, mortgages, and other legally dense documents use the model and consensus level you configured in settings. No quality compromise where it matters.</div>
+          </div>
+          <div className="flex items-start gap-3">
+            <span className="shrink-0 w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 flex items-center justify-center text-xs font-bold">!</span>
+            <div><strong>Retries always use the full model.</strong> If you manually retry a failed document, it uses your configured model and consensus — no cost downgrade — to give the best chance of success.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Category classification */}
+      <div>
+        <h4 className="text-sm font-semibold text-gray-800 dark:text-neutral-200 mb-3">Document classification</h4>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="rounded-xl border border-blue-200 dark:border-blue-800 p-3 bg-blue-50/50 dark:bg-blue-900/10">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300">Simple → retab-micro</span>
+            </div>
+            <ul className="text-xs text-gray-600 dark:text-neutral-400 space-y-1">
+              {simpleCategories.map(c => <li key={c} className="flex items-center gap-1.5"><Check className="h-3 w-3 text-blue-500 shrink-0" />{c}</li>)}
+            </ul>
+          </div>
+          <div className="rounded-xl border border-purple-200 dark:border-purple-800 p-3 bg-purple-50/50 dark:bg-purple-900/10">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300">Complex → your model</span>
+            </div>
+            <ul className="text-xs text-gray-600 dark:text-neutral-400 space-y-1">
+              {complexCategories.map(c => <li key={c} className="flex items-center gap-1.5"><Check className="h-3 w-3 text-purple-500 shrink-0" />{c}</li>)}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* Cost savings example */}
+      <div>
+        <h4 className="text-sm font-semibold text-gray-800 dark:text-neutral-200 mb-3">Example cost savings</h4>
+        <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-neutral-700">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Scenario</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Without Smart Routing</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">With Smart Routing</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Savings</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700 bg-white dark:bg-neutral-900 text-gray-600 dark:text-neutral-300">
+              <tr>
+                <td className="px-3 py-2">50-page packet, retab-small, n=1<br /><span className="text-gray-400">(~30% simple / 70% complex)</span></td>
+                <td className="px-3 py-2 font-mono">100 credits ($1.00)</td>
+                <td className="px-3 py-2 font-mono">48 credits ($0.48)</td>
+                <td className="px-3 py-2 font-mono text-teal-600 dark:text-teal-400 font-semibold">~52%</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2">50-page packet, retab-small, n=3<br /><span className="text-gray-400">(consensus on complex only)</span></td>
+                <td className="px-3 py-2 font-mono">200 credits ($2.00)</td>
+                <td className="px-3 py-2 font-mono">118 credits ($1.18)</td>
+                <td className="px-3 py-2 font-mono text-teal-600 dark:text-teal-400 font-semibold">~41%</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2">50-page packet, retab-large, n=3<br /><span className="text-gray-400">(largest potential savings)</span></td>
+                <td className="px-3 py-2 font-mono">600 credits ($6.00)</td>
+                <td className="px-3 py-2 font-mono">328 credits ($3.28)</td>
+                <td className="px-3 py-2 font-mono text-teal-600 dark:text-teal-400 font-semibold">~45%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-gray-400 dark:text-neutral-500 mt-2 italic">
+          Actual savings depend on the mix of simple/complex documents in your packets. CORTEX estimates ~30% simple / ~70% complex for cost projections.
+        </p>
+      </div>
+
+      {/* Settings presets */}
+      <div>
+        <h4 className="text-sm font-semibold text-gray-800 dark:text-neutral-200 mb-2">Related settings presets</h4>
+        <div className="text-sm text-gray-600 dark:text-neutral-300 space-y-1.5">
+          <p>
+            <strong>Production</strong> — retab-small, n=1, Smart Routing on. Best balance of accuracy and cost for daily use.
+          </p>
+          <p>
+            <strong>Cost Optimized</strong> — retab-micro, n=1, Smart Routing on. Cheapest option; all documents (simple and complex) use micro.
+          </p>
+          <p>
+            <strong>High Accuracy</strong> — retab-large, n=3, Smart Routing off. Every document gets the best model and consensus. Most expensive.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -733,7 +881,15 @@ function FAQSection() {
     },
     {
       q: "How is pricing calculated?",
-      a: "Cost = pages × model tier × consensus level. Example: 10 pages with retab-small and n_consensus=3 costs 3× a single extraction. The accuracy improvement typically justifies the cost for critical documents."
+      a: "Base formula: credits = pages × model credits/page × n_consensus. With Smart Routing enabled, the actual cost is lower because simple documents (cover sheets, summaries, etc.) are extracted with retab-micro (0.2 credits/page, no consensus) while complex documents (deeds, liens, mortgages) use your configured model. Splitting always uses retab-micro. CORTEX estimates ~30% simple / ~70% complex for cost projections on the upload page. 1 credit = $0.01."
+    },
+    {
+      q: "What is Smart Routing?",
+      a: "Smart Routing is CORTEX's built-in cost optimization. It classifies each document as 'simple' or 'complex' and routes simple docs (cover sheets, summaries, affidavits) to retab-micro — the cheapest model — while sending complex docs (deeds, liens, mortgages) to whichever model you configured. Splitting always uses micro. This typically saves 40-50% with no accuracy loss on the documents that matter. It's enabled by default and can be toggled in Settings → Advanced Features or per-run on the upload page."
+    },
+    {
+      q: "Does Smart Routing affect accuracy?",
+      a: "Not for complex documents — those still use your chosen model and consensus. Simple documents (cover sheets, transaction summaries) have straightforward schemas that retab-micro handles well. If you manually retry a failed document, it always uses your full model regardless of Smart Routing, to give the best chance of success."
     },
     {
       q: "How do I improve low-likelihood fields?",
@@ -2224,6 +2380,11 @@ export function HelpDocumentation({ onClose }) {
             Choose the right model based on your speed, accuracy, and cost requirements.
           </p>
           <ModelComparison />
+        </Section>
+        
+        {/* Smart Routing — cost optimization */}
+        <Section icon={TrendingDown} title="Smart Routing & Cost Optimization">
+          <SmartRoutingExplainer />
         </Section>
         
         {/* Confidence Scores — understanding results */}

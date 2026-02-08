@@ -83,6 +83,7 @@ async function processDroppedItems(items) {
  * Format file size for display
  */
 function formatFileSize(bytes) {
+  if (bytes == null || isNaN(bytes)) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -362,7 +363,7 @@ export function BatchFileUpload({
   /**
    * Calculate total size and estimated cost of selected files
    */
-  const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+  const totalSize = selectedFiles.reduce((sum, f) => sum + (f.size || 0), 0);
   const totalEstimatedCost = processingConfig
     ? selectedFiles.reduce((sum, f) => {
         const pages = f.pageCount ?? 0;
@@ -374,25 +375,41 @@ export function BatchFileUpload({
 
   // Show file list if files are selected
   if (selectedFiles.length > 0) {
+    const totalPages = selectedFiles.reduce((sum, f) => sum + (f.pageCount ?? 0), 0);
+
     return (
       <div className="space-y-3">
-        {/* Summary row: show filename(s), total size, estimated cost */}
+        {/* Summary row */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <Files className="h-5 w-5 text-[#9e2339] shrink-0" />
-            <span className="font-medium text-gray-900">
+            <span className="font-medium text-gray-900 dark:text-gray-100">
               {selectedFiles.length} File{selectedFiles.length !== 1 ? "s" : ""} Ready
+            </span>
+            <span className="text-xs text-gray-500 hidden sm:inline">
+              — {formatFileSize(totalSize)}
+              {totalPages > 0 && <>, {totalPages} page{totalPages !== 1 ? "s" : ""}</>}
+              {totalEstimatedCost != null && totalEstimatedCost > 0 && (
+                <span className="text-teal-600"> · ~${totalEstimatedCost.toFixed(2)} est.</span>
+              )}
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled || isProcessing}
-              className="text-sm text-gray-600 hover:text-gray-900 disabled:opacity-50"
+              className="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 disabled:opacity-50"
             >
-              + Add more
+              + Files
             </button>
-            <span className="text-gray-300">|</span>
+            <button
+              onClick={() => folderInputRef.current?.click()}
+              disabled={disabled || isProcessing}
+              className="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 disabled:opacity-50"
+            >
+              + Folder
+            </button>
+            <span className="text-gray-300 dark:text-gray-600">|</span>
             <button
               onClick={onClearAll}
               disabled={disabled || isProcessing}
@@ -404,16 +421,16 @@ export function BatchFileUpload({
         </div>
 
         {/* File list: name, size, path (when from folder) */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 max-h-112 overflow-y-auto">
           {selectedFiles.map((fileData) => (
             <div
               key={fileData.id}
-              className="flex items-center justify-between gap-2 py-2.5 px-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700 group"
+              className="flex items-center justify-between gap-2 py-2.5 px-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-100 dark:border-gray-700"
             >
               <div className="flex items-center gap-3 min-w-0 flex-1">
                 <FileText className="h-4 w-4 text-[#9e2339] shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-900 truncate" title={fileData.name ?? fileData.filename}>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate" title={fileData.name ?? fileData.filename}>
                     {fileData.name ?? fileData.filename ?? "—"}
                   </p>
                   <div className="flex items-center gap-2 mt-0.5 text-xs text-gray-500 flex-wrap">
@@ -446,10 +463,14 @@ export function BatchFileUpload({
                   </div>
                 </div>
               </div>
+              {/* Always-visible remove button (was opacity-0/group-hover which users couldn't find) */}
               <button
-                onClick={() => onRemoveFile(fileData.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveFile(fileData.id);
+                }}
                 disabled={disabled || isProcessing}
-                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50 shrink-0"
+                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-30 shrink-0"
                 title="Remove file"
               >
                 <X className="h-4 w-4" />
@@ -458,13 +479,22 @@ export function BatchFileUpload({
           ))}
         </div>
 
-        {/* Hidden inputs */}
+        {/* Hidden inputs (both file and folder) */}
         <input
           ref={fileInputRef}
           type="file"
           multiple
           accept=".pdf,application/pdf"
           onChange={handleFileInputChange}
+          className="hidden"
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          webkitdirectory=""
+          directory=""
+          multiple
+          onChange={handleFolderInputChange}
           className="hidden"
         />
       </div>

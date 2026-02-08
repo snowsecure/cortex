@@ -42,6 +42,7 @@ const ActionTypes = {
   PACKET_DOCUMENT_PROCESSED: "PACKET_DOCUMENT_PROCESSED",
   PACKET_COMPLETED: "PACKET_COMPLETED",
   PACKET_FAILED: "PACKET_FAILED",
+  PACKET_REQUEUE: "PACKET_REQUEUE", // Move aborted packet back to queue
   RETRY_PACKET: "RETRY_PACKET",
   RETRY_DOCUMENT_START: "RETRY_DOCUMENT_START",
   RETRY_DOCUMENT_SUCCESS: "RETRY_DOCUMENT_SUCCESS",
@@ -331,17 +332,26 @@ function batchQueueReducer(state, action) {
         finalStatus = PacketStatus.NEEDS_REVIEW;
       }
       
+      const resultDocs = action.result.documents || [];
       newPackets.set(action.packetId, {
         ...packet,
         status: finalStatus,
         result: action.result,
-        documents: action.result.documents,
+        documents: resultDocs,
         usage: action.result.usage,
+        // Track document-level stats so global recalculation in UPDATE_DOCUMENT is accurate
+        completedDocuments: resultDocs.filter(d => d.status === "completed" || d.status === "reviewed").length,
+        needsReviewDocuments: resultDocs.filter(d => d.needsReview).length,
+        failedDocuments: resultDocs.filter(d => d.status === "failed").length,
+        // Free memory: base64 data can be huge (75MB+). The file is either
+        // on the server (hasServerFile) or processing is done — no need to
+        // hold it in browser memory. It can be re-fetched for retries.
+        base64: null,
         completedAt: new Date().toISOString(),
         progress: {
           stage: "completed",
-          docIndex: action.result.documents.length,
-          totalDocs: action.result.documents.length,
+          docIndex: resultDocs.length,
+          totalDocs: resultDocs.length,
         },
       });
       
@@ -389,6 +399,8 @@ function batchQueueReducer(state, action) {
         ...packet,
         status: PacketStatus.FAILED,
         error: action.error,
+        // Free memory: base64 can be re-fetched from server on retry
+        base64: null,
         completedAt: new Date().toISOString(),
       });
       
@@ -404,6 +416,43 @@ function batchQueueReducer(state, action) {
         processing: newProcessing,
         stats: statsUpdate,
         batchStatus: allDone ? BatchStatus.COMPLETED : state.batchStatus,
+      };
+    }
+    
+    case ActionTypes.PACKET_REQUEUE: {
+      // Move an aborted/interrupted packet back to the queue so it can be
+      // processed again on resume. Unlike RETRY_PACKET, this preserves the
+      // retry count and doesn't clear partial results.
+      const packet = state.packets.get(action.packetId);
+      if (!packet) return state;
+      
+      const newPackets = new Map(state.packets);
+      const newProcessing = new Set(state.processing);
+      newProcessing.delete(action.packetId);
+      
+      const newQueue = [...state.queue];
+      if (!newQueue.includes(action.packetId)) {
+        newQueue.push(action.packetId);
+      }
+      
+      newPackets.set(action.packetId, {
+        ...packet,
+        status: PacketStatus.QUEUED,
+        // Keep documents/result — partial progress may be useful for diagnostics
+        startedAt: null,
+      });
+      
+      const statsUpdate = { ...state.stats };
+      // Adjust stats: was processing, now queued
+      statsUpdate.processing = Math.max(0, statsUpdate.processing - 1);
+      statsUpdate.queued = statsUpdate.queued + 1;
+      
+      return {
+        ...state,
+        packets: newPackets,
+        queue: newQueue,
+        processing: newProcessing,
+        stats: statsUpdate,
       };
     }
     
@@ -487,6 +536,7 @@ function batchQueueReducer(state, action) {
     
     case ActionTypes.CLEAR_ALL: {
       return {
+        ...state, // Preserve sessionId, dbConnected, dbInitComplete, retabConfig
         packets: new Map(),
         queue: [],
         processing: new Set(),
@@ -505,7 +555,6 @@ function batchQueueReducer(state, action) {
           totalPages: 0,
           apiCalls: 0,
         },
-        config: state.config,
       };
     }
     
@@ -750,11 +799,24 @@ function batchQueueReducer(state, action) {
         }
 
         const documents = (dbPkt.documents || []).map(d => {
-          // Parse JSON fields that may come as strings from the DB
-          const extractedData = d.extracted_data ? (typeof d.extracted_data === "string" ? JSON.parse(d.extracted_data) : d.extracted_data) : (d.extractedData || null);
-          const likelihoods = d.likelihoods ? (typeof d.likelihoods === "string" ? JSON.parse(d.likelihoods) : d.likelihoods) : null;
-          const editedFields = d.edited_fields ? (typeof d.edited_fields === "string" ? JSON.parse(d.edited_fields) : d.edited_fields) : (d.editedFields || null);
-          const reviewReasons = d.review_reasons ? (Array.isArray(d.review_reasons) ? d.review_reasons : (typeof d.review_reasons === "string" ? JSON.parse(d.review_reasons) : [])) : (d.reviewReasons || []);
+          // Parse JSON fields that may come as strings from the DB.
+          // DB column is `extraction_data` (snake_case) — NOT `extracted_data`.
+          const rawExtractionData = d.extraction_data ?? d.extracted_data ?? d.extractionData ?? null;
+          const extractedData = rawExtractionData
+            ? (typeof rawExtractionData === "string" ? JSON.parse(rawExtractionData) : rawExtractionData)
+            : null;
+          const rawLikelihoods = d.likelihoods ?? null;
+          const likelihoods = rawLikelihoods
+            ? (typeof rawLikelihoods === "string" ? JSON.parse(rawLikelihoods) : rawLikelihoods)
+            : null;
+          const rawEditedFields = d.edited_fields ?? d.editedFields ?? null;
+          const editedFields = rawEditedFields
+            ? (typeof rawEditedFields === "string" ? JSON.parse(rawEditedFields) : rawEditedFields)
+            : null;
+          const rawReviewReasons = d.review_reasons ?? d.reviewReasons ?? [];
+          const reviewReasons = Array.isArray(rawReviewReasons)
+            ? rawReviewReasons
+            : (typeof rawReviewReasons === "string" ? JSON.parse(rawReviewReasons) : []);
           
           return {
             ...d,
@@ -768,7 +830,7 @@ function batchQueueReducer(state, action) {
             reviewedAt: d.reviewed_at ?? d.reviewedAt ?? null,
             reviewedBy: d.reviewed_by ?? d.reviewedBy ?? null,
             reviewerNotes: d.reviewer_notes ?? d.reviewerNotes ?? null,
-            splitType: d.split_type ?? d.splitType ?? null,
+            splitType: d.split_type ?? d.splitType ?? d.document_type ?? null,
             // Build an extraction object so getMergedExtractionData works correctly
             extraction: d.extraction || (extractedData ? { data: extractedData, likelihoods: likelihoods || {} } : null),
             classification: d.classification || (d.document_type ? {
@@ -852,6 +914,19 @@ function batchQueueReducer(state, action) {
 }
 
 /**
+ * Concurrent tab detection.
+ * Uses BroadcastChannel to prevent two tabs from processing the same queue.
+ * When a tab starts processing, it broadcasts a "PROCESSING_STARTED" message.
+ * Other tabs receive it and know to avoid starting their own processing loops.
+ */
+const TAB_CHANNEL_NAME = "cortex_processing_lock";
+let processingTabId = null; // The tab ID that currently owns processing
+
+function generateTabId() {
+  return `tab_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+}
+
+/**
  * Hook for managing batch processing queue
  */
 export function useBatchQueue() {
@@ -883,11 +958,52 @@ export function useBatchQueue() {
   const stateRef = useRef(state);
   const dbInitRef = useRef(false);
   const runProcessingLoopRef = useRef(null); // Set once runProcessingLoop is created
-  
-  // Keep stateRef in sync
+  const claimedRef = useRef(new Set()); // Track in-flight packet IDs synchronously to prevent race conditions
+  const abortControllerRef = useRef(null); // AbortController for cancelling in-flight API calls on pause/clear
+  const tabIdRef = useRef(generateTabId());
+  const tabChannelRef = useRef(null);
+  const [otherTabProcessing, setOtherTabProcessing] = useState(false);
+
+  // Set up BroadcastChannel for tab coordination
   useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+    if (typeof BroadcastChannel === "undefined") return; // SSR / unsupported
+    const channel = new BroadcastChannel(TAB_CHANNEL_NAME);
+    tabChannelRef.current = channel;
+
+    channel.onmessage = (event) => {
+      const { type, tabId } = event.data || {};
+      if (tabId === tabIdRef.current) return; // Ignore own messages
+
+      if (type === "PROCESSING_STARTED") {
+        processingTabId = tabId;
+        setOtherTabProcessing(true);
+        console.warn(`Another tab (${tabId}) is processing. This tab will not start processing.`);
+      } else if (type === "PROCESSING_STOPPED") {
+        if (processingTabId === tabId) {
+          processingTabId = null;
+          setOtherTabProcessing(false);
+        }
+      }
+    };
+
+    // Announce stop when this tab unloads
+    const handleUnload = () => {
+      channel.postMessage({ type: "PROCESSING_STOPPED", tabId: tabIdRef.current });
+    };
+    window.addEventListener("beforeunload", handleUnload);
+
+    return () => {
+      handleUnload();
+      channel.close();
+      tabChannelRef.current = null;
+      window.removeEventListener("beforeunload", handleUnload);
+    };
+  }, []);
+  
+  // Keep stateRef in sync — synchronous (not useEffect!) so that
+  // runProcessingLoop / processNextPacket always see the latest state
+  // immediately after dispatch, without waiting for a React re-render.
+  stateRef.current = state;
 
   // Initialize database session on mount
   // Priority: DB (authoritative) → localStorage (fallback)
@@ -925,13 +1041,29 @@ export function useBatchQueue() {
               );
               if (resumable.length > 0) {
                 console.log(`Auto-resuming ${resumable.length} interrupted packet(s)...`);
-                // Kick off the processing loop after a short delay for state to settle
-                setTimeout(() => {
+                // Poll stateRef until the RESTORE_FROM_DB dispatch has propagated,
+                // then start the processing loop. This replaces the old fixed 500ms
+                // timeout which was fragile — if React hadn't re-rendered by then,
+                // stateRef still showed IDLE and the loop exited immediately.
+                const waitForStateAndResume = async () => {
+                  const MAX_WAIT_MS = 5000;
+                  const POLL_MS = 100;
+                  let waited = 0;
+                  while (waited < MAX_WAIT_MS) {
+                    await new Promise(r => setTimeout(r, POLL_MS));
+                    waited += POLL_MS;
+                    const s = stateRef.current;
+                    if (s.batchStatus === BatchStatus.PROCESSING && s.queue.length > 0) {
+                      break;
+                    }
+                  }
                   pausedRef.current = false;
+                  abortControllerRef.current = new AbortController();
                   if (runProcessingLoopRef.current) {
                     runProcessingLoopRef.current();
                   }
-                }, 500);
+                };
+                waitForStateAndResume();
               }
 
               console.log(`Restored ${fullSession.packets.length} packet(s) from database`);
@@ -988,104 +1120,150 @@ export function useBatchQueue() {
   }, [state.packets, state.stats]);
 
   /**
-   * Process the next available packet from the queue
+   * Process a specific packet from the queue.
+   * Accepts an explicit packetId to avoid the race condition where multiple
+   * concurrent calls all read the same stale queue[0] from stateRef.
+   * Uses claimedRef (a synchronous Set) to guarantee each packet is only
+   * processed once, even if stateRef hasn't caught up with dispatches yet.
    */
-  const processNextPacket = useCallback(async () => {
-    // Get fresh state
+  const processNextPacket = useCallback(async (targetPacketId) => {
     const currentState = stateRef.current;
     
     if (pausedRef.current) return;
     if (currentState.batchStatus !== BatchStatus.PROCESSING) return;
-    if (currentState.queue.length === 0) return;
-    if (currentState.processing.size >= currentState.config.concurrency) return;
     
-    const packetId = currentState.queue[0];
+    // Determine which packet to process
+    let packetId = targetPacketId;
+    if (!packetId) {
+      // Fallback: find first unclaimed packet in queue
+      packetId = currentState.queue.find(id => !claimedRef.current.has(id));
+    }
+    if (!packetId) return;
+    
     const packet = currentState.packets.get(packetId);
-    
     if (!packet) return;
     
-    // Resolve base64 from server if file was uploaded (so work continues if user left)
-    let packetWithData = packet;
-    if (!packet.base64 && packet.hasServerFile) {
+    // Claim this packet synchronously BEFORE any await to prevent duplicates.
+    // This is the critical fix: claimedRef is a plain Set (not React state),
+    // so it updates immediately and is visible to all concurrent callers.
+    if (claimedRef.current.has(packetId)) return;
+    claimedRef.current.add(packetId);
+    
+    try {
+      // Resolve base64 from server if file was uploaded (so work continues if user left)
+      let packetWithData = packet;
+      if (!packet.base64 && packet.hasServerFile) {
+        try {
+          const base64 = await api.getPacketFileAsBase64(packet.id);
+          packetWithData = { ...packet, base64 };
+        } catch (err) {
+          dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: err.message || "File not found or expired" });
+          if (stateRef.current.dbConnected && stateRef.current.sessionId) {
+            try {
+              await syncWithRetry(
+                () => api.updatePacket(packetId, { status: "failed", error: err.message }),
+                "syncFileNotFoundPacket"
+              );
+            } catch (_) {
+              // Already logged by syncWithRetry
+            }
+          }
+          return;
+        }
+      }
+      
+      // Mark as starting
+      dispatch({ 
+        type: ActionTypes.UPDATE_PACKET_STATUS, 
+        packetId, 
+        status: PipelineStatus.SPLITTING,
+      });
+      
+      // Sync processing status to DB so admin/monitoring dashboards show accurate state
+      if (stateRef.current.dbConnected) {
+        api.updatePacket(packetId, {
+          status: "processing",
+          started_at: new Date().toISOString(),
+        }).catch(() => {}); // Best-effort, don't block processing
+      }
+      
+      // Get abort signal for this run (allows pause to cancel in-flight work)
+      const signal = abortControllerRef.current?.signal || null;
+      
       try {
-        const base64 = await api.getPacketFileAsBase64(packet.id);
-        packetWithData = { ...packet, base64 };
-      } catch (err) {
-        dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: err.message || "File not found or expired" });
+        const result = await processPacket(packetWithData, {
+          onStatusChange: (id, status, progress) => {
+            dispatch({ type: ActionTypes.UPDATE_PACKET_STATUS, packetId: id, status, progress });
+          },
+          onDocumentsDetected: (id, documents) => {
+            dispatch({ type: ActionTypes.SET_PENDING_DOCUMENTS, packetId: id, documents });
+          },
+          onDocumentProcessed: (id, document) => {
+            dispatch({ type: ActionTypes.PACKET_DOCUMENT_PROCESSED, packetId: id, document });
+          },
+          retabConfig: stateRef.current.retabConfig,
+          signal,
+        });
+        
+        dispatch({ type: ActionTypes.PACKET_COMPLETED, packetId, result });
+        
+        // Sync to database if connected (with retry).
+        // DB sync failures don't fail the packet (extraction succeeded) but
+        // we surface them so the user knows data may not be fully persisted.
         if (stateRef.current.dbConnected && stateRef.current.sessionId) {
           try {
             await syncWithRetry(
-              () => api.updatePacket(packetId, { status: "failed", error: err.message }),
-              "syncFileNotFoundPacket"
+              () => api.syncPacketResult(stateRef.current.sessionId, packetId, result),
+              "syncPacketResult"
             );
-          } catch (_) {
-            // Already logged by syncWithRetry
+          } catch (syncErr) {
+            console.error(`[WARN] Packet ${packetId} processed OK but DB sync failed: ${syncErr.message}. Data is in browser only until next successful sync.`);
           }
         }
-        return;
-      }
-    }
-    
-    // Mark as starting
-    dispatch({ 
-      type: ActionTypes.UPDATE_PACKET_STATUS, 
-      packetId, 
-      status: PipelineStatus.SPLITTING,
-    });
-    
-    try {
-      const result = await processPacket(packetWithData, {
-        onStatusChange: (id, status, progress) => {
-          dispatch({ type: ActionTypes.UPDATE_PACKET_STATUS, packetId: id, status, progress });
-        },
-        onDocumentsDetected: (id, documents) => {
-          dispatch({ type: ActionTypes.SET_PENDING_DOCUMENTS, packetId: id, documents });
-        },
-        onDocumentProcessed: (id, document) => {
-          dispatch({ type: ActionTypes.PACKET_DOCUMENT_PROCESSED, packetId: id, document });
-        },
-        retabConfig: stateRef.current.retabConfig,
-      });
-      
-      dispatch({ type: ActionTypes.PACKET_COMPLETED, packetId, result });
-      
-      // Sync to database if connected (with retry)
-      if (stateRef.current.dbConnected && stateRef.current.sessionId) {
-        try {
-          await syncWithRetry(
-            () => api.syncPacketResult(stateRef.current.sessionId, packetId, result),
-            "syncPacketResult"
-          );
-        } catch (_) {
-          // Already logged by syncWithRetry
+      } catch (error) {
+        // Aborted operations are intentionally cancelled (pause/clear) — re-queue
+        // the packet so it can be picked up again on resume, instead of leaving
+        // it orphaned in the processing set.
+        if (error.message === "Processing aborted" || error.name === "AbortError") {
+          console.log(`Packet ${packetId} processing was aborted, re-queuing for resume`);
+          dispatch({ type: ActionTypes.PACKET_REQUEUE, packetId });
+          return;
+        }
+        dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: error.message });
+        // Persist failed packet to DB so debug/errors and logs show it (with retry)
+        if (stateRef.current.dbConnected && stateRef.current.sessionId) {
+          try {
+            await syncWithRetry(
+              () => api.updatePacket(packetId, {
+                status: "failed",
+                error: error.message,
+                completed_at: new Date().toISOString(),
+              }),
+              "syncFailedPacket"
+            );
+          } catch (syncErr) {
+            console.error(`[WARN] Failed packet ${packetId} DB sync also failed: ${syncErr.message}`);
+          }
         }
       }
-    } catch (error) {
-      dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: error.message });
-      // Persist failed packet to DB so debug/errors and logs show it (with retry)
-      if (stateRef.current.dbConnected && stateRef.current.sessionId) {
-        try {
-          await syncWithRetry(
-            () => api.updatePacket(packetId, {
-              status: "failed",
-              error: error.message,
-              completed_at: new Date().toISOString(),
-            }),
-            "syncFailedPacket"
-          );
-        } catch (_) {
-          // Already logged by syncWithRetry
-        }
-      }
+    } finally {
+      // Always unclaim when done, regardless of success/failure/abort
+      claimedRef.current.delete(packetId);
     }
   }, [processPacket, syncWithRetry]);
 
   /**
-   * Main processing loop
+   * Main processing loop.
+   * Uses claimedRef to track which packets are in-flight so we never launch
+   * duplicate work, and includes a safety valve to prevent infinite spinning
+   * if state becomes corrupted.
    */
   const runProcessingLoop = useCallback(async () => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
+    
+    let idleIterations = 0;
+    const MAX_IDLE_ITERATIONS = 60; // 60 × 500ms = 30s safety valve
     
     while (true) {
       const currentState = stateRef.current;
@@ -1093,20 +1271,49 @@ export function useBatchQueue() {
       // Check if we should stop
       if (pausedRef.current) break;
       if (currentState.batchStatus !== BatchStatus.PROCESSING) break;
-      if (currentState.queue.length === 0 && currentState.processing.size === 0) break;
       
-      // Process packets up to concurrency limit
-      const availableSlots = currentState.config.concurrency - currentState.processing.size;
+      // Use claimedRef (synchronous) alongside reducer state for accurate counts.
+      // claimedRef tracks packets we've started but that haven't yet been reflected
+      // in the reducer's processing set (due to React's async batched renders).
+      const unclaimedQueue = currentState.queue.filter(id => !claimedRef.current.has(id));
+      const inFlightCount = claimedRef.current.size;
       
-      if (availableSlots > 0 && currentState.queue.length > 0) {
-        // Start multiple packets in parallel
-        const promises = [];
-        for (let i = 0; i < Math.min(availableSlots, currentState.queue.length); i++) {
-          promises.push(processNextPacket());
+      // Exit when no work remains: nothing in the queue and nothing in-flight
+      if (unclaimedQueue.length === 0 && inFlightCount === 0 && currentState.processing.size === 0) break;
+      
+      // Safety valve: if we're just spinning with no actionable queue items
+      // but state claims something is still in-flight, eventually give up.
+      // This catches corrupted state from prior bugs.
+      if (unclaimedQueue.length === 0) {
+        idleIterations++;
+        if (idleIterations > MAX_IDLE_ITERATIONS) {
+          console.warn("Processing loop safety valve triggered: no progress for 30s, forcing completion");
+          // Clear claimed refs for any stuck packets so they can be retried
+          if (claimedRef.current.size > 0) {
+            console.warn(`Releasing ${claimedRef.current.size} stuck claimed packet(s):`, [...claimedRef.current]);
+            claimedRef.current.clear();
+          }
+          break;
         }
+        await new Promise(resolve => setTimeout(resolve, 500));
+        continue;
+      }
+      
+      // Reset idle counter when there's actual work to do
+      idleIterations = 0;
+      
+      // Process unclaimed packets up to concurrency limit.
+      // Use claimedRef.size (not processing.size which may be stale) for slot math.
+      const availableSlots = currentState.config.concurrency - inFlightCount;
+      
+      if (availableSlots > 0) {
+        // Pass specific packet IDs instead of letting each worker read queue[0].
+        // This is the key fix: each promise gets a DIFFERENT packet ID.
+        const toProcess = unclaimedQueue.slice(0, availableSlots);
+        const promises = toProcess.map(pid => processNextPacket(pid));
         await Promise.all(promises);
       } else {
-        // Wait a bit before checking again
+        // All slots occupied, wait before checking again
         await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
@@ -1118,31 +1325,70 @@ export function useBatchQueue() {
   runProcessingLoopRef.current = runProcessingLoop;
 
   /**
+   * Broadcast a processing state change to other tabs
+   */
+  const broadcastProcessingState = useCallback((type) => {
+    try {
+      tabChannelRef.current?.postMessage({ type, tabId: tabIdRef.current });
+    } catch (_) {
+      // Channel may be closed
+    }
+  }, []);
+
+  /**
    * Start batch processing
    */
   const start = useCallback(() => {
+    if (otherTabProcessing) {
+      console.warn("Another tab is already processing. Refusing to start.");
+      return;
+    }
     pausedRef.current = false;
+    // Create a fresh AbortController for this processing run
+    abortControllerRef.current = new AbortController();
     dispatch({ type: ActionTypes.START_PROCESSING });
-    // Small delay to let state update
-    setTimeout(runProcessingLoop, 100);
-  }, [runProcessingLoop]);
+    // Eagerly update stateRef so runProcessingLoop sees PROCESSING immediately,
+    // even before React re-renders and propagates the reducer state.
+    stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PROCESSING };
+    broadcastProcessingState("PROCESSING_STARTED");
+    // Start loop directly — stateRef is already in sync, no setTimeout needed.
+    runProcessingLoop();
+  }, [runProcessingLoop, otherTabProcessing, broadcastProcessingState]);
 
   /**
-   * Pause batch processing
+   * Pause batch processing.
+   * Aborts in-flight API calls so processing actually stops instead of
+   * silently continuing in the background.
    */
   const pause = useCallback(() => {
     pausedRef.current = true;
+    // Signal all in-flight fetch calls to abort
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
     dispatch({ type: ActionTypes.PAUSE_PROCESSING });
-  }, []);
+    // Eagerly update stateRef so the processing loop sees PAUSED immediately
+    stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PAUSED };
+    broadcastProcessingState("PROCESSING_STOPPED");
+  }, [broadcastProcessingState]);
 
   /**
    * Resume batch processing
    */
   const resume = useCallback(() => {
+    if (otherTabProcessing) {
+      console.warn("Another tab is already processing. Refusing to resume.");
+      return;
+    }
     pausedRef.current = false;
+    // Create a fresh AbortController for the resumed run
+    abortControllerRef.current = new AbortController();
     dispatch({ type: ActionTypes.RESUME_PROCESSING });
-    setTimeout(runProcessingLoop, 100);
-  }, [runProcessingLoop]);
+    stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PROCESSING };
+    broadcastProcessingState("PROCESSING_STARTED");
+    runProcessingLoop();
+  }, [runProcessingLoop, otherTabProcessing, broadcastProcessingState]);
 
   /**
    * Add packets to the queue
@@ -1150,16 +1396,20 @@ export function useBatchQueue() {
   const addPackets = useCallback(async (files) => {
     dispatch({ type: ActionTypes.ADD_PACKETS, files });
     
-    // Sync to database if connected (skip when packets were already created via upload)
-    const allFromServer = files.every((f) => f.hasServerFile);
-    if (stateRef.current.dbConnected && stateRef.current.sessionId && !allFromServer) {
-      try {
-        await syncWithRetry(
-          () => api.createPackets(stateRef.current.sessionId, files, getUsername()),
-          "syncCreatePackets"
-        );
-      } catch (_) {
-        // Already logged by syncWithRetry
+    // Sync to database if connected.
+    // Server-uploaded packets already have DB records (created by /api/upload),
+    // so only create records for base64-only packets to avoid PRIMARY KEY conflicts.
+    if (stateRef.current.dbConnected && stateRef.current.sessionId) {
+      const localOnly = files.filter((f) => !f.hasServerFile);
+      if (localOnly.length > 0) {
+        try {
+          await syncWithRetry(
+            () => api.createPackets(stateRef.current.sessionId, localOnly, getUsername()),
+            "syncCreatePackets"
+          );
+        } catch (err) {
+          console.warn("Failed to sync local packets to DB:", err.message);
+        }
       }
     }
   }, []);
@@ -1245,25 +1495,53 @@ export function useBatchQueue() {
   }, [retryDocumentExtraction]);
 
   /**
-   * Remove a packet
+   * Remove a packet from the queue and database.
+   * Also deletes the server-side temp file so it doesn't waste storage.
    */
-  const removePacket = useCallback((packetId) => {
+  const removePacket = useCallback(async (packetId) => {
     dispatch({ type: ActionTypes.REMOVE_PACKET, packetId });
+
+    // Sync deletion to database so the packet doesn't reappear on refresh
+    if (stateRef.current.dbConnected) {
+      try {
+        await api.deletePacket(packetId);
+      } catch (err) {
+        console.warn(`Failed to delete packet ${packetId} from DB:`, err.message);
+      }
+    }
   }, []);
 
   /**
-   * Clear all packets
+   * Clear all packets from state, localStorage, and database.
    */
-  const clearAll = useCallback(() => {
+  const clearAll = useCallback(async () => {
+    // Capture packet IDs before clearing state so we can delete from DB
+    const packetIds = Array.from(stateRef.current.packets.keys());
+
     pausedRef.current = true;
+    // Abort any in-flight work
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    claimedRef.current.clear();
     dispatch({ type: ActionTypes.CLEAR_ALL });
-    // Also clear localStorage
+    broadcastProcessingState("PROCESSING_STOPPED");
+
+    // Clear localStorage
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch (e) {
       console.warn("Failed to clear session storage:", e);
     }
-  }, []);
+
+    // Delete all packets from DB so they don't reappear on refresh
+    if (stateRef.current.dbConnected && packetIds.length > 0) {
+      for (const id of packetIds) {
+        api.deletePacket(id).catch(() => {}); // Best-effort, fire and forget
+      }
+    }
+  }, [broadcastProcessingState]);
 
   /**
    * Update configuration
@@ -1331,6 +1609,7 @@ export function useBatchQueue() {
     hasPackets: state.packets.size > 0,
     hasFailed: state.stats.failed > 0,
     hasNeedsReview: state.stats.needsReview > 0,
+    otherTabProcessing,
   };
 }
 

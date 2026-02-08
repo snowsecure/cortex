@@ -9,8 +9,18 @@ import {
   getSchemaForCategory,
   checkNeedsReview,
 } from "../lib/documentCategories";
-import { RETAB_MODELS, DEFAULT_CONFIG } from "../lib/retabConfig";
+import {
+  RETAB_MODELS,
+  DEFAULT_CONFIG,
+  getModelForCategory,
+  getConsensusForCategory,
+} from "../lib/retabConfig";
 import { getExtractionData } from "../lib/utils";
+import {
+  annotateWithSourceQuotes,
+  annotateWithReasoningPrompts,
+  getArrayFieldKeys,
+} from "../schemas/index";
 
 /**
  * Generate unique document ID
@@ -52,6 +62,7 @@ export function usePacketPipeline() {
       skipSplit = false,
       forcedCategory = null,
       retabConfig = {},
+      signal = null, // AbortSignal for cancellation (e.g., pause/clear)
     } = options;
     
     // Merge with defaults
@@ -60,10 +71,15 @@ export function usePacketPipeline() {
       nConsensus: retabConfig.nConsensus || DEFAULT_CONFIG.nConsensus,
       imageDpi: retabConfig.imageDpi || DEFAULT_CONFIG.imageDpi,
       temperature: retabConfig.temperature || DEFAULT_CONFIG.temperature,
+      chunkingKeys: retabConfig.chunkingKeys || false,
+      sourceQuotes: retabConfig.sourceQuotes || false,
+      reasoningPrompts: retabConfig.reasoningPrompts || false,
+      costOptimize: retabConfig.costOptimize ?? DEFAULT_CONFIG.costOptimize,
     };
     
-    // Get model info for credit calculation
+    // Get model info for credit calculation (user-selected model — per-doc overrides tracked individually)
     const modelInfo = RETAB_MODELS[config.model] || RETAB_MODELS["retab-small"];
+    const microModelInfo = RETAB_MODELS["retab-micro"];
 
     const result = {
       packetId: packet.id,
@@ -101,19 +117,26 @@ export function usePacketPipeline() {
         onStatusChange(packet.id, PipelineStatus.SPLITTING);
         
         try {
+          // Splitting only needs document-boundary detection, not extraction-quality
+          // analysis, so retab-micro is always sufficient. Lower DPI also works.
+          const splitModel = config.costOptimize ? "retab-micro" : config.model;
+          const splitDpi = config.costOptimize ? Math.min(config.imageDpi, 150) : config.imageDpi;
+
           const splitResponse = await splitDocument({
             document: packet.base64,
             filename: packet.name || packet.filename,
             subdocuments: SUBDOCUMENT_TYPES,
-            model: config.model,
-            imageDpi: config.imageDpi,
+            model: splitModel,
+            imageDpi: splitDpi,
+            signal,
           });
           
           splits = splitResponse.splits || [];
           
-          // Track split usage
+          // Track split usage — use the actual model used for splitting
+          const splitModelInfo = RETAB_MODELS[splitModel] || microModelInfo;
           const splitPages = splitResponse.usage?.page_count || splits.reduce((acc, s) => acc + (s.pages?.length || 1), 0);
-          result.usage.splitCredits = splitPages * modelInfo.creditsPerPage;
+          result.usage.splitCredits = splitPages * splitModelInfo.creditsPerPage;
           result.usage.totalPages = splitPages;
           result.usage.apiCalls++;
           
@@ -124,6 +147,10 @@ export function usePacketPipeline() {
             splits = [{ name: "other", pages: null }];
           }
         } catch (splitError) {
+          // If aborted, propagate immediately instead of degrading to single doc
+          if (splitError.name === "AbortError" || splitError.message === "Extraction aborted" || signal?.aborted) {
+            throw new Error("Processing aborted");
+          }
           console.warn("Split failed, treating as single document:", splitError);
           splits = [{ name: "other", pages: null }];
         }
@@ -164,10 +191,18 @@ export function usePacketPipeline() {
         total: splits.length 
       });
 
+      // Check for abort before starting extraction phase
+      if (signal?.aborted) throw new Error("Processing aborted");
+
       // Step 2: Extract all subdocuments in parallel batches
       const extractSingleDoc = async (split, index) => {
         const docId = docIds[index];
         const category = forcedCategory || mapSplitTypeToCategory(split.name);
+
+        // Per-category model & consensus selection for cost optimization
+        const docModel = getModelForCategory(category, config.model, config.costOptimize);
+        const docConsensus = getConsensusForCategory(category, config.nConsensus, config.costOptimize);
+        const docModelInfo = RETAB_MODELS[docModel] || RETAB_MODELS["retab-small"];
         
         const documentResult = {
           id: docId,
@@ -195,11 +230,16 @@ export function usePacketPipeline() {
             throw new Error("Document data not available. Please re-upload the file to retry.");
           }
           
-          const schema = getSchemaForCategory(category);
+          let schema = getSchemaForCategory(category);
           
           if (!schema) {
             throw new Error(`No schema found for category: ${category}`);
           }
+
+          // Apply schema annotations for advanced features
+          if (config.sourceQuotes) schema = annotateWithSourceQuotes(schema);
+          if (config.reasoningPrompts) schema = annotateWithReasoningPrompts(schema);
+          const chunkingKeysArray = config.chunkingKeys ? getArrayFieldKeys(schema) : null;
 
           // Retry extraction on transient network/server errors
           const DOC_MAX_RETRIES = 2;
@@ -213,13 +253,20 @@ export function usePacketPipeline() {
                 document: packet.base64,
                 filename: packet.name || packet.filename,
                 jsonSchema: schema,
-                model: config.model,
-                nConsensus: config.nConsensus,
+                model: docModel,
+                nConsensus: docConsensus,
                 imageDpi: config.imageDpi,
                 temperature: config.temperature,
+                stream: true,
+                chunkingKeys: chunkingKeysArray,
+                signal,
               });
               break; // Success -- exit retry loop
             } catch (retryErr) {
+              // Abort errors should not be retried
+              if (retryErr.name === "AbortError" || retryErr.message === "Extraction aborted" || signal?.aborted) {
+                throw retryErr;
+              }
               const isRetriable = RETRIABLE_PATTERNS.test(retryErr.message);
               if (isRetriable && attempt < DOC_MAX_RETRIES) {
                 console.warn(`Document ${index + 1} extraction attempt ${attempt + 1} failed (${retryErr.message}), retrying in ${DOC_RETRY_DELAYS[attempt]}ms...`);
@@ -232,13 +279,13 @@ export function usePacketPipeline() {
           
           documentResult.extraction = extractionResponse;
           
-          // Track extraction usage
+          // Track extraction usage — use the actual model/consensus used for this doc
           const docPages = split.pages?.length || 1;
           documentResult.usage = {
             pages: docPages,
-            credits: docPages * modelInfo.creditsPerPage * config.nConsensus,
-            model: config.model,
-            nConsensus: config.nConsensus,
+            credits: docPages * docModelInfo.creditsPerPage * docConsensus,
+            model: docModel,
+            nConsensus: docConsensus,
           };
           
           // Calculate extraction confidence only when API returned per-field likelihoods
@@ -257,6 +304,11 @@ export function usePacketPipeline() {
           documentResult.status = reviewCheck.needsReview ? "needs_review" : "completed";
 
         } catch (docError) {
+          // Abort errors must propagate up to cancel the entire packet, not be
+          // swallowed as a per-document failure
+          if (docError.name === "AbortError" || docError.message === "Extraction aborted" || signal?.aborted) {
+            throw docError;
+          }
           console.error(`Error extracting document ${index + 1}:`, docError);
           documentResult.status = "failed";
           documentResult.error = docError.message;
@@ -305,11 +357,19 @@ export function usePacketPipeline() {
           docIndex: processedCount, 
           total: splits.length 
         });
+
+        // Check for abort between batches
+        if (signal?.aborted) throw new Error("Processing aborted");
       }
 
       onStatusChange(packet.id, PipelineStatus.COMPLETED);
       
     } catch (error) {
+      // Abort errors should propagate to the caller (useBatchQueue) which
+      // handles them specially (doesn't record as failure, doesn't persist).
+      if (error.name === "AbortError" || error.message === "Processing aborted" || signal?.aborted) {
+        throw error;
+      }
       console.error("Packet processing failed:", error);
       onStatusChange(packet.id, PipelineStatus.FAILED, { error: error.message });
       result.errors.push({
@@ -332,6 +392,7 @@ export function usePacketPipeline() {
     const { 
       onStatusChange = () => {},
       retabConfig = {},
+      signal = null,
     } = options;
     
     // Merge with defaults
@@ -340,24 +401,41 @@ export function usePacketPipeline() {
       nConsensus: retabConfig.nConsensus || DEFAULT_CONFIG.nConsensus,
       imageDpi: retabConfig.imageDpi || DEFAULT_CONFIG.imageDpi,
       temperature: retabConfig.temperature || DEFAULT_CONFIG.temperature,
+      // streaming is always enabled (hardcoded in extractDocument calls)
+      chunkingKeys: retabConfig.chunkingKeys || false,
+      sourceQuotes: retabConfig.sourceQuotes || false,
+      reasoningPrompts: retabConfig.reasoningPrompts || false,
+      costOptimize: retabConfig.costOptimize ?? DEFAULT_CONFIG.costOptimize,
     };
+
+    // Per-category model & consensus selection
+    const docModel = getModelForCategory(category, config.model, config.costOptimize);
+    const docConsensus = getConsensusForCategory(category, config.nConsensus, config.costOptimize);
     
     onStatusChange(file.id, PipelineStatus.EXTRACTING);
     
-    const schema = getSchemaForCategory(category);
+    let schema = getSchemaForCategory(category);
     
     if (!schema) {
       throw new Error(`No schema found for category: ${category}`);
     }
 
+    // Apply schema annotations for advanced features
+    if (config.sourceQuotes) schema = annotateWithSourceQuotes(schema);
+    if (config.reasoningPrompts) schema = annotateWithReasoningPrompts(schema);
+    const chunkingKeysArray = config.chunkingKeys ? getArrayFieldKeys(schema) : null;
+
     const extractionResponse = await extractDocument({
       document: file.base64,
       filename: file.name,
       jsonSchema: schema,
-      model: config.model,
-      nConsensus: config.nConsensus,
+      model: docModel,
+      nConsensus: docConsensus,
       imageDpi: config.imageDpi,
       temperature: config.temperature,
+      stream: true,
+      chunkingKeys: chunkingKeysArray,
+      signal,
     });
 
     const reviewCheck = checkNeedsReview(extractionResponse, category);
@@ -375,22 +453,31 @@ export function usePacketPipeline() {
    * Retry extraction for a single failed document within a packet.
    * Skips splitting/classification – re-uses the existing split and category info.
    * Returns the updated document result on success, throws on failure.
+   *
+   * NOTE: Retries always use the user-configured model (not cost-optimized micro)
+   * because the user is explicitly requesting a re-extraction — they want the best
+   * quality available for this specific document.
    */
   const retryDocumentExtraction = useCallback(async (packet, document, options = {}) => {
     const {
       onStatusChange = () => {},
       retabConfig = {},
+      signal = null,
     } = options;
 
-    // Merge with defaults
+    // Merge with defaults — retries always use the full model (no cost downgrade)
     const config = {
       model: retabConfig.model || DEFAULT_CONFIG.model,
       nConsensus: retabConfig.nConsensus || DEFAULT_CONFIG.nConsensus,
       imageDpi: retabConfig.imageDpi || DEFAULT_CONFIG.imageDpi,
       temperature: retabConfig.temperature || DEFAULT_CONFIG.temperature,
+      // streaming is always enabled (hardcoded in extractDocument calls)
+      chunkingKeys: retabConfig.chunkingKeys || false,
+      sourceQuotes: retabConfig.sourceQuotes || false,
+      reasoningPrompts: retabConfig.reasoningPrompts || false,
     };
 
-    const modelInfo = RETAB_MODELS[config.model] || RETAB_MODELS["retab-small"];
+    const retryModelInfo = RETAB_MODELS[config.model] || RETAB_MODELS["retab-small"];
 
     if (!packet.base64) {
       throw new Error("Document data not available. Please re-upload the file to retry.");
@@ -398,11 +485,16 @@ export function usePacketPipeline() {
 
     const category = document.classification?.category
       || mapSplitTypeToCategory(document.splitType || document.classification?.splitType);
-    const schema = getSchemaForCategory(category);
+    let schema = getSchemaForCategory(category);
 
     if (!schema) {
       throw new Error(`No schema found for category: ${category}`);
     }
+
+    // Apply schema annotations for advanced features
+    if (config.sourceQuotes) schema = annotateWithSourceQuotes(schema);
+    if (config.reasoningPrompts) schema = annotateWithReasoningPrompts(schema);
+    const chunkingKeysArray = config.chunkingKeys ? getArrayFieldKeys(schema) : null;
 
     onStatusChange(document.id, "retrying");
 
@@ -422,9 +514,16 @@ export function usePacketPipeline() {
           nConsensus: config.nConsensus,
           imageDpi: config.imageDpi,
           temperature: config.temperature,
+          stream: true,
+          chunkingKeys: chunkingKeysArray,
+          signal,
         });
         break;
       } catch (retryErr) {
+        // Abort errors should not be retried
+        if (retryErr.name === "AbortError" || retryErr.message === "Extraction aborted" || signal?.aborted) {
+          throw retryErr;
+        }
         const isRetriable = RETRIABLE_PATTERNS.test(retryErr.message);
         if (isRetriable && attempt < DOC_MAX_RETRIES) {
           console.warn(`Document retry attempt ${attempt + 1} failed (${retryErr.message}), retrying in ${DOC_RETRY_DELAYS[attempt]}ms...`);
@@ -457,7 +556,7 @@ export function usePacketPipeline() {
       error: null,
       usage: {
         pages: docPages,
-        credits: docPages * modelInfo.creditsPerPage * config.nConsensus,
+        credits: docPages * retryModelInfo.creditsPerPage * config.nConsensus,
         model: config.model,
         nConsensus: config.nConsensus,
       },

@@ -19,6 +19,7 @@ if (!fs.existsSync(DB_DIR)) {
 // Initialize database connection
 const db = new Database(DB_FILE);
 db.pragma("journal_mode = WAL"); // Better concurrent access
+db.pragma("synchronous = NORMAL"); // Crash safety: fsync at critical moments (WAL + NORMAL is safe)
 db.pragma("foreign_keys = ON");
 
 /**
@@ -424,6 +425,45 @@ export function completePacket(id, result) {
   
   return getPacket(id);
 }
+
+/**
+ * Atomically complete a packet AND create its documents in a single transaction.
+ * Prevents data loss if the process crashes between the two operations.
+ */
+export const completePacketAtomic = db.transaction((id, result, docs) => {
+  const packet = completePacket(id, result);
+  if (!packet) return null;
+
+  if (docs && docs.length > 0) {
+    const insert = db.prepare(`
+      INSERT INTO documents (
+        id, packet_id, session_id, document_type, display_name, status,
+        pages, extraction_data, likelihoods, extraction_confidence,
+        needs_review, review_reasons, credits_used
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const doc of docs) {
+      insert.run(
+        doc.id,
+        doc.packet_id,
+        doc.session_id,
+        doc.document_type,
+        doc.display_name,
+        doc.status || "completed",
+        JSON.stringify(doc.pages || []),
+        JSON.stringify(doc.extraction_data || {}),
+        JSON.stringify(doc.likelihoods || {}),
+        doc.extraction_confidence || null,
+        doc.needs_review ? 1 : 0,
+        JSON.stringify(doc.review_reasons || []),
+        doc.credits_used || 0
+      );
+    }
+  }
+
+  return packet;
+});
 
 export function deletePacket(id) {
   const packet = getPacket(id);
@@ -1063,6 +1103,7 @@ process.on("SIGINT", () => {
 
 export {
   clearAllData,
+  completePacketAtomic,
 };
 
 export default db;

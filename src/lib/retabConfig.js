@@ -25,7 +25,81 @@ export const DEFAULT_CONFIG = {
   
   // Processing concurrency
   concurrency: 5,
+
+  // Advanced features
+  chunkingKeys: false,    // Parallel OCR for long lists and tables
+  sourceQuotes: false,    // Include verbatim source text for each field (X-SourceQuote)
+  reasoningPrompts: false, // Show AI reasoning for complex extractions (X-ReasoningPrompt)
+
+  // Cost optimization: uses retab-micro for splitting and simple doc types,
+  // reserves the user-selected model for complex documents only.
+  costOptimize: true,
 };
+
+/**
+ * Category complexity classification for smart model routing.
+ * When costOptimize is enabled:
+ *   - "simple" categories use retab-micro (cheap) with no consensus
+ *   - "complex" categories use the user-configured model + consensus
+ * Splitting always uses retab-micro regardless.
+ */
+export const CATEGORY_COMPLEXITY = {
+  // Simple: mostly text/form fields, straightforward schemas
+  cover_sheet: "simple",
+  transaction_summary: "simple",
+  tax_reports: "simple",
+  affidavit: "simple",
+  other_recorded: "simple",
+  notices_agreements: "simple",
+
+  // Complex: signature verification, legal precision, complex layouts
+  recorded_transfer_deed: "complex",
+  deed_of_trust_mortgage: "complex",
+  mortgage_child_docs: "complex",
+  tax_lien: "complex",
+  mechanics_lien: "complex",
+  hoa_lien: "complex",
+  judgment_lien: "complex",
+  judgments: "complex",
+  ucc_filing: "complex",
+  easement: "complex",
+  ccr_restrictions: "complex",
+  lis_pendens: "complex",
+  court_order: "complex",
+  probate_document: "complex",
+  bankruptcy_document: "complex",
+  foreclosure_notice: "complex",
+  prior_policy: "complex",
+  survey_plat: "complex",
+  property_details: "complex",
+  power_of_attorney: "complex",
+  entity_authority: "complex",
+  trust_certification: "complex",
+  settlement_statement: "complex",
+  lease_document: "complex",
+};
+
+/**
+ * Get the appropriate extraction model for a document category.
+ * When costOptimize is on, simple categories use retab-micro.
+ */
+export function getModelForCategory(category, userModel, costOptimize = false) {
+  if (!costOptimize) return userModel || DEFAULT_CONFIG.model;
+  const complexity = CATEGORY_COMPLEXITY[category] || "complex";
+  if (complexity === "simple") return "retab-micro";
+  return userModel || DEFAULT_CONFIG.model;
+}
+
+/**
+ * Get consensus for a document category under cost optimization.
+ * Simple categories skip consensus (nConsensus=1) even when the user has it enabled.
+ */
+export function getConsensusForCategory(category, userConsensus, costOptimize = false) {
+  if (!costOptimize) return userConsensus || DEFAULT_CONFIG.nConsensus;
+  const complexity = CATEGORY_COMPLEXITY[category] || "complex";
+  if (complexity === "simple") return 1;
+  return userConsensus || DEFAULT_CONFIG.nConsensus;
+}
 
 // Model definitions with pricing and capabilities
 export const RETAB_MODELS = {
@@ -62,6 +136,28 @@ export const RETAB_MODELS = {
     accuracy: "Highest",
     recommended: ["Complex layouts", "Handwritten text", "Critical extractions"],
     color: "purple",
+  },
+  "auto-small": {
+    id: "auto-small",
+    name: "Auto (Small)",
+    description: "Auto-routes to best model (small tier)",
+    creditsPerPage: 1.0,
+    costPerPage: 0.01,
+    speed: "Fast",
+    accuracy: "Smart",
+    recommended: ["Varied document types", "Automatic optimization"],
+    color: "teal",
+  },
+  "auto-large": {
+    id: "auto-large",
+    name: "Auto (Large)",
+    description: "Auto-routes to best model (large tier)",
+    creditsPerPage: 3.0,
+    costPerPage: 0.03,
+    speed: "Varies",
+    accuracy: "Smart",
+    recommended: ["Complex mixed documents", "Maximum auto-optimization"],
+    color: "indigo",
   },
 };
 
@@ -120,17 +216,49 @@ export function saveSettings(settings) {
 }
 
 /**
- * Calculate estimated cost for a run
+ * Calculate estimated cost for a run.
+ * When costOptimize is enabled, uses a blended estimate:
+ *   - Split always uses retab-micro
+ *   - ~30% of pages assumed simple (retab-micro, no consensus)
+ *   - ~70% of pages assumed complex (user model + consensus)
  */
 export function estimateCost(pageCount, config = {}) {
-  const model = RETAB_MODELS[config.model || DEFAULT_CONFIG.model];
+  const userModel = RETAB_MODELS[config.model || DEFAULT_CONFIG.model];
   const consensus = config.nConsensus || DEFAULT_CONFIG.nConsensus;
-  
-  // Split cost (1x regardless of consensus)
-  const splitCredits = pageCount * model.creditsPerPage;
-  
-  // Extract cost (multiplied by consensus)
-  const extractCredits = pageCount * model.creditsPerPage * consensus;
+  const costOptimize = config.costOptimize ?? DEFAULT_CONFIG.costOptimize;
+
+  if (costOptimize) {
+    const microModel = RETAB_MODELS["retab-micro"];
+
+    // Split always uses micro when optimized
+    const splitCredits = pageCount * microModel.creditsPerPage;
+
+    // Blended extraction: ~30% simple (micro, no consensus), ~70% complex (user model + consensus)
+    const simpleRatio = 0.30;
+    const simplePages = Math.round(pageCount * simpleRatio);
+    const complexPages = pageCount - simplePages;
+
+    const extractCredits =
+      (simplePages * microModel.creditsPerPage * 1) +
+      (complexPages * userModel.creditsPerPage * consensus);
+
+    const totalCredits = splitCredits + extractCredits;
+    const totalCost = totalCredits * 0.01;
+
+    return {
+      splitCredits,
+      extractCredits,
+      totalCredits,
+      totalCost,
+      perPageCredits: pageCount > 0 ? totalCredits / pageCount : 0,
+      perPageCost: pageCount > 0 ? totalCost / pageCount : 0,
+      optimized: true,
+    };
+  }
+
+  // Non-optimized: uniform model for split + extract
+  const splitCredits = pageCount * userModel.creditsPerPage;
+  const extractCredits = pageCount * userModel.creditsPerPage * consensus;
   
   const totalCredits = splitCredits + extractCredits;
   const totalCost = totalCredits * 0.01;
@@ -140,8 +268,9 @@ export function estimateCost(pageCount, config = {}) {
     extractCredits,
     totalCredits,
     totalCost,
-    perPageCredits: totalCredits / pageCount,
-    perPageCost: totalCost / pageCount,
+    perPageCredits: pageCount > 0 ? totalCredits / pageCount : 0,
+    perPageCost: pageCount > 0 ? totalCost / pageCount : 0,
+    optimized: false,
   };
 }
 
@@ -167,8 +296,11 @@ export default {
   CONSENSUS_OPTIONS,
   DPI_OPTIONS,
   CONFIDENCE_PRESETS,
+  CATEGORY_COMPLEXITY,
   loadSettings,
   saveSettings,
   estimateCost,
   getConfigSummary,
+  getModelForCategory,
+  getConsensusForCategory,
 };

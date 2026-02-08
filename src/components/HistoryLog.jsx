@@ -262,7 +262,7 @@ function HistoryEntry({ entry, onDelete, onExport }) {
           </div>
           
           {/* Packets */}
-          {entry.packets.map(packet => (
+          {(entry.packets || []).map(packet => (
             <PacketHistoryItem key={packet.id} packet={packet} />
           ))}
           
@@ -349,7 +349,7 @@ function PacketHistoryItem({ packet }) {
  * Main history log component
  */
 export function HistoryLog({ history, onDelete, onClearAll, onExport, onClose }) {
-  if (history.length === 0) {
+  if (!history || history.length === 0) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50 dark:bg-neutral-900 pt-16 pb-16">
         <div className="text-center max-w-md">
@@ -376,7 +376,7 @@ export function HistoryLog({ history, onDelete, onClearAll, onExport, onClose })
         processed_at: entry.timestamp,
         processed_at_cst: formatTimestamp(entry.timestamp),
         stats: entry.stats,
-        packets: entry.packets.map(p => ({
+        packets: (entry.packets || []).map(p => ({
           ...p,
           documents: p.documents?.map(d => ({
             document_type: d.documentType,
@@ -394,7 +394,7 @@ export function HistoryLog({ history, onDelete, onClearAll, onExport, onClose })
     else if (format === "csv") {
       // Flatten documents into CSV rows
       const rows = [];
-      entry.packets.forEach(packet => {
+      (entry.packets || []).forEach(packet => {
         packet.documents?.forEach(doc => {
           const data = doc.extractedData || {};
           rows.push({
@@ -443,7 +443,7 @@ export function HistoryLog({ history, onDelete, onClearAll, onExport, onClose })
       summary += `Needs Review: ${entry.stats.needsReview}\n`;
       summary += `Failed: ${entry.stats.failed}\n\n`;
       
-      entry.packets.forEach((packet, pi) => {
+      (entry.packets || []).forEach((packet, pi) => {
         summary += `\nPACKET ${pi + 1}: ${packet.filename}\n`;
         summary += `${"-".repeat(40)}\n`;
         summary += `Documents: ${packet.documentCount}\n\n`;
