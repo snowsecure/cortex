@@ -21,9 +21,6 @@ const HelpDocumentation = lazy(() =>
 const ExportPage = lazy(() =>
   import("./components/ExportPage").then(m => ({ default: m.ExportPage }))
 );
-const FillFormsPage = lazy(() =>
-  import("./components/FillFormsPage").then(m => ({ default: m.FillFormsPage }))
-);
 const SchemaExplorer = lazy(() =>
   import("./components/SchemaExplorer").then(m => ({ default: m.SchemaExplorer }))
 );
@@ -102,7 +99,6 @@ const ViewMode = {
   RESULTS: "results",
   REVIEW: "review",
   EXPORT: "export",
-  FILL_FORMS: "fill_forms",
   HISTORY: "history",
   ADMIN: "admin",
   HELP: "help",
@@ -913,16 +909,6 @@ function App() {
                   >
                     Export
                   </button>
-                  <button
-                    onClick={() => setViewMode(ViewMode.FILL_FORMS)}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
-                      viewMode === ViewMode.FILL_FORMS
-                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
-                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
-                    }`}
-                  >
-                    Fill Forms
-                  </button>
                 </nav>
             )}
             
@@ -1287,20 +1273,7 @@ function App() {
         {isSetupComplete && viewMode === ViewMode.EXPORT && (
           <ErrorBoundary name="Export">
             <Suspense fallback={<LazyFallback name="Export" />}>
-              <ExportPage
-                packets={packets}
-                stats={stats}
-                onNavigateToFillForms={() => setViewMode(ViewMode.FILL_FORMS)}
-              />
-            </Suspense>
-          </ErrorBoundary>
-        )}
-
-        {/* Fill Forms view */}
-        {isSetupComplete && viewMode === ViewMode.FILL_FORMS && (
-          <ErrorBoundary name="Fill Forms">
-            <Suspense fallback={<LazyFallback name="Fill Forms" />}>
-              <FillFormsPage packets={packets} />
+              <ExportPage packets={packets} stats={stats} />
             </Suspense>
           </ErrorBoundary>
         )}

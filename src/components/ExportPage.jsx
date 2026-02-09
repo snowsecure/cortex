@@ -6,7 +6,12 @@ import {
   X,
   Search,
   RotateCcw,
-  FileEdit,
+  Upload,
+  Palette,
+  AlertTriangle,
+  Eye,
+  Square,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm-dialog";
@@ -17,44 +22,59 @@ import { getMergedExtractionData, aggregateDocumentQuality } from "../lib/utils"
 import { EXPORT_PRESETS, executePresetExport, getExportOutcomeDescription } from "../lib/exportPresets";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { schemas } from "../schemas/index";
+import { agentFillDocument, fileToBase64 } from "../lib/retab";
+import { RETAB_MODELS } from "../lib/retabConfig";
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 
-const LAST_FORMAT_KEY = "cortex_last_export_format";
+const LAST_GENERIC_FORMAT_KEY = "cortex_last_generic_export_format";
+const LAST_TPS_FORMAT_KEY = "cortex_last_tps_export_format";
 const RECENT_EXPORTS_KEY = "cortex_recent_exports";
 const MAX_RECENT = 5;
 
-const PRESET_GROUPS = [
-  { label: "Title Production Systems", category: "tps" },
-  { label: "Industry Standards", category: "standard" },
-  { label: "Raw Data", category: "generic", filter: (p) => ["generic_json", "generic_csv", "generic_xlsx"].includes(p.id) },
-  { label: "Other", category: "generic", filter: (p) => !["generic_json", "generic_csv", "generic_xlsx"].includes(p.id) },
+/** Section 1: Generic data (CSV, JSON, XLSX, industry standards) */
+const GENERIC_PRESET_IDS = [
+  "generic_csv",
+  "generic_json",
+  "generic_xlsx",
+  "mismo",
+  "ucd",
+  "alta_settlement",
+  "summary_report",
 ];
 
-/** Default recommended format and 2–3 primary options shown first; rest under "More formats…" */
-const PRIMARY_PRESET_IDS = ["generic_csv", "generic_json", "softpro"];
+/** Section 2: Title Production Systems */
+const TPS_PRESET_IDS = [
+  "softpro",
+  "ramquest",
+  "qualia",
+  "aim_plus",
+  "resware",
+  "titleexpress",
+  "tps_stewart",
+];
 
-function getPresetsForGroup(group) {
-  let presets = EXPORT_PRESETS.filter((p) => p.category === group.category);
-  if (group.filter) presets = presets.filter(group.filter);
-  return presets;
-}
-
-function getPrimaryPresets() {
-  return PRIMARY_PRESET_IDS.map((id) => EXPORT_PRESETS.find((p) => p.id === id)).filter(Boolean);
+function getPresetsByIds(ids) {
+  return ids.map((id) => EXPORT_PRESETS.find((p) => p.id === id)).filter(Boolean);
 }
 
 // ============================================================================
 // HELPERS
 // ============================================================================
 
-function loadLastFormat() {
-  try { return localStorage.getItem(LAST_FORMAT_KEY) || "generic_csv"; } catch { return "generic_csv"; }
+function loadLastGenericFormat() {
+  try { return localStorage.getItem(LAST_GENERIC_FORMAT_KEY) || "generic_csv"; } catch { return "generic_csv"; }
 }
-function saveLastFormat(presetId) {
-  try { localStorage.setItem(LAST_FORMAT_KEY, presetId); } catch {}
+function saveLastGenericFormat(presetId) {
+  try { localStorage.setItem(LAST_GENERIC_FORMAT_KEY, presetId); } catch {}
+}
+function loadLastTpsFormat() {
+  try { return localStorage.getItem(LAST_TPS_FORMAT_KEY) || "softpro"; } catch { return "softpro"; }
+}
+function saveLastTpsFormat(presetId) {
+  try { localStorage.setItem(LAST_TPS_FORMAT_KEY, presetId); } catch {}
 }
 function loadRecentExports() {
   try { return JSON.parse(localStorage.getItem(RECENT_EXPORTS_KEY) || "[]"); } catch { return []; }
@@ -76,8 +96,33 @@ function timeAgo(isoString) {
 }
 
 // ============================================================================
+// ELAPSED TIMER (for form fill)
+// ============================================================================
+function useElapsedTimer(running) {
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef(null);
+  useEffect(() => {
+    if (running) {
+      startRef.current = Date.now();
+      setElapsed(0);
+      const id = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 1000);
+      return () => clearInterval(id);
+    }
+    setElapsed(0);
+    startRef.current = null;
+  }, [running]);
+  return elapsed;
+}
+function formatElapsed(s) {
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+// ============================================================================
 // PACKET SELECTOR (checkboxes, search, type filter)
 // ============================================================================
+
+const COMPACT_FILE_SELECTOR_THRESHOLD = 8;
 
 function PacketSelector({
   exportablePackets,
@@ -88,6 +133,18 @@ function PacketSelector({
   searchQuery,
   setSearchQuery,
 }) {
+  const [compactOpen, setCompactOpen] = useState(false);
+  const compactRef = useRef(null);
+
+  useEffect(() => {
+    if (!compactOpen) return;
+    const handler = (e) => {
+      if (compactRef.current && !compactRef.current.contains(e.target)) setCompactOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [compactOpen]);
+
   // All unique document types across all exportable packets
   const allDocTypes = useMemo(() => {
     const types = {};
@@ -142,10 +199,12 @@ function PacketSelector({
 
   const allDocTypesSelected = selectedDocTypes.size === 0; // empty = "all types"
 
-  return (
-    <div className="space-y-3">
-      {/* Search (only show when >3 packets) */}
-      {exportablePackets.length > 3 && (
+  const useCompact = exportablePackets.length > COMPACT_FILE_SELECTOR_THRESHOLD;
+
+  const fileListContent = (
+    <>
+      {/* Search — always in dropdown; when inline only if >3 */}
+      {(useCompact || exportablePackets.length > 3) && (
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
           <input
@@ -156,7 +215,7 @@ function PacketSelector({
             className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 placeholder-gray-400"
           />
           {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2">
+            <button type="button" onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2">
               <X className="h-3.5 w-3.5 text-gray-400 hover:text-gray-600" />
             </button>
           )}
@@ -167,6 +226,7 @@ function PacketSelector({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <button
+            type="button"
             onClick={allSelected ? selectNone : selectAll}
             className="text-xs font-medium text-[#9e2339] hover:underline"
           >
@@ -179,7 +239,7 @@ function PacketSelector({
       </div>
 
       {/* Packet checkboxes (scrollable for many) */}
-      <div className={`space-y-1 ${exportablePackets.length > 6 ? "max-h-48 overflow-y-auto pr-1" : ""}`}>
+      <div className={`space-y-1 ${exportablePackets.length > 6 || useCompact ? "max-h-56 overflow-y-auto pr-1" : ""}`}>
         {visiblePackets.map((pkt) => {
           const checked = selectedPacketIds.has(pkt.id);
           const docCount = pkt.documents?.length || 0;
@@ -213,6 +273,32 @@ function PacketSelector({
           <p className="text-xs text-gray-400 text-center py-3">No files match "{searchQuery}"</p>
         )}
       </div>
+    </>
+  );
+
+  return (
+    <div className={`space-y-3 ${useCompact ? "relative" : ""}`} ref={useCompact ? compactRef : undefined}>
+      {useCompact ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setCompactOpen((o) => !o)}
+            className="w-full flex items-center justify-between gap-2 px-4 py-3 text-sm border border-gray-200 dark:border-neutral-600 rounded-xl bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 hover:border-gray-300 dark:hover:border-neutral-500 transition-colors text-left"
+          >
+            <span className="font-medium">
+              {selectedPacketIds.size} of {exportablePackets.length} file{exportablePackets.length !== 1 ? "s" : ""} selected
+            </span>
+            <ChevronDown className={`h-4 w-4 text-gray-400 shrink-0 transition-transform ${compactOpen ? "rotate-180" : ""}`} />
+          </button>
+          {compactOpen && (
+            <div className="absolute left-0 right-0 z-30 mt-1 p-3 bg-white dark:bg-neutral-800 rounded-xl border border-gray-200 dark:border-neutral-600 shadow-lg space-y-3">
+              {fileListContent}
+            </div>
+          )}
+        </>
+      ) : (
+        fileListContent
+      )}
 
       {/* Document type filter pills */}
       {allDocTypes.length > 1 && (
@@ -400,20 +486,340 @@ function ExportSummaryPanel({ packets, formatName }) {
 }
 
 // ============================================================================
+// SECTION 3: DOCUMENT FILL (upload form, pick packet, AI fill)
+// ============================================================================
+function DocumentFillSection({ packets, exportablePackets }) {
+  const toast = useToast();
+  const fileInputRef = useRef(null);
+  const abortRef = useRef(null);
+  const [formFile, setFormFile] = useState(null);
+  const [formBase64, setFormBase64] = useState(null);
+  const [selectedPacketId, setSelectedPacketId] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [model, setModel] = useState("retab-small");
+  const [color, setColor] = useState("#000080");
+  const [filling, setFilling] = useState(false);
+  const [filledPdfUrl, setFilledPdfUrl] = useState(null);
+  const [formData, setFormData] = useState(null);
+  const [error, setError] = useState(null);
+  const elapsed = useElapsedTimer(filling);
+
+  const buildInstructions = useCallback(
+    (packetId) => {
+      const pkt = exportablePackets.find((p) => p.id === packetId);
+      if (!pkt) return "";
+      const lines = [];
+      for (const doc of pkt.documents || []) {
+        const { data } = getMergedExtractionData(doc, schemas);
+        if (!data) continue;
+        for (const [key, value] of Object.entries(data)) {
+          if (value != null && value !== "" && !key.startsWith("reasoning___") && !key.startsWith("source___")) {
+            lines.push(`${key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}: ${value}`);
+          }
+        }
+      }
+      return [...new Set(lines)].join("\n");
+    },
+    [exportablePackets]
+  );
+
+  const handleFileSelect = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFormFile(file);
+    setFilledPdfUrl(null);
+    setFormData(null);
+    setError(null);
+    try {
+      setFormBase64(await fileToBase64(file));
+    } catch {
+      toast.error("Failed to read file");
+    }
+  }, [toast]);
+
+  const handleDrop = useCallback(async (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    if (!file.type.includes("pdf")) {
+      toast.error("Only PDF files are supported");
+      return;
+    }
+    setFormFile(file);
+    setFilledPdfUrl(null);
+    setFormData(null);
+    setError(null);
+    try {
+      setFormBase64(await fileToBase64(file));
+    } catch {
+      toast.error("Failed to read file");
+    }
+  }, [toast]);
+
+  const handlePacketChange = useCallback(
+    (e) => {
+      const id = e.target.value;
+      setSelectedPacketId(id);
+      if (id) setInstructions(buildInstructions(id));
+    },
+    [buildInstructions]
+  );
+
+  const handleFill = useCallback(async () => {
+    if (!formBase64 || !instructions.trim()) {
+      toast.error("Upload a form and provide instructions");
+      return;
+    }
+    setFilling(true);
+    setError(null);
+    setFilledPdfUrl(null);
+    setFormData(null);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      const result = await agentFillDocument({
+        document: formBase64,
+        filename: formFile?.name || "form.pdf",
+        instructions: instructions.trim(),
+        model,
+        color,
+      });
+      if (controller.signal.aborted) return;
+      if (result.filled_document?.url) setFilledPdfUrl(result.filled_document.url);
+      if (result.form_data) setFormData(result.form_data);
+      toast.success("Form filled successfully");
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      console.error("Fill failed:", err);
+      setError(err.message);
+      toast.error("Fill failed: " + err.message);
+    } finally {
+      setFilling(false);
+      abortRef.current = null;
+    }
+  }, [formBase64, formFile, instructions, model, color, toast]);
+
+  const handleCancel = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+    setFilling(false);
+    toast.info?.("Fill cancelled") ?? toast.success("Fill cancelled");
+  }, [toast]);
+
+  const handleDownload = useCallback(() => {
+    if (!filledPdfUrl) return;
+    const base64Content = filledPdfUrl.split(",")[1];
+    if (!base64Content) return;
+    const byteCharacters = atob(base64Content);
+    const bytes = new Uint8Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) bytes[i] = byteCharacters.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `filled-${formFile?.name || "form.pdf"}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [filledPdfUrl, formFile]);
+
+  const handleFormReset = useCallback(() => {
+    setFormFile(null);
+    setFormBase64(null);
+    setFilledPdfUrl(null);
+    setFormData(null);
+    setError(null);
+    setInstructions("");
+    setSelectedPacketId("");
+  }, []);
+
+  if (exportablePackets.length === 0) {
+    return (
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        Process documents from the Upload tab first. Then you can use their data to fill PDF forms here.
+      </p>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="space-y-4">
+        {!formFile ? (
+          <div
+            onDrop={handleDrop}
+            onDragOver={(e) => e.preventDefault()}
+            onClick={() => fileInputRef.current?.click()}
+            className="border-2 border-dashed border-gray-300 dark:border-neutral-600 rounded-xl p-8 text-center cursor-pointer hover:border-[#9e2339]/40 hover:bg-[#9e2339]/5 transition-all"
+          >
+            <Upload className="h-8 w-8 mx-auto mb-3 text-gray-400" />
+            <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Drop a blank PDF form here</p>
+            <p className="text-xs text-gray-400 mt-1">or click to browse</p>
+            <input ref={fileInputRef} type="file" accept=".pdf" onChange={handleFileSelect} className="hidden" />
+          </div>
+        ) : (
+          <div className="border border-gray-200 dark:border-neutral-600 rounded-lg p-3 flex items-center justify-between bg-gray-50 dark:bg-neutral-800">
+            <div className="flex items-center gap-2 min-w-0">
+              <FileText className="h-4 w-4 text-[#9e2339] shrink-0" />
+              <span className="text-sm text-gray-700 dark:text-gray-200 truncate">{formFile.name}</span>
+              <span className="text-xs text-gray-400">({(formFile.size / 1024).toFixed(0)} KB)</span>
+            </div>
+            <button type="button" onClick={handleFormReset} className="p-1 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded">
+              <X className="h-3.5 w-3.5 text-gray-400" />
+            </button>
+          </div>
+        )}
+        {formFile && (
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">Data source</label>
+              <select
+                value={selectedPacketId}
+                onChange={handlePacketChange}
+                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-700 dark:text-gray-200"
+              >
+                <option value="">Select a processed packet...</option>
+                {exportablePackets.map((pkt) => (
+                  <option key={pkt.id} value={pkt.id}>
+                    {pkt.filename || pkt.name} ({pkt.documents?.length || 0} docs)
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">
+                Fill instructions
+                {selectedPacketId && <span className="text-gray-400 font-normal"> (auto-generated from packet)</span>}
+              </label>
+              <textarea
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                placeholder={"Enter field values, e.g.:\nBuyer Name: John Smith\nProperty Address: 123 Main St"}
+                rows={6}
+                className="w-full px-3 py-2 text-xs font-mono border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-700 dark:text-gray-200 resize-y"
+              />
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">Model</label>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-700 dark:text-gray-200"
+                >
+                  {Object.entries(RETAB_MODELS)
+                    .filter(([id]) => !id.startsWith("auto"))
+                    .map(([id, m]) => (
+                      <option key={id} value={id}>
+                        {m.name} — ${m.costPerPage.toFixed(3)}/pg
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 flex items-center gap-1">
+                  <Palette className="h-3 w-3" /> Color
+                </label>
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="w-12 h-[38px] rounded-lg border border-gray-200 dark:border-neutral-600 cursor-pointer"
+                />
+              </div>
+            </div>
+            {filling ? (
+              <Button onClick={handleCancel} className="w-full bg-gray-600 hover:bg-gray-700 text-white">
+                <Square className="h-4 w-4 mr-2" /> Cancel ({formatElapsed(elapsed)})
+              </Button>
+            ) : (
+              <Button
+                onClick={handleFill}
+                disabled={!instructions.trim()}
+                className="w-full bg-[#9e2339] hover:bg-[#9e2339]/90 text-white"
+              >
+                <Upload className="h-4 w-4 mr-2" /> Fill document
+              </Button>
+            )}
+            {error && (
+              <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <div>
+        {filledPdfUrl ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Filled document</h4>
+              <Button size="sm" onClick={handleDownload} className="bg-[#9e2339] hover:bg-[#9e2339]/90 text-white">
+                <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
+              </Button>
+            </div>
+            <div
+              className="border border-gray-200 dark:border-neutral-600 rounded-lg overflow-hidden bg-gray-100 dark:bg-neutral-900"
+              style={{ height: "400px" }}
+            >
+              <iframe src={filledPdfUrl} title="Filled document preview" className="w-full h-full" />
+            </div>
+            {formData?.length > 0 && (
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {formData.map((field, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between text-xs px-2 py-1.5 rounded bg-gray-50 dark:bg-neutral-800"
+                  >
+                    <span className="text-gray-500 dark:text-gray-400 font-mono">{field.key}</span>
+                    <span className="text-gray-700 dark:text-gray-200 truncate max-w-[60%]">{field.value || "\u2014"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div
+            className="border-2 border-dashed border-gray-200 dark:border-neutral-700 rounded-xl flex items-center justify-center text-center"
+            style={{ height: "320px" }}
+          >
+            <div>
+              {filling ? (
+                <>
+                  <Loader2 className="h-8 w-8 mx-auto mb-3 text-[#9e2339] animate-spin" />
+                  <p className="text-sm text-gray-600 dark:text-gray-300 font-medium">Filling form...</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{formatElapsed(elapsed)} elapsed</p>
+                </>
+              ) : (
+                <>
+                  <Eye className="h-8 w-8 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
+                  <p className="text-sm text-gray-400 dark:text-gray-500">Filled document preview</p>
+                  <p className="text-xs text-gray-300 dark:text-gray-600 mt-1">Upload a form and fill to see results</p>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // MAIN EXPORT PAGE
 // ============================================================================
 
-export function ExportPage({ packets, stats, onNavigateToFillForms }) {
+export function ExportPage({ packets, stats }) {
   const toast = useToast();
-  const [selectedPreset, setSelectedPreset] = useState(loadLastFormat);
+  const [selectedGenericPreset, setSelectedGenericPreset] = useState(loadLastGenericFormat);
+  const [selectedTpsPreset, setSelectedTpsPreset] = useState(loadLastTpsFormat);
   const [exporting, setExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
-  const [showMoreFormats, setShowMoreFormats] = useState(false);
+  const [exportTarget, setExportTarget] = useState(null);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
 
-  // Packet & doc type selection state
   const [selectedPacketIds, setSelectedPacketIds] = useState(new Set());
-  const [selectedDocTypes, setSelectedDocTypes] = useState(new Set()); // empty = all types
+  const [selectedDocTypes, setSelectedDocTypes] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState("");
 
   // Exportable packets
@@ -459,55 +865,80 @@ export function ExportPage({ packets, stats, onNavigateToFillForms }) {
     return filteredPackets.reduce((sum, p) => sum + (p.documents?.length || 0), 0);
   }, [filteredPackets]);
 
-  const currentPreset = useMemo(() => {
-    return EXPORT_PRESETS.find((p) => p.id === selectedPreset) || EXPORT_PRESETS.find((p) => p.id === "generic_json");
-  }, [selectedPreset]);
+  const currentGenericPreset = useMemo(
+    () => EXPORT_PRESETS.find((p) => p.id === selectedGenericPreset) || EXPORT_PRESETS.find((p) => p.id === "generic_csv"),
+    [selectedGenericPreset]
+  );
+  const currentTpsPreset = useMemo(
+    () => EXPORT_PRESETS.find((p) => p.id === selectedTpsPreset) || EXPORT_PRESETS.find((p) => p.id === "softpro"),
+    [selectedTpsPreset]
+  );
 
-  const outcomeDescription = useMemo(() => {
-    if (!currentPreset || filteredPackets.length === 0) return null;
-    return getExportOutcomeDescription(currentPreset.id, filteredPackets);
-  }, [currentPreset, filteredPackets]);
-
-  const handleFormatChange = useCallback((e) => {
-    setSelectedPreset(e.target.value);
-    setExportSuccess(false);
-  }, []);
+  const outcomeGeneric = useMemo(() => {
+    if (!currentGenericPreset || filteredPackets.length === 0) return null;
+    return getExportOutcomeDescription(currentGenericPreset.id, filteredPackets);
+  }, [currentGenericPreset, filteredPackets]);
+  const outcomeTps = useMemo(() => {
+    if (!currentTpsPreset || filteredPackets.length === 0) return null;
+    return getExportOutcomeDescription(currentTpsPreset.id, filteredPackets);
+  }, [currentTpsPreset, filteredPackets]);
 
   const doReset = useCallback(() => {
-    setSelectedPreset("generic_csv");
+    setSelectedGenericPreset("generic_csv");
+    setSelectedTpsPreset("softpro");
     setSelectedPacketIds(new Set(exportablePackets.map((p) => p.id)));
     setSelectedDocTypes(new Set());
     setSearchQuery("");
     setExportSuccess(false);
-    try { localStorage.removeItem(LAST_FORMAT_KEY); localStorage.removeItem(RECENT_EXPORTS_KEY); } catch {}
+    setExportTarget(null);
+    try {
+      localStorage.removeItem(LAST_GENERIC_FORMAT_KEY);
+      localStorage.removeItem(LAST_TPS_FORMAT_KEY);
+      localStorage.removeItem(RECENT_EXPORTS_KEY);
+    } catch {}
     toast.success("Export settings reset");
   }, [exportablePackets, toast]);
 
-  const handleReset = useCallback(() => {
-    setResetConfirmOpen(true);
-  }, []);
+  const handleReset = useCallback(() => setResetConfirmOpen(true), []);
 
-  const handleExport = useCallback(async () => {
-    if (filteredPackets.length === 0 || filteredDocCount === 0) {
-      toast.error("No documents selected. Check your file and type selections.");
-      return;
-    }
-    setExporting(true);
-    setExportSuccess(false);
-    try {
-      const filename = await executePresetExport(currentPreset.id, filteredPackets);
-      saveLastFormat(currentPreset.id);
-      saveRecentExport({ presetId: currentPreset.id, timestamp: new Date().toISOString(), docCount: filteredDocCount, filename });
-      toast.success(`Exported ${filteredDocCount} documents: ${filename}`);
-      setExportSuccess(true);
-      setTimeout(() => setExportSuccess(false), 3000);
-    } catch (err) {
-      console.error("Export failed:", err);
-      toast.error("Export failed: " + err.message);
-    } finally {
-      setExporting(false);
-    }
-  }, [filteredPackets, filteredDocCount, currentPreset, toast]);
+  const runExport = useCallback(
+    async (preset, sectionKey) => {
+      if (filteredPackets.length === 0 || filteredDocCount === 0) {
+        toast.error("No documents selected. Check your file and type selections.");
+        return;
+      }
+      setExporting(true);
+      setExportSuccess(false);
+      setExportTarget(sectionKey);
+      try {
+        const filename = await executePresetExport(preset.id, filteredPackets);
+        if (sectionKey === "generic") saveLastGenericFormat(preset.id);
+        else saveLastTpsFormat(preset.id);
+        saveRecentExport({
+          presetId: preset.id,
+          timestamp: new Date().toISOString(),
+          docCount: filteredDocCount,
+          filename,
+        });
+        toast.success(`Exported ${filteredDocCount} documents: ${filename}`);
+        setExportSuccess(true);
+        setTimeout(() => {
+          setExportSuccess(false);
+          setExportTarget(null);
+        }, 3000);
+      } catch (err) {
+        console.error("Export failed:", err);
+        toast.error("Export failed: " + err.message);
+        setExportTarget(null);
+      } finally {
+        setExporting(false);
+      }
+    },
+    [filteredPackets, filteredDocCount, toast]
+  );
+
+  const handleGenericExport = useCallback(() => runExport(currentGenericPreset, "generic"), [runExport, currentGenericPreset]);
+  const handleTpsExport = useCallback(() => runExport(currentTpsPreset, "tps"), [runExport, currentTpsPreset]);
 
   // Empty state
   if (exportablePackets.length === 0) {
@@ -593,132 +1024,102 @@ export function ExportPage({ packets, stats, onNavigateToFillForms }) {
                   setSearchQuery={setSearchQuery}
                 />
               </div>
-
-              {/* Step 2: Format — primary options + More formats… */}
-              <div>
-                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1 block">
-                  2. Format
-                </label>
-                <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">
-                  Choose a format for the export. Use “More formats…” for other systems.
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  {getPrimaryPresets().map((preset) => {
-                    const isSelected = selectedPreset === preset.id;
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => handleFormatChange({ target: { value: preset.id } })}
-                        className={`px-4 py-2.5 text-sm font-medium rounded-lg border transition-colors ${
-                          isSelected
-                            ? "bg-[#9e2339]/10 dark:bg-[#9e2339]/20 border-[#9e2339]/40 text-[#9e2339] dark:text-[#9e2339]"
-                            : "bg-white dark:bg-neutral-800 border-gray-200 dark:border-neutral-600 text-gray-700 dark:text-gray-300 hover:border-[#9e2339]/30"
-                        }`}
-                      >
-                        {preset.name}
-                      </button>
-                    );
-                  })}
-                  {currentPreset && !PRIMARY_PRESET_IDS.includes(selectedPreset) && (
-                    <span className="px-4 py-2.5 text-sm font-medium rounded-lg border border-[#9e2339]/30 bg-[#9e2339]/10 dark:bg-[#9e2339]/20 text-[#9e2339] dark:text-[#9e2339]">
-                      {currentPreset.name}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setShowMoreFormats((v) => !v)}
-                    className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-neutral-500"
-                  >
-                    {showMoreFormats ? "Fewer formats" : "More formats…"}
-                  </button>
-                </div>
-                {showMoreFormats && (
-                  <select
-                    value={selectedPreset}
-                    onChange={(e) => { handleFormatChange(e); setShowMoreFormats(false); }}
-                    className="mt-3 w-full px-4 py-3 text-sm font-medium border border-gray-200 dark:border-neutral-600 rounded-xl bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-[#9e2339]/30 focus:border-[#9e2339] transition-colors cursor-pointer appearance-none"
-                    style={{
-                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-                      backgroundRepeat: "no-repeat",
-                      backgroundPosition: "right 12px center",
-                      paddingRight: "40px",
-                    }}
-                  >
-                    {PRESET_GROUPS.map((group) => {
-                      const presets = getPresetsForGroup(group);
-                      if (presets.length === 0) return null;
-                      return (
-                        <optgroup key={group.label} label={group.label}>
-                          {presets.map((preset) => (
-                            <option key={preset.id} value={preset.id}>{preset.name} ({preset.format.toUpperCase()})</option>
-                          ))}
-                        </optgroup>
-                      );
-                    })}
-                  </select>
-                )}
-                {/* Format description */}
-                {currentPreset && (
-                  <div className="flex items-center gap-3 px-4 py-3 mt-2 bg-gray-50 dark:bg-neutral-800/50 rounded-lg border border-gray-100 dark:border-neutral-700">
-                    <p className="text-sm text-gray-700 dark:text-gray-300 flex-1">{currentPreset.description}</p>
-                    <span className="text-[10px] px-2 py-1 rounded-md bg-gray-200 dark:bg-neutral-700 text-gray-500 dark:text-gray-400 uppercase font-mono tracking-wider shrink-0">
-                      {currentPreset.format}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Step 3: Download */}
-              <div>
-                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">
-                  3. Download
-                </label>
-                {outcomeDescription && (
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                    You'll get: {outcomeDescription.fileCount} {outcomeDescription.format.toUpperCase()} file{outcomeDescription.fileCount !== 1 ? "s" : ""}, {outcomeDescription.rowOrDocCount} {outcomeDescription.format === "json" ? "document" : "row"}{outcomeDescription.rowOrDocCount !== 1 ? "s" : ""}{outcomeDescription.columns?.length ? `. Columns: ${outcomeDescription.columns.slice(0, 6).map((c) => c.replace(/_/g, " ")).join(", ")}${outcomeDescription.columns.length > 6 ? "…" : ""}` : ""}
-                  </p>
-                )}
-                <Button
-                  onClick={handleExport}
-                  disabled={exporting || filteredDocCount === 0}
-                  className={`w-full py-3 text-sm font-semibold rounded-xl transition-all ${
-                    exportSuccess
-                      ? "bg-green-600 hover:bg-green-700 text-white"
-                      : "bg-[#9e2339] hover:bg-[#9e2339]/90 text-white"
-                  }`}
-                >
-                  {exporting ? (
-                    <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Exporting...</>
-                  ) : exportSuccess ? (
-                    <><SailboatIcon className="h-4 w-4 mr-2" /> Exported!</>
-                  ) : filteredDocCount === 0 ? (
-                    <>No documents selected</>
-                  ) : (
-                    <><Download className="h-4 w-4 mr-2" /> Export {filteredDocCount} doc{filteredDocCount !== 1 ? "s" : ""} as {currentPreset?.name}</>
-                  )}
-                </Button>
-              </div>
             </div>
 
             {/* Right column: Summary (2/5) */}
             <div className="lg:col-span-2">
-              <ExportSummaryPanel packets={filteredPackets} formatName={currentPreset?.name} />
+              <ExportSummaryPanel packets={filteredPackets} formatName={currentGenericPreset?.name} />
             </div>
           </div>
 
-          {onNavigateToFillForms && (
-            <div className="border-t border-gray-200 dark:border-neutral-700 pt-6">
-              <button
-                type="button"
-                onClick={onNavigateToFillForms}
-                className="flex items-center gap-2 text-sm text-[#9e2339] hover:text-[#9e2339]/80 dark:text-[#9e2339] dark:hover:text-[#9e2339]/80 font-medium transition-colors"
+          {/* Section 1: Generic data */}
+          <div className="border border-gray-200 dark:border-neutral-700 rounded-xl p-5 bg-white dark:bg-neutral-900/50">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">1. Generic data</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              Export as CSV, JSON, XLSX, or industry standards (MISMO, UCD, ALTA).
+            </p>
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="min-w-[200px] flex-1">
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block">Format</label>
+                <select
+                  value={selectedGenericPreset}
+                  onChange={(e) => setSelectedGenericPreset(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100"
+                >
+                  {getPresetsByIds(GENERIC_PRESET_IDS).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.format.toUpperCase()})</option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                onClick={handleGenericExport}
+                disabled={exporting || filteredDocCount === 0}
+                className={`shrink-0 ${exportSuccess && exportTarget === "generic" ? "bg-green-600 hover:bg-green-700" : "bg-[#9e2339] hover:bg-[#9e2339]/90"} text-white`}
               >
-                <FileEdit className="h-4 w-4" />
-                Fill a form with extracted data
-              </button>
+                {exporting && exportTarget === "generic" ? (
+                  <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Exporting...</>
+                ) : exportSuccess && exportTarget === "generic" ? (
+                  <><SailboatIcon className="h-4 w-4 mr-2" /> Exported!</>
+                ) : (
+                  <><Download className="h-4 w-4 mr-2" /> Download {currentGenericPreset?.name}</>
+                )}
+              </Button>
             </div>
-          )}
+            {outcomeGeneric && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                You'll get: {outcomeGeneric.fileCount} {outcomeGeneric.format.toUpperCase()} file{outcomeGeneric.fileCount !== 1 ? "s" : ""}, {outcomeGeneric.rowOrDocCount} {outcomeGeneric.format === "json" ? "document" : "row"}{outcomeGeneric.rowOrDocCount !== 1 ? "s" : ""}{outcomeGeneric.columns?.length ? `. Columns: ${outcomeGeneric.columns.slice(0, 5).map((c) => c.replace(/_/g, " ")).join(", ")}${outcomeGeneric.columns.length > 5 ? "…" : ""}` : ""}
+              </p>
+            )}
+          </div>
+
+          {/* Section 2: TPS export */}
+          <div className="border border-gray-200 dark:border-neutral-700 rounded-xl p-5 bg-white dark:bg-neutral-900/50">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">2. Title Production Systems</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              Export for RamQuest, Qualia, SoftPro, ResWare, TitleExpress, STEPS, and others.
+            </p>
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="min-w-[200px] flex-1">
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 block">Format</label>
+                <select
+                  value={selectedTpsPreset}
+                  onChange={(e) => setSelectedTpsPreset(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100"
+                >
+                  {getPresetsByIds(TPS_PRESET_IDS).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.format.toUpperCase()})</option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                onClick={handleTpsExport}
+                disabled={exporting || filteredDocCount === 0}
+                className={`shrink-0 ${exportSuccess && exportTarget === "tps" ? "bg-green-600 hover:bg-green-700" : "bg-[#9e2339] hover:bg-[#9e2339]/90"} text-white`}
+              >
+                {exporting && exportTarget === "tps" ? (
+                  <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Exporting...</>
+                ) : exportSuccess && exportTarget === "tps" ? (
+                  <><SailboatIcon className="h-4 w-4 mr-2" /> Exported!</>
+                ) : (
+                  <><Download className="h-4 w-4 mr-2" /> Download {currentTpsPreset?.name}</>
+                )}
+              </Button>
+            </div>
+            {outcomeTps && (
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                You'll get: {outcomeTps.fileCount} {outcomeTps.format.toUpperCase()} file{outcomeTps.fileCount !== 1 ? "s" : ""}, {outcomeTps.rowOrDocCount} {outcomeTps.format === "json" ? "document" : "row"}{outcomeTps.rowOrDocCount !== 1 ? "s" : ""}.
+              </p>
+            )}
+          </div>
+
+          {/* Section 3: Form fill */}
+          <div className="border border-gray-200 dark:border-neutral-700 rounded-xl p-5 bg-white dark:bg-neutral-900/50">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">3. Form fill</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+              Upload a blank PDF form and fill it with extracted data using AI.
+            </p>
+            <DocumentFillSection packets={packets} exportablePackets={exportablePackets} />
+          </div>
         </div>
       </div>
     </div>

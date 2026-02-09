@@ -683,7 +683,7 @@ export const EXPORT_PRESETS = [
   },
   {
     id: "tps_stewart",
-    name: "Stewart TPS",
+    name: "STEPS",
     category: "generic",
     description: "Stewart Title production JSON format",
     format: "json",
