@@ -832,7 +832,7 @@ function App() {
               <div className="flex flex-col -space-y-0.5">
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-xl tracking-wide text-gray-900 dark:text-white" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
-                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.2</span>
+                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.2.5</span>
                 </div>
                 <span className="text-[9px] tracking-wider text-gray-400 dark:text-neutral-500" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
               </div>
@@ -846,13 +846,13 @@ function App() {
             
             {/* Center: Navigation */}
             {isSetupComplete && (
-              <nav className="flex items-center gap-1 bg-gray-100 dark:bg-neutral-700 rounded-lg p-1">
+              <nav className="flex items-center gap-1 bg-gray-100 dark:bg-neutral-800 rounded-lg p-1">
                   <button
                     onClick={() => setViewMode(ViewMode.DASHBOARD)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
                       viewMode === ViewMode.DASHBOARD
-                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
-                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
+                        ? isDark ? "bg-white text-gray-900 shadow-md ring-1 ring-neutral-400/50" : "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 dark:text-neutral-200 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-neutral-600"
                     }`}
                   >
                     Home
@@ -862,8 +862,8 @@ function App() {
                     onClick={() => setViewMode(ViewMode.UPLOAD)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5 ${
                       viewMode === ViewMode.UPLOAD
-                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
-                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
+                        ? isDark ? "bg-white text-gray-900 shadow-md ring-1 ring-neutral-400/50" : "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 dark:text-neutral-200 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-neutral-600"
                     }`}
                   >
                     Upload
@@ -877,8 +877,8 @@ function App() {
                     title={hasPackets ? "View processing results" : "Results (no items yet)"}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
                       viewMode === ViewMode.PROCESSING || viewMode === ViewMode.RESULTS
-                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
-                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
+                        ? isDark ? "bg-white text-gray-900 shadow-md ring-1 ring-neutral-400/50" : "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 dark:text-neutral-200 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-neutral-600"
                     }`}
                   >
                     Results
@@ -889,8 +889,8 @@ function App() {
                     title={hasNeedsReview ? `${stats.needsReview} document(s) need review` : "Review queue (empty if none need review)"}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-1.5 ${
                       viewMode === ViewMode.REVIEW
-                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
-                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
+                        ? isDark ? "bg-white text-gray-900 shadow-md ring-1 ring-neutral-400/50" : "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 dark:text-neutral-200 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-neutral-600"
                     }`}
                   >
                     Review
@@ -903,8 +903,8 @@ function App() {
                     onClick={() => setViewMode(ViewMode.EXPORT)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
                       viewMode === ViewMode.EXPORT
-                        ? "bg-white dark:bg-neutral-600 text-gray-900 dark:text-white shadow-sm"
-                        : "text-gray-600 dark:text-neutral-300 hover:text-gray-900 dark:hover:text-white"
+                        ? isDark ? "bg-white text-gray-900 shadow-md ring-1 ring-neutral-400/50" : "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 dark:text-neutral-200 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-neutral-600"
                     }`}
                   >
                     Export
@@ -914,9 +914,9 @@ function App() {
             
             {/* Right: Actions */}
             {isSetupComplete && (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1">
                 {/* Username badge */}
-                <span className="text-xs text-gray-500 dark:text-neutral-400 hidden sm:inline">{getUsername()}</span>
+                <span className="text-xs text-gray-500 dark:text-neutral-400 hidden sm:inline mr-1">{getUsername()}</span>
                 <div className="relative group">
                   <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500 dark:text-neutral-400">
                     <Menu className="h-4 w-4" />
@@ -945,15 +945,6 @@ function App() {
                       Schemas
                     </button>
                     <div className="border-t border-gray-100 dark:border-neutral-700 my-1" />
-                    {/* Preferences */}
-                    <button
-                      onClick={toggleDarkMode}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:text-neutral-200 dark:hover:bg-neutral-700"
-                    >
-                      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                      {isDark ? "Light Mode" : "Dark Mode"}
-                    </button>
-                    <div className="border-t border-gray-100 dark:border-neutral-700 my-1" />
                     {/* Admin & Support */}
                     <button
                       onClick={() => setViewMode(ViewMode.ADMIN)}
@@ -979,6 +970,16 @@ function App() {
                     </button>
                   </div>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-gray-500 dark:text-neutral-400"
+                  onClick={toggleDarkMode}
+                  title={isDark ? "Light mode" : "Dark mode"}
+                  aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                >
+                  {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                </Button>
               </div>
             )}
           </div>
