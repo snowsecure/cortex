@@ -261,34 +261,13 @@ function AdvancedFeaturesSection({ config, onChange }) {
   );
 }
 
-// Global quality presets (same as ProcessingConfigOverride)
-const SETTINGS_PRESETS = [
-  { id: "draft", name: "Draft", model: "retab-micro", nConsensus: 1, imageDpi: 150, costOptimize: false },
-  { id: "costopt", name: "Cost Opt.", model: "retab-small", nConsensus: 1, imageDpi: 192, costOptimize: true },
-  { id: "standard", name: "Standard", model: "retab-small", nConsensus: 1, imageDpi: 192, costOptimize: false },
-  { id: "production", name: "Production", model: "retab-small", nConsensus: 3, imageDpi: 192, costOptimize: true },
-  { id: "best", name: "Best", model: "retab-large", nConsensus: 4, imageDpi: 192, costOptimize: false },
-];
-
-function getSettingsPreset(config) {
-  for (const preset of SETTINGS_PRESETS) {
-    if (
-      config.model === preset.model &&
-      config.nConsensus === preset.nConsensus &&
-      config.imageDpi === preset.imageDpi &&
-      (config.costOptimize ?? false) === preset.costOptimize
-    ) {
-      return preset.id;
-    }
-  }
-  return null;
-}
-
+// Use QUALITY_PRESETS from retabConfig as single source of truth (same as ProcessingConfigOverride / upload quality)
 function PresetSelector({ settings, onBatchChange }) {
-  const activePreset = getSettingsPreset(settings);
+  const activePreset = getActivePreset(settings);
+  const activeId = activePreset === "custom" ? null : activePreset;
   
   const applyPreset = (presetId) => {
-    const preset = SETTINGS_PRESETS.find((p) => p.id === presetId);
+    const preset = QUALITY_PRESETS.find((p) => p.id === presetId);
     if (preset) {
       onBatchChange({
         model: preset.model,
@@ -302,8 +281,8 @@ function PresetSelector({ settings, onBatchChange }) {
   return (
     <SettingSection icon={Zap} title="Quick Presets">
       <div className="grid grid-cols-5 gap-2">
-        {SETTINGS_PRESETS.map((preset) => {
-          const isActive = activePreset === preset.id;
+        {QUALITY_PRESETS.map((preset) => {
+          const isActive = activeId === preset.id;
           return (
             <button
               key={preset.id}
@@ -572,7 +551,7 @@ export function ProcessingConfigOverride({ config, onChange, globalConfig }) {
                 <p className="text-xs font-medium">Review Threshold</p>
               </div>
               <select
-                value={currentConfig.confidenceThreshold ?? 0.7}
+                value={currentConfig.confidenceThreshold ?? 0.75}
                 onChange={(e) => handleCustomChange("confidenceThreshold", parseFloat(e.target.value))}
                 className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
               >

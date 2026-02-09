@@ -21,7 +21,7 @@ export const DEFAULT_CONFIG = {
   temperature: 0.0,
   
   // Confidence threshold for auto-approval (0-1)
-  confidenceThreshold: 0.7,
+  confidenceThreshold: 0.75,
   
   // Processing concurrency
   concurrency: 5,

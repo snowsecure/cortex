@@ -1758,7 +1758,7 @@ function EnvAndConfig() {
     { setting: "nConsensus", default: "1", options: "1-5 (multiplies cost)" },
     { setting: "imageDpi", default: "192", options: "96, 150, 192, 300" },
     { setting: "temperature", default: "0", options: "0.0-1.0" },
-    { setting: "confidenceThreshold", default: "0.7", options: "0-1 (review threshold)" },
+    { setting: "confidenceThreshold", default: "0.75", options: "0-1 (review threshold)" },
   ];
   
   return (

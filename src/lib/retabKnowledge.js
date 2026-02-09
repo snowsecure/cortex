@@ -595,7 +595,7 @@ ${strategies.map((s, i) => `${i + 1}. **${s.name}** (${s.impact} impact)\n   ${s
 • Top review reasons: ${metrics.topReviewReasons?.slice(0, 3).join(", ") || "N/A"}
 
 **Why Documents Need Review:**
-1. Confidence score below threshold (${((currentConfig.confidenceThreshold || 0.7) * 100).toFixed(0)}%)
+1. Confidence score below threshold (${((currentConfig.confidenceThreshold || 0.75) * 100).toFixed(0)}%)
 2. Critical fields missing or uncertain
 3. Document type unrecognized
 4. Extraction conflicts or anomalies
@@ -699,7 +699,7 @@ ${metrics.errorRate > 0.05
 • Model: ${currentConfig.model || "retab-small"}
 • Consensus: ${currentConfig.nConsensus || 1}x
 • DPI: ${currentConfig.imageDpi || 192}
-• Confidence Threshold: ${((currentConfig.confidenceThreshold || 0.7) * 100).toFixed(0)}%`,
+• Confidence Threshold: ${((currentConfig.confidenceThreshold || 0.75) * 100).toFixed(0)}%`,
   };
 }
 
