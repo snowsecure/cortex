@@ -241,7 +241,7 @@ app.get("/api/status", (req, res) => {
       database: "connected",
       stats,
       usage,
-      version: "0.4.0",
+      version: "0.4.2",
     });
   } catch (error) {
     res.status(500).json({ error: safeErrorMessage(error) });
@@ -1288,7 +1288,7 @@ app.get("/api/debug/status", (req, res) => {
       stats,
       usage,
       activeSession: activeSession ? { id: activeSession.id, status: activeSession.status } : null,
-      version: "0.4.0",
+      version: "0.4.2",
       env: process.env.NODE_ENV || "development",
     });
   } catch (error) {
@@ -1396,7 +1396,7 @@ const server = app.listen(PORT, () => {
   const dbPath = process.env.DB_PATH || "./data";
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║  SAIL-IDP Backend Server v0.4.0                              ║
+║  SAIL-IDP Backend Server v0.4.2                              ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Mode:          ${isProduction ? "Production" : "Development"}                                    ║
 ║  API Server:    http://localhost:${PORT}                        ║
