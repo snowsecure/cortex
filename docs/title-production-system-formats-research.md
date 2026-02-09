@@ -852,20 +852,20 @@ DOCUMENTS:
 
 ## Key Takeaways for Integration
 
-### If building a universal data import:
+### If Building a Universal Data Import
 1. **MISMO XML** is the safest common denominator — all major systems support it
 2. **CSV with standardized headers** is the simplest fallback for bulk data
 3. **JSON via REST/GraphQL** is the modern path (Qualia, SoftPro, ClosingCorp)
 4. **UCD XML (MISMO v3.3)** is required for anything touching GSE/lender workflows
 
-### Priority integration targets:
+### Priority Integration Targets
 1. **SoftPro** — largest market share, REST API available
 2. **Qualia** — fastest growing, modern GraphQL API
 3. **ResWare** — enterprise segment, SOAP + newer REST via Qualia
 4. **RamQuest** — large installed base, Closing Market SDK
 5. **TitleExpress** — First American ecosystem, AgentNet XML
 
-### Recommended approach:
+### Recommended Approach
 - Build a **MISMO XML parser/generator** as the core translation layer
 - Add **system-specific adapters** for each TPS's proprietary API
 - Support **CSV import/export** as a universal fallback

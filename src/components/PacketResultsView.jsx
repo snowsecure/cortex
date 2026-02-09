@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
-import { cn, getMergedExtractionData, getDocumentQualityTier } from "../lib/utils";
+import { cn, getMergedExtractionData, getDocumentQualityTier, NOT_IN_DOCUMENT_VALUE, NOT_IN_DOCUMENT_LABEL } from "../lib/utils";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
@@ -33,7 +33,7 @@ function timeAgo(timestamp) {
   const now = Date.now();
   const then = new Date(timestamp).getTime();
   const diffSec = Math.floor((now - then) / 1000);
-  if (diffSec < 60) return "just now";
+  if (diffSec < 60) return "Just now";
   const diffMin = Math.floor(diffSec / 60);
   if (diffMin < 60) return `${diffMin}m ago`;
   const diffHr = Math.floor(diffMin / 60);
@@ -175,6 +175,7 @@ function formatFieldName(name) {
  * Format a value for display
  */
 function formatValue(value) {
+  if (value === NOT_IN_DOCUMENT_VALUE) return NOT_IN_DOCUMENT_LABEL;
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number') {
@@ -295,7 +296,7 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
   const correctedCount = editedFields ? Object.keys(editedFields).length : 0;
 
   return (
-    <div className="border-l-2 border-gray-200 dark:border-neutral-700 ml-4">
+    <div>
       {/* Document header row */}
       <div 
         className={cn(
@@ -319,8 +320,11 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
                 {displayName}
               </span>
               {catOverride && (
-                <span className="text-[10px] font-medium text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5">
-                  retyped{catOverride.isCustom ? " (custom)" : ""}
+                <span
+                  className="text-[10px] font-medium text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5"
+                  title="The document category was manually assigned during review. “(Custom)” indicates a free-text type, not a preset schema."
+                >
+                  Category manually assigned{catOverride.isCustom ? " (Custom)" : ""}
                 </span>
               )}
               {pagesDisplay && (
@@ -346,7 +350,7 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
               <p className="text-xs text-green-600 dark:text-green-400 mt-0.5 flex items-center gap-1">
                 <ShieldCheck className="h-3 w-3 shrink-0" />
                 <span>
-                  Sealed{(document.reviewedBy || document.reviewed_by) ? ` by ${document.reviewedBy || document.reviewed_by}` : ""}
+                  Sealed{(document.reviewedBy || document.reviewed_by) ? <> by <span className="font-normal">{document.reviewedBy || document.reviewed_by}</span></> : ""}
                   {(document.reviewedAt || document.reviewed_at) && (
                     <span className="text-green-500/70 dark:text-green-400/60"> · {timeAgo(document.reviewedAt || document.reviewed_at)}</span>
                   )}
@@ -358,9 +362,9 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
         
         <div className="flex items-center gap-2 shrink-0" onClick={e => e.stopPropagation()}>
           {correctedCount > 0 && (
-            <Badge variant="default" className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 flex items-center gap-1">
+            <Badge variant="default" className="text-xs font-normal bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 flex items-center gap-1">
               <PenLine className="h-3 w-3" />
-              {correctedCount} edited by reviewer
+              {correctedCount} Fields Edited by {document.reviewedBy || document.reviewed_by || "reviewer"}
             </Badge>
           )}
           {lowConfCount > 0 && (
@@ -472,7 +476,7 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
                     {formatFieldName(key)}
                     {isCorrected && (
                       <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium inline-flex items-center gap-0.5">
-                        <PenLine className="h-2.5 w-2.5" /> edited
+                        <PenLine className="h-2.5 w-2.5" /> Edited
                       </span>
                     )}
                     {!isCorrected && likelihood !== undefined && (

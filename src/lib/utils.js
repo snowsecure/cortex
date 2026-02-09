@@ -123,6 +123,26 @@ export function getExtractionData(extraction) {
   return { data, likelihoods };
 }
 
+/** Sentinel stored in editedFields when the reviewer marks a field as "not in document". */
+export const NOT_IN_DOCUMENT_VALUE = "__NOT_IN_DOCUMENT__";
+
+/** UI label for the not-in-document sentinel (single source of truth for display). */
+export const NOT_IN_DOCUMENT_LABEL = "Not Found / Not Present";
+
+/**
+ * For export: replace sentinel with "N/A" so the raw value never appears in CSV/JSON etc.
+ */
+export function valueForExport(value) {
+  return value === NOT_IN_DOCUMENT_VALUE ? "N/A" : value;
+}
+
+/**
+ * For UI display: show NOT_IN_DOCUMENT_LABEL when the value is the not-in-document sentinel.
+ */
+export function displayValue(value) {
+  return value === NOT_IN_DOCUMENT_VALUE ? NOT_IN_DOCUMENT_LABEL : (value ?? "");
+}
+
 /**
  * Get extraction data with user corrections (editedFields) merged in.
  * This is the single source of truth for "final data" after human review.

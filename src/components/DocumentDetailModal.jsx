@@ -19,7 +19,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
 import { getCategoryDisplayName } from "../lib/documentCategories";
-import { getMergedExtractionData } from "../lib/utils";
+import { getMergedExtractionData, NOT_IN_DOCUMENT_VALUE, NOT_IN_DOCUMENT_LABEL } from "../lib/utils";
 import { schemas } from "../schemas/index";
 import * as api from "../lib/api";
 import { pdfBlobCache } from "../lib/pdfCache";
@@ -238,7 +238,7 @@ function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loa
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
-            onClick={() => setZoom(Math.min(200, zoom + 25))}
+            onClick={() => setZoom(Math.min(700, zoom + 25))}
           >
             <ZoomIn className="h-4 w-4" />
           </Button>
@@ -344,6 +344,7 @@ export function DocumentDetailModal({ document, packet, onClose }) {
   
   // Format field value for display
   const formatValue = (value) => {
+    if (value === NOT_IN_DOCUMENT_VALUE) return <span className="text-gray-400 italic">{NOT_IN_DOCUMENT_LABEL}</span>;
     if (value === null || value === undefined) return <span className="text-gray-400 italic">null</span>;
     if (value === "") return <span className="text-gray-400 italic">empty</span>;
     if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -517,7 +518,7 @@ export function DocumentDetailModal({ document, packet, onClose }) {
                             {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
                             {isCorrected && (
                               <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5 rounded inline-flex items-center gap-0.5">
-                                <PenLine className="h-2.5 w-2.5" /> edited by reviewer
+                                <PenLine className="h-2.5 w-2.5" /> Edited by <span className="font-normal">{document.reviewedBy ?? document.reviewed_by ?? "reviewer"}</span>
                               </span>
                             )}
                           </p>

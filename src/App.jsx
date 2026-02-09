@@ -196,8 +196,8 @@ function WelcomeDashboard({
         </div>
       )}
       {/* Subtle whoosh of color */}
-      <div className="absolute -top-24 -right-24 w-[28rem] h-[28rem] rounded-full bg-[#9e2339]/[0.08] dark:bg-[#9e2339]/[0.15] blur-[100px] pointer-events-none" aria-hidden />
-      <div className="absolute -bottom-32 left-1/4 w-80 h-80 rounded-full bg-sky-300/15 dark:bg-sky-500/10 blur-[80px] pointer-events-none" aria-hidden />
+      <div className="absolute -top-24 -right-24 w-[28rem] h-[28rem] rounded-full bg-[#9e2339]/[0.14] dark:bg-[#9e2339]/[0.24] blur-[100px] pointer-events-none" aria-hidden />
+      <div className="absolute -bottom-32 -left-16 w-80 h-80 rounded-full bg-sky-300/25 dark:bg-sky-500/18 blur-[80px] pointer-events-none" aria-hidden />
       <div className="relative z-10 max-w-3xl w-full">
         {/* Hero */}
         <div className="text-center mb-6">
@@ -379,6 +379,8 @@ function App() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [showSchemaExplorer, setShowSchemaExplorer] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  // Only show completion banner when a run just finished in this session (not when viewing old results)
+  const [showCompletionBanner, setShowCompletionBanner] = useState(false);
   const [runConfig, setRunConfig] = useState(null); // Per-run config override
   const [pendingDropFiles, setPendingDropFiles] = useState(null); // Files dropped on homepage
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, action: null });
@@ -502,6 +504,7 @@ function App() {
     if (batchStatus === BatchStatus.PROCESSING) {
       setCurrentRunSaved(false);
       setBannerDismissed(false);
+      setShowCompletionBanner(false);
     }
   }, [batchStatus]);
 
@@ -514,6 +517,7 @@ function App() {
 
     if (wasProcessing && isNowComplete && packets.length > 0) {
       setViewMode(ViewMode.RESULTS);
+      setShowCompletionBanner(true);
 
       // Show browser notification — permission was already requested at start
       if (notificationsSupported() && Notification.permission === "granted") {
@@ -832,7 +836,7 @@ function App() {
               <div className="flex flex-col -space-y-0.5">
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-xl tracking-wide text-gray-900 dark:text-white" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
-                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.2.5</span>
+                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.2.6</span>
                 </div>
                 <span className="text-[9px] tracking-wider text-gray-400 dark:text-neutral-500" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
               </div>
@@ -1204,8 +1208,8 @@ function App() {
               />
             </div>
 
-            {/* Completion banner — dismissable */}
-            {isComplete && !isProcessing && !bannerDismissed && (
+            {/* Completion banner — only when a run just finished in this session */}
+            {isComplete && !isProcessing && showCompletionBanner && !bannerDismissed && (
               <div className="mt-3 px-4 py-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg shrink-0 relative">
                 {/* Dismiss */}
                 <button

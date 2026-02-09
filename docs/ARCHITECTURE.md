@@ -5,7 +5,7 @@
 1. [System Overview](#system-overview)
 2. [Technology Stack](#technology-stack)
 3. [Architecture Diagram](#architecture-diagram)
-4. [Detailed Mermaid flowcharts](#detailed-mermaid-flowcharts)
+4. [Detailed Mermaid Flowcharts](#detailed-mermaid-flowcharts)
 5. [Document Processing Pipeline](#document-processing-pipeline)
 6. [Database Schema](#database-schema)
 7. [REST API Reference](#rest-api-reference)
@@ -129,11 +129,11 @@ Retab API          - https://api.retab.com/v1
 
 ---
 
-## Detailed Mermaid flowcharts
+## Detailed Mermaid Flowcharts
 
 The following Mermaid diagrams provide technical detail for CORTEX subsystems. They reference `App.jsx`, `useBatchQueue.js`, `usePacketPipeline.js`, `server.js`, `db/database.js`, and `exportPresets.js`.
 
-### System architecture (high-level)
+### System Architecture (High-Level)
 
 Browser (React SPA), Express server, storage (SQLite + temp PDFs), and Retab API with main data flows. Pipeline calls the Retab proxy for split/classify/extract; BatchQueue syncs and restores via REST; uploads write to temp-pdfs.
 
@@ -175,7 +175,7 @@ flowchart LR
   multerUpload --> tempPdfs
 ```
 
-### End-to-end document processing pipeline
+### End-to-End Document Processing Pipeline
 
 Single packet from user adding a file to final state (completed, needs_review, or failed). Includes split API, per-document extract with schema and checkNeedsReview, aggregation, and POST /api/packets/:id/complete.
 
@@ -228,7 +228,7 @@ flowchart TB
   sync --> pktFailed
 ```
 
-### Upload flow (client and server paths)
+### Upload Flow (Client and Server Paths)
 
 Two paths: client-side base64 (no DB until /complete) or server upload (POST /api/upload, temp file, packet in DB). Convergence: packet in queue with base64 or packet_id; server-stored packets get base64 via GET /api/packets/:id/file when processing runs.
 
@@ -269,7 +269,7 @@ flowchart TB
   converge --> processing
 ```
 
-### Single-packet processing (split to extract)
+### Single-Packet Processing (Split to Extract)
 
 Detail inside processPacket: split phase (splitDocument Retab call, filter empty, fallback to other), then doc placeholders, then extract phase in parallel batches (schema, annotate, extractDocument with retries, checkNeedsReview). Output: result with documents, stats, usage; caller syncs via /complete.
 
@@ -319,7 +319,7 @@ flowchart TB
   result --> syncComplete
 ```
 
-### Review workflow
+### Review Workflow
 
 From GET /api/sessions/:id/review-queue to opening a document in DocumentDetailModal (PDF via GET file or cache, getMergedExtractionData), user edits and Approve/Reject/Save, POST /api/documents/:id/review, server updates documents row and returns; UI updates queue and packet counts.
 
@@ -358,7 +358,7 @@ flowchart TB
   returnDoc --> uiUpdate
 ```
 
-### Export flow
+### Export Flow
 
 Select scope (packets and doc types), choose preset (generic or TPS), execute preset.transform(packets), download file, save last format and recent exports to localStorage.
 
@@ -384,7 +384,7 @@ flowchart TB
   saveLast --> recentExports
 ```
 
-### Database entity relationship
+### Database Entity Relationship
 
 Tables: sessions (PK id), packets (PK id, FK session_id), documents (PK id, FK packet_id, FK session_id). Cardinality 1:N. Additional tables: history (session_id nullable), usage_daily (date PK), export_templates (PK id).
 
@@ -404,7 +404,7 @@ flowchart LR
   exportTemplates
 ```
 
-### Packet state machine
+### Packet State Machine
 
 Packet status transitions: queued to splitting to extracting; from extracting to completed, needs_review, or failed. Optional retry from failed back to queued.
 
@@ -422,7 +422,7 @@ stateDiagram-v2
   failed --> [*]
 ```
 
-### Document state machine
+### Document State Machine
 
 Document status: pending (after split) to processing (extract in progress) to completed, needs_review, or failed. From needs_review, human action to completed (approved) or rejected.
 
@@ -441,7 +441,7 @@ stateDiagram-v2
   rejected --> [*]
 ```
 
-### API request lifecycle (server)
+### API Request Lifecycle (Server)
 
 Incoming request through Helmet, CORS, express.json, rate limit (general vs proxy), then route: DB read/write, upload (Multer to temp-pdfs), or Retab proxy (Api-Key, fetchWithRetry to api.retab.com/v1). Response: JSON or file stream; static dist for SPA.
 
@@ -1131,7 +1131,7 @@ Get recent failed packets.
 | `CORS_ORIGIN` | `*` | Allowed CORS origins (comma-separated) |
 | `VITE_API_URL` | `http://localhost:3005` | API base URL for frontend |
 
-### localStorage Keys
+### Local Storage Keys
 
 | Key | Preserved on Reset | Description |
 |-----|-------------------|-------------|

@@ -4,7 +4,7 @@
  * for SoftPro, RamQuest, Qualia, AIM+, ResWare, TitleExpress, and industry standards.
  */
 
-import { getMergedExtractionData } from "./utils";
+import { getMergedExtractionData, valueForExport } from "./utils";
 import { schemas } from "../schemas/index";
 
 // ============================================================================
@@ -35,9 +35,9 @@ function flattenObject(obj, prefix = "") {
     } else if (typeof value === "object" && !Array.isArray(value)) {
       Object.assign(result, flattenObject(value, newKey));
     } else if (Array.isArray(value)) {
-      result[newKey] = value.join("; ");
+      result[newKey] = value.map(v => valueForExport(v)).join("; ");
     } else {
-      result[newKey] = value;
+      result[newKey] = valueForExport(value);
     }
   }
   return result;
@@ -87,8 +87,20 @@ function downloadFile(content, filename, type) {
   URL.revokeObjectURL(url);
 }
 
+/** Normalize data for export: replace not-in-document sentinel with "N/A" at every level. */
+function normalizeDataForExport(data) {
+  if (data == null || typeof data !== "object") return valueForExport(data);
+  if (Array.isArray(data)) return data.map(normalizeDataForExport);
+  const out = {};
+  for (const [k, v] of Object.entries(data)) {
+    out[k] = normalizeDataForExport(v);
+  }
+  return out;
+}
+
 /** Extract all documents with merged data from packets.
- *  Uses category override (from reviewer reclassification) when available. */
+ *  Uses category override (from reviewer reclassification) when available.
+ *  Data is normalized so "not in document" sentinel exports as "N/A". */
 function extractAllDocs(packets) {
   const docs = [];
   for (const pkt of packets) {
@@ -107,7 +119,7 @@ function extractAllDocs(packets) {
         pages: doc.pages,
         confidence: doc.extractionConfidence,
         needsReview: doc.needsReview,
-        data: data || {},
+        data: normalizeDataForExport(data || {}),
       });
     }
   }
@@ -118,9 +130,9 @@ function mapFields(data, fieldMap) {
   const mapped = {};
   for (const [target, source] of Object.entries(fieldMap)) {
     if (typeof source === "function") {
-      mapped[target] = source(data);
+      mapped[target] = valueForExport(source(data));
     } else {
-      mapped[target] = data[source] ?? "";
+      mapped[target] = valueForExport(data[source] ?? "");
     }
   }
   return mapped;

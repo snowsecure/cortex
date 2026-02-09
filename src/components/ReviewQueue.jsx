@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle, ShieldCheck, Loader2, Tag, Plus, X, Search } from "lucide-react";
+import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle, ShieldCheck, Loader2, Tag, Plus, X, Search, SearchSlash } from "lucide-react";
 import { Button } from "./ui/button";
 import { SailboatIcon } from "./ui/sailboat-icon";
-import { getMergedExtractionData } from "../lib/utils";
+import { getMergedExtractionData, NOT_IN_DOCUMENT_VALUE, NOT_IN_DOCUMENT_LABEL } from "../lib/utils";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { schemas } from "../schemas/index";
 import { PDFPreview } from "./DocumentDetailModal";
@@ -547,6 +547,14 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
         finalEdits = trueEdits;
       }
 
+      // Default any review field (critical/warning) the human didn't give a value to "not in document"
+      const reviewFieldKeys = [...categorizedFields.critical, ...categorizedFields.warning].map(f => f.key);
+      for (const key of reviewFieldKeys) {
+        const v = finalEdits[key];
+        if (v === undefined || v === null || v === "")
+          finalEdits[key] = NOT_IN_DOCUMENT_VALUE;
+      }
+
       const result = await onApprove(current.document, current.packet, {
         editedFields: finalEdits,
         approvedFields: { ...currentApprovedFields },
@@ -591,7 +599,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
       savingRef.current = false;
       // Stay on current document so the user can retry
     }
-  }, [current, saving, onApprove, editedFields, currentApprovedFields, categoryOverrides, reviewItems.length]);
+  }, [current, saving, onApprove, editedFields, currentApprovedFields, categoryOverrides, reviewItems.length, categorizedFields]);
 
   // --- Early return: empty state (AFTER all hooks) ---
 
@@ -635,10 +643,11 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     const isVeryLow = typeof likelihood === "number" && likelihood < LOW_THRESHOLD;
     const isLow = typeof likelihood === "number" && likelihood < REVIEW_THRESHOLD;
     const displayValue = editedFields[key] !== undefined ? editedFields[key] : (value ?? "");
+    const isNotInDocument = displayValue === NOT_IN_DOCUMENT_VALUE;
     const confidencePct = typeof likelihood === "number" ? Math.round(likelihood * 100) : null;
     const wasEdited = editedFields[key] !== undefined;
     const isObject = typeof displayValue === "object" && displayValue !== null;
-    const displayStr = isObject ? JSON.stringify(displayValue, null, 2) : String(displayValue);
+    const displayStr = isNotInDocument ? NOT_IN_DOCUMENT_LABEL : (isObject ? JSON.stringify(displayValue, null, 2) : String(displayValue));
 
     // Confidence dot color
     const dotColor = isEmpty || isVeryLow
@@ -655,6 +664,10 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
         : isLow
           ? "border-l-2 border-l-amber-300 dark:border-l-amber-600"
           : "border-l-2 border-l-transparent";
+
+    const setNotInDocument = () => {
+      setAllEdits(prev => ({ ...prev, [currentDocId]: { ...(prev[currentDocId] || {}), [key]: NOT_IN_DOCUMENT_VALUE } }));
+    };
 
     return (
       <div key={key} className={`flex items-start gap-1.5 px-2 py-1 ${borderAccent}`}>
@@ -674,6 +687,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
           {isObject ? (
             <textarea
               id={`review-field-${key}`}
+              title={isNotInDocument ? NOT_IN_DOCUMENT_LABEL : undefined}
               className={`w-full px-1.5 py-0.5 text-[11px] leading-tight border rounded resize-none transition-colors
                 ${wasEdited ? "border-blue-200 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10" :
                   isEmpty || isVeryLow ? "border-red-200 dark:border-red-800 bg-red-50/20 dark:bg-red-900/10" :
@@ -691,25 +705,37 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
             <input
               id={`review-field-${key}`}
               type="text"
+              title={isNotInDocument ? NOT_IN_DOCUMENT_LABEL : undefined}
               className={`w-full px-1.5 py-0.5 text-[11px] border rounded transition-colors
                 ${wasEdited ? "border-blue-200 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10" :
                   isEmpty || isVeryLow ? "border-red-200 dark:border-red-800 bg-red-50/20 dark:bg-red-900/10" :
                   "border-gray-200 dark:border-gray-600 bg-transparent"}
                 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-400`}
               value={displayStr}
-              placeholder={isEmpty ? "—" : ""}
+              placeholder={isEmpty && !isNotInDocument ? "—" : ""}
               onChange={(e) => setAllEdits(prev => ({ ...prev, [currentDocId]: { ...(prev[currentDocId] || {}), [key]: e.target.value } }))}
             />
           )}
         </div>
 
-        {/* Confidence % */}
-        {confidencePct !== null && (
-          <span className={`text-[9px] tabular-nums shrink-0 pt-[5px] w-6 text-right ${
-            isVeryLow ? "text-red-500" : isLow ? "text-amber-500" : "text-gray-400"
-          }`}>{confidencePct}%</span>
-        )}
-        {confidencePct === null && <span className="w-6 shrink-0" />}
+        {/* Confidence % + Not in document — grouped so layout is consistent with or without score */}
+        <div className="flex items-center gap-1 shrink-0 pt-[5px]">
+          {confidencePct !== null && (
+            <span className={`text-[9px] tabular-nums w-6 text-right ${
+              isVeryLow ? "text-red-500" : isLow ? "text-amber-500" : "text-gray-400"
+            }`}>{confidencePct}%</span>
+          )}
+          {confidencePct === null && <span className="w-6" aria-hidden />}
+          <button
+            type="button"
+            onClick={setNotInDocument}
+            className="p-0.5 rounded text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500 inline-flex items-center justify-center"
+            title="Not in document"
+            aria-label="Mark as not present in this document"
+          >
+            <SearchSlash className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
     );
   };
