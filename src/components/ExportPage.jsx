@@ -2,26 +2,19 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from "react"
 import {
   Download,
   FileText,
-  Check,
   Loader2,
-  Upload,
-  ChevronDown,
-  Palette,
-  AlertTriangle,
   X,
-  Eye,
   Search,
-  Square,
   RotateCcw,
+  FileEdit,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { ConfirmDialog } from "./ui/confirm-dialog";
 import { SailboatIcon } from "./ui/sailboat-icon";
 import { useToast } from "./ui/toast";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getMergedExtractionData, aggregateDocumentQuality } from "../lib/utils";
-import { EXPORT_PRESETS, executePresetExport } from "../lib/exportPresets";
-import { agentFillDocument, fileToBase64 } from "../lib/retab";
-import { RETAB_MODELS } from "../lib/retabConfig";
+import { EXPORT_PRESETS, executePresetExport, getExportOutcomeDescription } from "../lib/exportPresets";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { schemas } from "../schemas/index";
 
@@ -40,10 +33,17 @@ const PRESET_GROUPS = [
   { label: "Other", category: "generic", filter: (p) => !["generic_json", "generic_csv", "generic_xlsx"].includes(p.id) },
 ];
 
+/** Default recommended format and 2–3 primary options shown first; rest under "More formats…" */
+const PRIMARY_PRESET_IDS = ["generic_csv", "generic_json", "softpro"];
+
 function getPresetsForGroup(group) {
   let presets = EXPORT_PRESETS.filter((p) => p.category === group.category);
   if (group.filter) presets = presets.filter(group.filter);
   return presets;
+}
+
+function getPrimaryPresets() {
+  return PRIMARY_PRESET_IDS.map((id) => EXPORT_PRESETS.find((p) => p.id === id)).filter(Boolean);
 }
 
 // ============================================================================
@@ -51,7 +51,7 @@ function getPresetsForGroup(group) {
 // ============================================================================
 
 function loadLastFormat() {
-  try { return localStorage.getItem(LAST_FORMAT_KEY) || "generic_json"; } catch { return "generic_json"; }
+  try { return localStorage.getItem(LAST_FORMAT_KEY) || "generic_csv"; } catch { return "generic_csv"; }
 }
 function saveLastFormat(presetId) {
   try { localStorage.setItem(LAST_FORMAT_KEY, presetId); } catch {}
@@ -73,36 +73,6 @@ function timeAgo(isoString) {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
-}
-
-// ============================================================================
-// ELAPSED TIMER HOOK
-// ============================================================================
-
-function useElapsedTimer(running) {
-  const [elapsed, setElapsed] = useState(0);
-  const startRef = useRef(null);
-
-  useEffect(() => {
-    if (running) {
-      startRef.current = Date.now();
-      setElapsed(0);
-      const id = setInterval(() => {
-        setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
-      }, 1000);
-      return () => clearInterval(id);
-    } else {
-      setElapsed(0);
-      startRef.current = null;
-    }
-  }, [running]);
-
-  return elapsed;
-}
-
-function formatElapsed(s) {
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 // ============================================================================
@@ -248,7 +218,7 @@ function PacketSelector({
       {allDocTypes.length > 1 && (
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Filter by type</span>
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Document types</span>
             {!allDocTypesSelected && (
               <button onClick={() => setSelectedDocTypes(new Set())} className="text-xs text-[#9e2339] hover:underline">
                 Clear filter
@@ -284,7 +254,8 @@ function PacketSelector({
 // EXPORT SUMMARY PANEL (right column)
 // ============================================================================
 
-function ExportSummaryPanel({ packets }) {
+function ExportSummaryPanel({ packets, formatName }) {
+  const [showDetails, setShowDetails] = useState(false);
   const { docCount, typeBreakdown, quality, packetCount } = useMemo(() => {
     const types = {};
     const allDocs = [];
@@ -310,7 +281,13 @@ function ExportSummaryPanel({ packets }) {
 
   const recentExports = useMemo(() => loadRecentExports(), []);
 
-  // Quality score color
+  const qualityHint = docCount > 0
+    ? quality.needsAttention > 0
+      ? `Includes ${quality.needsAttention} needing review`
+      : "All reviewed"
+    : null;
+
+  // Quality score color (for details section)
   const scoreColor = quality.score >= 80
     ? "text-green-600 dark:text-green-400"
     : quality.score >= 60
@@ -323,371 +300,101 @@ function ExportSummaryPanel({ packets }) {
       : "bg-red-400";
 
   return (
-    <div className="bg-gray-50 dark:bg-neutral-800/50 rounded-xl border border-gray-200 dark:border-neutral-700 p-5 space-y-5">
-      <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">What you're exporting</h4>
+    <div className="bg-gray-50 dark:bg-neutral-800/50 rounded-xl border border-gray-200 dark:border-neutral-700 p-5 space-y-4">
+      <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Summary</h4>
 
       <div>
-        <div className="text-3xl font-bold text-gray-900 dark:text-gray-100 tabular-nums">{docCount}</div>
+        <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 tabular-nums">{docCount}</div>
         <p className="text-sm text-gray-500 dark:text-gray-400">
           document{docCount !== 1 ? "s" : ""} from {packetCount} file{packetCount !== 1 ? "s" : ""}
         </p>
       </div>
 
-      {typeBreakdown.length > 0 && (
-        <div className="space-y-1.5">
-          <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Document Types</h4>
-          <div className="space-y-1">
-            {typeBreakdown.slice(0, 6).map(({ category, count }) => (
-              <div key={category} className="flex items-center justify-between text-sm">
-                <span className="text-gray-700 dark:text-gray-300 truncate">{getCategoryDisplayName(category)}</span>
-                <span className="text-gray-400 dark:text-gray-500 tabular-nums ml-2 shrink-0">{count}</span>
-              </div>
-            ))}
-            {typeBreakdown.length > 6 && (
-              <p className="text-xs text-gray-400 dark:text-gray-500">+{typeBreakdown.length - 6} more types</p>
-            )}
-          </div>
-        </div>
+      {formatName && (
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          Format: <span className="font-medium">{formatName}</span>
+        </p>
       )}
 
-      {/* Data quality — holistic score */}
-      {docCount > 0 && (
-        <div className="space-y-2">
-          <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Data Quality</h4>
-
-          {/* Score + bar */}
-          <div className="flex items-center gap-3">
-            <span className={`text-2xl font-bold tabular-nums ${scoreColor}`}>{quality.score}%</span>
-            <div className="flex-1">
-              <div className="h-2 rounded-full overflow-hidden bg-gray-200 dark:bg-neutral-700">
-                <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${quality.score}%` }} />
-              </div>
-            </div>
-          </div>
-
-          {/* Breakdown */}
-          <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
-            {quality.verified > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-                <span>{quality.verified} human-verified</span>
-              </div>
-            )}
-            {quality.high > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-                <span>{quality.high} high-confidence extraction</span>
-              </div>
-            )}
-            {quality.unscored > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0" />
-                <span>{quality.unscored} awaiting confidence scores</span>
-              </div>
-            )}
-            {quality.needsAttention > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
-                <span>{quality.needsAttention} need{quality.needsAttention === 1 ? "s" : ""} review</span>
-              </div>
-            )}
-          </div>
-
-          {/* Field-level accuracy */}
-          {quality.fieldAccuracy !== null && quality.scoredFields > 0 && (
-            <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
-              {quality.highFields} of {quality.scoredFields} scored fields are high-confidence or human-corrected.
-            </p>
-          )}
-          {quality.fieldAccuracy === null && quality.totalFields > 0 && (
-            <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
-              {quality.totalFields} fields extracted — enable consensus mode for per-field confidence scores.
-            </p>
-          )}
-        </div>
+      {qualityHint && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">{qualityHint}</p>
       )}
 
-      {recentExports.length > 0 && (
-        <div className="space-y-1.5">
-          <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Recent Exports</h4>
-          <div className="space-y-1">
-            {recentExports.slice(0, 3).map((entry, i) => {
-              const preset = EXPORT_PRESETS.find((p) => p.id === entry.presetId);
-              return (
-                <div key={i} className="flex items-center justify-between text-xs">
-                  <span className="text-gray-600 dark:text-gray-400 truncate">{preset?.name || entry.presetId}</span>
-                  <span className="text-gray-400 dark:text-gray-500 shrink-0 ml-2">{timeAgo(entry.timestamp)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+      <button
+        type="button"
+        onClick={() => setShowDetails((v) => !v)}
+        className="text-xs font-medium text-[#9e2339] hover:underline"
+      >
+        {showDetails ? "Hide details" : "Show details"}
+      </button>
 
-// ============================================================================
-// DOCUMENT FILL SECTION (collapsible, with elapsed timer + cancel)
-// ============================================================================
-
-function DocumentFillSection({ packets, exportablePackets }) {
-  const toast = useToast();
-  const fileInputRef = useRef(null);
-  const abortRef = useRef(null);
-
-  const [formFile, setFormFile] = useState(null);
-  const [formBase64, setFormBase64] = useState(null);
-  const [selectedPacketId, setSelectedPacketId] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [model, setModel] = useState("retab-small");
-  const [color, setColor] = useState("#000080");
-  const [filling, setFilling] = useState(false);
-  const [filledPdfUrl, setFilledPdfUrl] = useState(null);
-  const [formData, setFormData] = useState(null);
-  const [error, setError] = useState(null);
-
-  const elapsed = useElapsedTimer(filling);
-
-  const buildInstructions = useCallback(
-    (packetId) => {
-      const pkt = exportablePackets.find((p) => p.id === packetId);
-      if (!pkt) return "";
-      const lines = [];
-      for (const doc of pkt.documents || []) {
-        const { data } = getMergedExtractionData(doc, schemas);
-        if (!data) continue;
-        for (const [key, value] of Object.entries(data)) {
-          if (value != null && value !== "" && !key.startsWith("reasoning___") && !key.startsWith("source___")) {
-            lines.push(`${key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}: ${value}`);
-          }
-        }
-      }
-      return [...new Set(lines)].join("\n");
-    },
-    [exportablePackets]
-  );
-
-  const handleFileSelect = useCallback(async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFormFile(file); setFilledPdfUrl(null); setFormData(null); setError(null);
-    try { setFormBase64(await fileToBase64(file)); } catch { toast.error("Failed to read file"); }
-  }, [toast]);
-
-  const handleDrop = useCallback(async (e) => {
-    e.preventDefault();
-    const file = e.dataTransfer?.files?.[0];
-    if (!file) return;
-    if (!file.type.includes("pdf")) { toast.error("Only PDF files are supported"); return; }
-    setFormFile(file); setFilledPdfUrl(null); setFormData(null); setError(null);
-    try { setFormBase64(await fileToBase64(file)); } catch { toast.error("Failed to read file"); }
-  }, [toast]);
-
-  const handlePacketChange = useCallback((e) => {
-    const id = e.target.value;
-    setSelectedPacketId(id);
-    if (id) setInstructions(buildInstructions(id));
-  }, [buildInstructions]);
-
-  const handleFill = useCallback(async () => {
-    if (!formBase64 || !instructions.trim()) { toast.error("Upload a form and provide instructions"); return; }
-    setFilling(true); setError(null); setFilledPdfUrl(null); setFormData(null);
-    // AbortController for cancel support
-    const controller = new AbortController();
-    abortRef.current = controller;
-    try {
-      const result = await agentFillDocument({
-        document: formBase64,
-        filename: formFile?.name || "form.pdf",
-        instructions: instructions.trim(),
-        model, color,
-      });
-      if (controller.signal.aborted) return;
-      if (result.filled_document?.url) setFilledPdfUrl(result.filled_document.url);
-      if (result.form_data) setFormData(result.form_data);
-      toast.success("Form filled successfully");
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      console.error("Fill failed:", err);
-      setError(err.message);
-      toast.error("Fill failed: " + err.message);
-    } finally {
-      setFilling(false);
-      abortRef.current = null;
-    }
-  }, [formBase64, formFile, instructions, model, color, toast]);
-
-  const handleCancel = useCallback(() => {
-    if (abortRef.current) abortRef.current.abort();
-    setFilling(false);
-    toast.info?.("Fill cancelled") ?? toast.success("Fill cancelled");
-  }, [toast]);
-
-  const handleDownload = useCallback(() => {
-    if (!filledPdfUrl) return;
-    const base64Content = filledPdfUrl.split(",")[1];
-    if (!base64Content) return;
-    const byteCharacters = atob(base64Content);
-    const bytes = new Uint8Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) bytes[i] = byteCharacters.charCodeAt(i);
-    const blob = new Blob([bytes], { type: "application/pdf" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = `filled-${formFile?.name || "form.pdf"}`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-  }, [filledPdfUrl, formFile]);
-
-  const handleReset = useCallback(() => {
-    setFormFile(null); setFormBase64(null); setFilledPdfUrl(null); setFormData(null); setError(null);
-    setInstructions(""); setSelectedPacketId("");
-  }, []);
-
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: Upload + Configure */}
-        <div className="space-y-4">
-          {!formFile ? (
-            <div
-              onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}
-              onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-gray-300 dark:border-neutral-600 rounded-xl p-8 text-center cursor-pointer hover:border-[#9e2339]/40 hover:bg-[#9e2339]/5 transition-all"
-            >
-              <Upload className="h-8 w-8 mx-auto mb-3 text-gray-400" />
-              <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Drop a blank PDF form here</p>
-              <p className="text-xs text-gray-400 mt-1">or click to browse</p>
-              <input ref={fileInputRef} type="file" accept=".pdf" onChange={handleFileSelect} className="hidden" />
-            </div>
-          ) : (
-            <div className="border border-gray-200 dark:border-neutral-600 rounded-lg p-3 flex items-center justify-between bg-gray-50 dark:bg-neutral-800">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText className="h-4 w-4 text-[#9e2339] shrink-0" />
-                <span className="text-sm text-gray-700 dark:text-gray-200 truncate">{formFile.name}</span>
-                <span className="text-xs text-gray-400">({(formFile.size / 1024).toFixed(0)} KB)</span>
-              </div>
-              <button onClick={handleReset} className="p-1 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded">
-                <X className="h-3.5 w-3.5 text-gray-400" />
-              </button>
-            </div>
-          )}
-
-          {formFile && (
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">Data Source</label>
-                <select value={selectedPacketId} onChange={handlePacketChange}
-                  className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-700 text-gray-700 dark:text-gray-200">
-                  <option value="">Select a processed packet...</option>
-                  {exportablePackets.map((pkt) => (
-                    <option key={pkt.id} value={pkt.id}>{pkt.filename || pkt.name} ({pkt.documents?.length || 0} docs)</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">
-                  Fill Instructions
-                  {selectedPacketId && <span className="text-gray-400 font-normal"> (auto-generated)</span>}
-                </label>
-                <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)}
-                  placeholder={"Enter field values, e.g.:\nBuyer Name: John Smith\nProperty Address: 123 Main St"}
-                  rows={8}
-                  className="w-full px-3 py-2 text-xs font-mono border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-700 text-gray-700 dark:text-gray-200 resize-y" />
-              </div>
-
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">Model</label>
-                  <select value={model} onChange={(e) => setModel(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-700 text-gray-700 dark:text-gray-200">
-                    {Object.entries(RETAB_MODELS).filter(([id]) => !id.startsWith("auto")).map(([id, m]) => (
-                      <option key={id} value={id}>{m.name} - ${m.costPerPage.toFixed(3)}/pg</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 flex items-center gap-1">
-                    <Palette className="h-3 w-3" /> Color
-                  </label>
-                  <input type="color" value={color} onChange={(e) => setColor(e.target.value)}
-                    className="w-12 h-[38px] rounded-lg border border-gray-200 dark:border-neutral-600 cursor-pointer" />
-                </div>
-              </div>
-
-              {/* Fill / Cancel button */}
-              {filling ? (
-                <div className="space-y-2">
-                  <Button onClick={handleCancel} className="w-full bg-gray-600 hover:bg-gray-700 text-white">
-                    <Square className="h-4 w-4 mr-2" /> Cancel ({formatElapsed(elapsed)})
-                  </Button>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 text-center">
-                    AI is analyzing the form and filling fields. This typically takes 30-90 seconds.
-                  </p>
-                </div>
-              ) : (
-                <Button onClick={handleFill} disabled={!instructions.trim()} className="w-full bg-[#9e2339] hover:bg-[#9e2339]/90 text-white">
-                  <Upload className="h-4 w-4 mr-2" /> Fill Document
-                </Button>
-              )}
-
-              {error && (
-                <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                  <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
-                  <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Right: Preview + Download */}
-        <div>
-          {filledPdfUrl ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Filled Document</h4>
-                <Button size="sm" onClick={handleDownload} className="bg-[#9e2339] hover:bg-[#9e2339]/90 text-white">
-                  <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
-                </Button>
-              </div>
-              <div className="border border-gray-200 dark:border-neutral-600 rounded-lg overflow-hidden bg-gray-100 dark:bg-neutral-900" style={{ height: "500px" }}>
-                <iframe src={filledPdfUrl} title="Filled document preview" className="w-full h-full" />
-              </div>
-              {formData?.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider mb-2">Detected Fields ({formData.length})</h4>
-                  <div className="max-h-48 overflow-y-auto space-y-1">
-                    {formData.map((field, i) => (
-                      <div key={i} className="flex items-center justify-between text-xs px-2 py-1.5 rounded bg-gray-50 dark:bg-neutral-800">
-                        <span className="text-gray-500 dark:text-gray-400 font-mono">{field.key}</span>
-                        <span className="text-gray-700 dark:text-gray-200 font-medium truncate max-w-[60%] text-right">{field.value || "\u2014"}</span>
-                      </div>
-                    ))}
+      {showDetails && (
+        <div className="space-y-4 pt-2 border-t border-gray-200 dark:border-neutral-700">
+          {typeBreakdown.length > 0 && (
+            <div className="space-y-1.5">
+              <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Document Types</h4>
+              <div className="space-y-1">
+                {typeBreakdown.slice(0, 6).map(({ category, count }) => (
+                  <div key={category} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700 dark:text-gray-300 truncate">{getCategoryDisplayName(category)}</span>
+                    <span className="text-gray-400 dark:text-gray-500 tabular-nums ml-2 shrink-0">{count}</span>
                   </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="border-2 border-dashed border-gray-200 dark:border-neutral-700 rounded-xl flex items-center justify-center text-center" style={{ height: "400px" }}>
-              <div>
-                {filling ? (
-                  <>
-                    <Loader2 className="h-8 w-8 mx-auto mb-3 text-[#9e2339] animate-spin" />
-                    <p className="text-sm text-gray-600 dark:text-gray-300 font-medium">Filling form...</p>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{formatElapsed(elapsed)} elapsed</p>
-                  </>
-                ) : (
-                  <>
-                    <Eye className="h-8 w-8 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
-                    <p className="text-sm text-gray-400 dark:text-gray-500">Filled document preview</p>
-                    <p className="text-xs text-gray-300 dark:text-gray-600 mt-1">Upload a form and fill it to see results here</p>
-                  </>
+                ))}
+                {typeBreakdown.length > 6 && (
+                  <p className="text-xs text-gray-400 dark:text-gray-500">+{typeBreakdown.length - 6} more types</p>
                 )}
               </div>
             </div>
           )}
+
+          {docCount > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Data Quality</h4>
+              <div className="flex items-center gap-3">
+                <span className={`text-xl font-bold tabular-nums ${scoreColor}`}>{quality.score}%</span>
+                <div className="flex-1">
+                  <div className="h-2 rounded-full overflow-hidden bg-gray-200 dark:bg-neutral-700">
+                    <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${quality.score}%` }} />
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                {quality.verified > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />{quality.verified} human-verified</div>}
+                {quality.high > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />{quality.high} high-confidence</div>}
+                {quality.unscored > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0" />{quality.unscored} awaiting scores</div>}
+                {quality.needsAttention > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />{quality.needsAttention} need{quality.needsAttention === 1 ? "s" : ""} review</div>}
+              </div>
+              {quality.fieldAccuracy !== null && quality.scoredFields > 0 && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
+                  {quality.highFields} of {quality.scoredFields} scored fields high-confidence or human-corrected.
+                </p>
+              )}
+              {quality.fieldAccuracy === null && quality.totalFields > 0 && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
+                  {quality.totalFields} fields extracted — enable consensus for per-field scores.
+                </p>
+              )}
+            </div>
+          )}
+
+          {recentExports.length > 0 && (
+            <div className="space-y-1.5">
+              <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Recent Exports</h4>
+              <div className="space-y-1">
+                {recentExports.slice(0, 3).map((entry, i) => {
+                  const preset = EXPORT_PRESETS.find((p) => p.id === entry.presetId);
+                  return (
+                    <div key={i} className="flex items-center justify-between text-xs">
+                      <span className="text-gray-600 dark:text-gray-400 truncate">{preset?.name || entry.presetId}</span>
+                      <span className="text-gray-400 dark:text-gray-500 shrink-0 ml-2">{timeAgo(entry.timestamp)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -696,12 +403,13 @@ function DocumentFillSection({ packets, exportablePackets }) {
 // MAIN EXPORT PAGE
 // ============================================================================
 
-export function ExportPage({ packets, stats }) {
+export function ExportPage({ packets, stats, onNavigateToFillForms }) {
   const toast = useToast();
   const [selectedPreset, setSelectedPreset] = useState(loadLastFormat);
   const [exporting, setExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
-  const [fillExpanded, setFillExpanded] = useState(false);
+  const [showMoreFormats, setShowMoreFormats] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
 
   // Packet & doc type selection state
   const [selectedPacketIds, setSelectedPacketIds] = useState(new Set());
@@ -755,22 +463,29 @@ export function ExportPage({ packets, stats }) {
     return EXPORT_PRESETS.find((p) => p.id === selectedPreset) || EXPORT_PRESETS.find((p) => p.id === "generic_json");
   }, [selectedPreset]);
 
+  const outcomeDescription = useMemo(() => {
+    if (!currentPreset || filteredPackets.length === 0) return null;
+    return getExportOutcomeDescription(currentPreset.id, filteredPackets);
+  }, [currentPreset, filteredPackets]);
+
   const handleFormatChange = useCallback((e) => {
     setSelectedPreset(e.target.value);
     setExportSuccess(false);
   }, []);
 
-  // Reset all export settings to defaults
-  const handleReset = useCallback(() => {
-    setSelectedPreset("generic_json");
+  const doReset = useCallback(() => {
+    setSelectedPreset("generic_csv");
     setSelectedPacketIds(new Set(exportablePackets.map((p) => p.id)));
     setSelectedDocTypes(new Set());
     setSearchQuery("");
     setExportSuccess(false);
-    setFillExpanded(false);
     try { localStorage.removeItem(LAST_FORMAT_KEY); localStorage.removeItem(RECENT_EXPORTS_KEY); } catch {}
     toast.success("Export settings reset");
   }, [exportablePackets, toast]);
+
+  const handleReset = useCallback(() => {
+    setResetConfirmOpen(true);
+  }, []);
 
   const handleExport = useCallback(async () => {
     if (filteredPackets.length === 0 || filteredDocCount === 0) {
@@ -800,8 +515,8 @@ export function ExportPage({ packets, stats }) {
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="px-6 pt-4 pb-0 shrink-0">
           <div className="max-w-5xl mx-auto">
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Export</h2>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Download extracted data or fill PDF forms</p>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Export data</h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Choose files and document types, pick a format, and download.</p>
           </div>
         </div>
         <div className="flex-1 flex items-center justify-center">
@@ -825,9 +540,9 @@ export function ExportPage({ packets, stats }) {
       <div className="px-6 pt-4 pb-0 shrink-0">
         <div className="max-w-5xl mx-auto flex items-start justify-between">
           <div>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Export</h2>
+            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Export data</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-              Select files and document types, pick a format, and download.
+              Choose files and document types, pick a format, and download.
             </p>
           </div>
           <Button
@@ -835,12 +550,23 @@ export function ExportPage({ packets, stats }) {
             size="sm"
             onClick={handleReset}
             className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 shrink-0 mt-0.5"
-            title="Reset export settings"
+            title="Reset selections"
           >
             <RotateCcw className="h-4 w-4" />
           </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={resetConfirmOpen}
+        onClose={() => setResetConfirmOpen(false)}
+        onConfirm={doReset}
+        title="Reset export settings"
+        message="Reset all file and format selections? Recent exports list will also be cleared."
+        confirmText="Reset"
+        cancelText="Cancel"
+        variant="warning"
+      />
 
       {/* Main content */}
       <div className="flex-1 overflow-y-auto px-6 py-6">
@@ -849,13 +575,13 @@ export function ExportPage({ packets, stats }) {
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
             {/* Left column: Export config (3/5) */}
             <div className="lg:col-span-3 space-y-5">
-              {/* Step 1: Select files */}
+              {/* Step 1: What to export */}
               <div>
                 <label className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1 block">
-                  1. Select files &amp; types
+                  What to export
                 </label>
                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">
-                  Choose which uploaded files and document types to include in the export.
+                  Include documents from these files. For document types below, only include the selected types—leave all unchecked for all types.
                 </p>
                 <PacketSelector
                   exportablePackets={exportablePackets}
@@ -868,37 +594,70 @@ export function ExportPage({ packets, stats }) {
                 />
               </div>
 
-              {/* Step 2: Format selector */}
+              {/* Step 2: Format — primary options + More formats… */}
               <div>
                 <label className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1 block">
-                  2. Choose format
+                  2. Format
                 </label>
                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">
-                  Pick your title production system, an industry standard, or a raw data format.
+                  Choose a format for the export. Use “More formats…” for other systems.
                 </p>
-                <select
-                  value={selectedPreset}
-                  onChange={handleFormatChange}
-                  className="w-full px-4 py-3 text-sm font-medium border border-gray-200 dark:border-neutral-600 rounded-xl bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-[#9e2339]/30 focus:border-[#9e2339] transition-colors cursor-pointer appearance-none"
-                  style={{
-                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-                    backgroundRepeat: "no-repeat",
-                    backgroundPosition: "right 12px center",
-                    paddingRight: "40px",
-                  }}
-                >
-                  {PRESET_GROUPS.map((group) => {
-                    const presets = getPresetsForGroup(group);
-                    if (presets.length === 0) return null;
+                <div className="flex flex-wrap items-center gap-2">
+                  {getPrimaryPresets().map((preset) => {
+                    const isSelected = selectedPreset === preset.id;
                     return (
-                      <optgroup key={group.label} label={group.label}>
-                        {presets.map((preset) => (
-                          <option key={preset.id} value={preset.id}>{preset.name} ({preset.format.toUpperCase()})</option>
-                        ))}
-                      </optgroup>
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => handleFormatChange({ target: { value: preset.id } })}
+                        className={`px-4 py-2.5 text-sm font-medium rounded-lg border transition-colors ${
+                          isSelected
+                            ? "bg-[#9e2339]/10 dark:bg-[#9e2339]/20 border-[#9e2339]/40 text-[#9e2339] dark:text-[#9e2339]"
+                            : "bg-white dark:bg-neutral-800 border-gray-200 dark:border-neutral-600 text-gray-700 dark:text-gray-300 hover:border-[#9e2339]/30"
+                        }`}
+                      >
+                        {preset.name}
+                      </button>
                     );
                   })}
-                </select>
+                  {currentPreset && !PRIMARY_PRESET_IDS.includes(selectedPreset) && (
+                    <span className="px-4 py-2.5 text-sm font-medium rounded-lg border border-[#9e2339]/30 bg-[#9e2339]/10 dark:bg-[#9e2339]/20 text-[#9e2339] dark:text-[#9e2339]">
+                      {currentPreset.name}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowMoreFormats((v) => !v)}
+                    className="px-4 py-2.5 text-sm font-medium rounded-lg border border-gray-200 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-neutral-500"
+                  >
+                    {showMoreFormats ? "Fewer formats" : "More formats…"}
+                  </button>
+                </div>
+                {showMoreFormats && (
+                  <select
+                    value={selectedPreset}
+                    onChange={(e) => { handleFormatChange(e); setShowMoreFormats(false); }}
+                    className="mt-3 w-full px-4 py-3 text-sm font-medium border border-gray-200 dark:border-neutral-600 rounded-xl bg-white dark:bg-neutral-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-[#9e2339]/30 focus:border-[#9e2339] transition-colors cursor-pointer appearance-none"
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+                      backgroundRepeat: "no-repeat",
+                      backgroundPosition: "right 12px center",
+                      paddingRight: "40px",
+                    }}
+                  >
+                    {PRESET_GROUPS.map((group) => {
+                      const presets = getPresetsForGroup(group);
+                      if (presets.length === 0) return null;
+                      return (
+                        <optgroup key={group.label} label={group.label}>
+                          {presets.map((preset) => (
+                            <option key={preset.id} value={preset.id}>{preset.name} ({preset.format.toUpperCase()})</option>
+                          ))}
+                        </optgroup>
+                      );
+                    })}
+                  </select>
+                )}
                 {/* Format description */}
                 {currentPreset && (
                   <div className="flex items-center gap-3 px-4 py-3 mt-2 bg-gray-50 dark:bg-neutral-800/50 rounded-lg border border-gray-100 dark:border-neutral-700">
@@ -910,11 +669,16 @@ export function ExportPage({ packets, stats }) {
                 )}
               </div>
 
-              {/* Step 3: Export */}
+              {/* Step 3: Download */}
               <div>
                 <label className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">
                   3. Download
                 </label>
+                {outcomeDescription && (
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                    You'll get: {outcomeDescription.fileCount} {outcomeDescription.format.toUpperCase()} file{outcomeDescription.fileCount !== 1 ? "s" : ""}, {outcomeDescription.rowOrDocCount} {outcomeDescription.format === "json" ? "document" : "row"}{outcomeDescription.rowOrDocCount !== 1 ? "s" : ""}{outcomeDescription.columns?.length ? `. Columns: ${outcomeDescription.columns.slice(0, 6).map((c) => c.replace(/_/g, " ")).join(", ")}${outcomeDescription.columns.length > 6 ? "…" : ""}` : ""}
+                  </p>
+                )}
                 <Button
                   onClick={handleExport}
                   disabled={exporting || filteredDocCount === 0}
@@ -939,29 +703,22 @@ export function ExportPage({ packets, stats }) {
 
             {/* Right column: Summary (2/5) */}
             <div className="lg:col-span-2">
-              <ExportSummaryPanel packets={filteredPackets} />
+              <ExportSummaryPanel packets={filteredPackets} formatName={currentPreset?.name} />
             </div>
           </div>
 
-          {/* ====== SECTION 2: DOCUMENT FILL (collapsible) ====== */}
-          <div className="border-t border-gray-200 dark:border-neutral-700 pt-6">
-            <button onClick={() => setFillExpanded(!fillExpanded)} className="flex items-center gap-3 w-full text-left group">
-              <ChevronDown className={`h-4 w-4 text-gray-400 dark:text-gray-500 transition-transform ${fillExpanded ? "" : "-rotate-90"}`} />
-              <div>
-                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 group-hover:text-[#9e2339] transition-colors">
-                  Document Fill
-                </h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Upload a blank PDF form and fill it with extracted data using AI
-                </p>
-              </div>
-            </button>
-            {fillExpanded && (
-              <div className="mt-4">
-                <DocumentFillSection packets={packets} exportablePackets={exportablePackets} />
-              </div>
-            )}
-          </div>
+          {onNavigateToFillForms && (
+            <div className="border-t border-gray-200 dark:border-neutral-700 pt-6">
+              <button
+                type="button"
+                onClick={onNavigateToFillForms}
+                className="flex items-center gap-2 text-sm text-[#9e2339] hover:text-[#9e2339]/80 dark:text-[#9e2339] dark:hover:text-[#9e2339]/80 font-medium transition-colors"
+              >
+                <FileEdit className="h-4 w-4" />
+                Fill a form with extracted data
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

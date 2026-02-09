@@ -706,6 +706,30 @@ export const EXPORT_PRESETS = [
 ];
 
 /**
+ * Return a short outcome description for the given preset + packets (file count, row/doc count, optional column list).
+ * Used for "You'll get: …" preview near the Download button.
+ */
+export function getExportOutcomeDescription(presetId, packets) {
+  const preset = EXPORT_PRESETS.find((p) => p.id === presetId);
+  if (!preset) return null;
+  const docs = extractAllDocs(packets);
+  const fileCount = 1;
+  const rowOrDocCount = docs.length;
+  let columns = null;
+  if (preset.id === "generic_csv" && docs.length > 0) {
+    const sample = docs.map((d) => ({
+      packet_filename: d.packetFilename,
+      document_type: d.docType,
+      confidence: d.confidence,
+      needs_review: d.needsReview,
+      ...flattenObject(d.data),
+    }));
+    columns = [...new Set(sample.flatMap((r) => Object.keys(r)))];
+  }
+  return { fileCount, rowOrDocCount, format: preset.format, name: preset.name, columns };
+}
+
+/**
  * Execute a preset export and trigger download
  */
 export async function executePresetExport(presetId, packets) {
