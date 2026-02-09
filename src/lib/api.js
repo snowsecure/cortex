@@ -47,18 +47,38 @@ async function apiRequest(endpoint, options = {}) {
   
   try {
     const response = await fetch(url, config);
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: response.statusText }));
-      throw new Error(error.error || `API Error: ${response.status}`);
+    const text = await response.text();
+    const trimmed = text?.trim() ?? "";
+
+    // Detect HTML error pages so we don't throw raw JSON parse errors
+    if (trimmed.startsWith("<") || trimmed.toLowerCase().startsWith("<!doctype")) {
+      throw new Error(
+        response.ok
+          ? "Server returned an HTML page instead of JSON. The service may be unavailable."
+          : `API error: ${response.status}. The server returned an error page. Check your connection or try again later.`
+      );
     }
-    
+
+    if (!response.ok) {
+      let errorPayload = { error: response.statusText };
+      try {
+        errorPayload = JSON.parse(trimmed);
+      } catch {
+        // leave as statusText
+      }
+      const error = errorPayload.error || errorPayload.detail || errorPayload.message || `API Error: ${response.status}`;
+      throw new Error(typeof error === "string" ? error : `API Error: ${response.status}`);
+    }
+
     // Handle 204 No Content
     if (response.status === 204) {
       return null;
     }
-    
-    return await response.json();
+
+    if (!trimmed) {
+      return null;
+    }
+    return JSON.parse(trimmed);
   } catch (error) {
     // Make timeout errors more user-friendly
     if (error.name === "TimeoutError") {

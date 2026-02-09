@@ -120,20 +120,20 @@ function AnimatedWorkflowDiagram() {
       id: "validate",
       icon: Target,
       title: "Validate",
-      subtitle: "Confidence Scoring",
+      subtitle: "Quality Scoring",
       color: "from-emerald-500 to-green-500",
       bgColor: "bg-emerald-500",
       lightBg: "bg-emerald-50",
-      description: "Calculate likelihood scores and flag uncertain extractions",
+      description: "Calculate Quality Score v2 (confidence + coverage + completeness) and flag uncertain extractions",
       details: {
-        what: "Each extracted field gets a confidence score (0-100%) based on AI certainty.",
-        how: "With consensus mode, multiple extractions are compared. Agreement = high confidence.",
+        what: "Each document gets a Quality Score v2 (0-100%) based on confidence, coverage, and critical field completeness. After review, observed accuracy measures actual field-level agreement.",
+        how: "With consensus mode, multiple extractions are compared. Quality Score v2 factors in confidence coverage (how many schema fields have scores) and critical field completeness.",
         tips: [
-          "≥75% is production-ready (Retab recommendation)",
-          "50-74% should be reviewed",
-          "<50% likely needs correction",
+          "Reviewed documents always score 100 (full trust)",
+          "Enable consensus for meaningful confidence coverage",
+          "Observed accuracy appears after documents are reviewed",
         ],
-        technical: "Likelihoods from API response indicate extraction reliability per field."
+        technical: "Quality Score v2: src/lib/qualityV2.js. Observed accuracy: src/lib/reviewAccuracy.js. Both use schema-field iteration."
       }
     },
     {
@@ -650,6 +650,204 @@ function ConfidenceThresholdGuide() {
 }
 
 // ============================================================================
+// DATA QUALITY & ACCURACY SCORING GUIDE
+// ============================================================================
+
+function DataQualityAccuracyGuide() {
+  return (
+    <div className="space-y-6">
+      {/* Overview */}
+      <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+        <p className="text-sm text-blue-800 dark:text-blue-300">
+          CORTEX provides two complementary metrics: <strong>Quality Score v2</strong> (operational trust, available immediately) and <strong>Observed Accuracy</strong> (actual field-level agreement, available after review). Together they give both timely and accurate signals about extraction quality.
+        </p>
+      </div>
+
+      {/* Quality Score v2 */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
+          <Gauge className="h-4 w-4 text-[#9e2339]" />
+          Quality Score v2 (0-100)
+        </h4>
+        <p className="text-sm text-gray-600 dark:text-neutral-400">
+          A continuous trust score for every document. Shown as the primary metric in the Admin Dashboard and Export summary. Higher = more trustworthy.
+        </p>
+        <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-neutral-700">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Factor</th>
+                <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">What it measures</th>
+                <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Effect on score</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700 bg-white dark:bg-neutral-900">
+              <tr>
+                <td className="px-4 py-3 font-medium text-gray-800 dark:text-neutral-100">Reviewed</td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Human sealed or corrected</td>
+                <td className="px-4 py-3 text-green-600 dark:text-green-400 font-medium">100 (full trust)</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3 font-medium text-gray-800 dark:text-neutral-100">Model confidence</td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Average per-field likelihood from API</td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Higher confidence = higher base trust</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3 font-medium text-gray-800 dark:text-neutral-100">Confidence coverage</td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Fraction of schema fields with a likelihood score</td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">More coverage = more trustworthy</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3 font-medium text-gray-800 dark:text-neutral-100">Critical completeness</td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">How many critical fields (e.g. recording_date, grantor) are filled</td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Missing critical fields reduce trust</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3 font-medium text-gray-800 dark:text-neutral-100">Needs review</td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Document flagged for review but not yet reviewed</td>
+                <td className="px-4 py-3 text-amber-600 dark:text-amber-400">Capped at 55 until reviewed</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="p-3 bg-gray-50 dark:bg-neutral-800 rounded-lg border border-gray-200 dark:border-neutral-700">
+          <p className="text-xs text-gray-500 dark:text-neutral-400">
+            <strong>Tip:</strong> Enable consensus mode to get per-field likelihood scores. Without consensus, confidence coverage is 0 and the trust base drops to 60%.
+            Reviewing documents is the most effective way to raise the score.
+          </p>
+        </div>
+      </div>
+
+      {/* Observed Accuracy */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100 flex items-center gap-2">
+          <Target className="h-4 w-4 text-[#9e2339]" />
+          Observed Accuracy (after review)
+        </h4>
+        <p className="text-sm text-gray-600 dark:text-neutral-400">
+          Once a document has been reviewed (or partially edited), CORTEX compares the model's original extraction to the reviewer-corrected final values. This measures <strong>actual agreement</strong>, not model confidence.
+        </p>
+
+        <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-neutral-700">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Outcome</th>
+                <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">What happened</th>
+                <th className="px-4 py-3 font-medium text-gray-700 dark:text-neutral-300">Example</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700 bg-white dark:bg-neutral-900">
+              <tr>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                    <span className="font-medium text-gray-800 dark:text-neutral-100">Correct</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Model and reviewer agree</td>
+                <td className="px-4 py-3 text-xs text-gray-500 dark:text-neutral-400 font-mono">grantor: "John Smith" (both)</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    <span className="font-medium text-gray-800 dark:text-neutral-100">Wrong value</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Model extracted a value but reviewer corrected it</td>
+                <td className="px-4 py-3 text-xs text-gray-500 dark:text-neutral-400 font-mono">date: "2024-01-15" vs "2024-01-05"</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                    <span className="font-medium text-gray-800 dark:text-neutral-100">Miss</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Model left field blank; reviewer filled it in</td>
+                <td className="px-4 py-3 text-xs text-gray-500 dark:text-neutral-400 font-mono">parcel_id: "" vs "12-34-567"</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-600" />
+                    <span className="font-medium text-gray-800 dark:text-neutral-100">Hallucination</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Model produced a value but reviewer says field is absent</td>
+                <td className="px-4 py-3 text-xs text-gray-500 dark:text-neutral-400 font-mono">lien_amount: "$5,000" vs "Not Found"</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-gray-400" />
+                    <span className="font-medium text-gray-800 dark:text-neutral-100">Correct absent</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-gray-600 dark:text-neutral-300">Model left blank; reviewer confirms not present</td>
+                <td className="px-4 py-3 text-xs text-gray-500 dark:text-neutral-400 font-mono">easement_type: "" + "Not Found"</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+            <p className="text-xs font-medium text-green-800 dark:text-green-300 mb-1">Observed present accuracy</p>
+            <p className="text-xs text-green-700 dark:text-green-400">Correct / (Correct + Wrong + Miss). The main accuracy number shown in dashboards.</p>
+          </div>
+          <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
+            <p className="text-xs font-medium text-red-800 dark:text-red-300 mb-1">Hallucination rate</p>
+            <p className="text-xs text-red-700 dark:text-red-400">Hallucinations / (Hallucinations + Correct absent). Tracks how often the model invents values for absent fields.</p>
+          </div>
+        </div>
+
+        <div className="p-3 bg-gray-50 dark:bg-neutral-800 rounded-lg border border-gray-200 dark:border-neutral-700 space-y-2">
+          <p className="text-xs text-gray-500 dark:text-neutral-400">
+            <strong>Only reviewed documents are evaluated.</strong> Observed accuracy appears in the dashboard and export summary only when at least one document has been reviewed or edited. Reclassified documents are excluded because their schema changed.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-neutral-400">
+            <strong>Fields are compared against the schema.</strong> The system iterates over the document type's schema fields (not just the fields the model extracted). This means fields the model missed entirely are still counted.
+          </p>
+        </div>
+      </div>
+
+      {/* How they work together */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">How the two metrics work together</h4>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="p-4 rounded-xl border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+            <div className="flex items-center gap-2 mb-2">
+              <Gauge className="h-4 w-4 text-blue-500" />
+              <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">Quality Score v2</span>
+            </div>
+            <ul className="text-xs text-gray-600 dark:text-neutral-400 space-y-1.5">
+              <li className="flex items-start gap-1.5"><Check className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />Available immediately</li>
+              <li className="flex items-start gap-1.5"><Check className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />Works for all documents</li>
+              <li className="flex items-start gap-1.5"><Check className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />Good for monitoring overall corpus health</li>
+              <li className="flex items-start gap-1.5"><AlertTriangle className="h-3 w-3 text-amber-500 mt-0.5 shrink-0" />Based on model confidence, not ground truth</li>
+            </ul>
+          </div>
+          <div className="p-4 rounded-xl border border-gray-200 dark:border-neutral-700 bg-white dark:bg-neutral-900">
+            <div className="flex items-center gap-2 mb-2">
+              <Target className="h-4 w-4 text-green-500" />
+              <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">Observed Accuracy</span>
+            </div>
+            <ul className="text-xs text-gray-600 dark:text-neutral-400 space-y-1.5">
+              <li className="flex items-start gap-1.5"><Check className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />Measures actual field-level agreement</li>
+              <li className="flex items-start gap-1.5"><Check className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />Tracks model improvement over time</li>
+              <li className="flex items-start gap-1.5"><Check className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />Identifies problematic doc types</li>
+              <li className="flex items-start gap-1.5"><AlertTriangle className="h-3 w-3 text-amber-500 mt-0.5 shrink-0" />Requires reviewed documents</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // MODEL COMPARISON (pricing from Retab docs: docs.retab.com/core-concepts/Pricing)
 // ============================================================================
 
@@ -869,7 +1067,7 @@ function FAQSection() {
     },
     {
       q: "How is extraction accuracy measured?",
-      a: "Accuracy is measured via likelihood scores (0-1). With consensus mode enabled, multiple extractions are compared—higher agreement means higher likelihood. Retab recommends ≥0.75 for production use. Scores below 0.5 indicate the schema may need improvement."
+      a: "CORTEX provides two complementary metrics. Quality Score v2 (0-100%) is an operational trust score computed for every document based on model confidence, confidence coverage (fraction of schema fields with likelihood scores), and critical field completeness — reviewed documents score 100. Observed Accuracy is actual field-level agreement measured after human review: it compares the model's original extraction to the reviewer-corrected values and reports the percentage of present fields where the model was correct. Quality Score v2 is available immediately after extraction; Observed Accuracy requires at least one reviewed document. See Help → Data Quality & Accuracy for full details."
     },
     {
       q: "What triggers a 'Needs Review' flag?",
@@ -2245,6 +2443,98 @@ function SecurityOverview() {
   );
 }
 
+function ScoringTechnicalReference() {
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-gray-600 dark:text-neutral-400">
+        Technical details of the scoring modules. For a user-friendly overview, see the Data Quality & Accuracy Scoring section above.
+      </p>
+
+      {/* Quality Score v2 formula */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Quality Score v2 formula</h4>
+        <div className="p-4 bg-gray-50 dark:bg-neutral-800 rounded-lg border border-gray-200 dark:border-neutral-700 font-mono text-xs text-gray-700 dark:text-neutral-300 space-y-2">
+          <p className="text-gray-500 dark:text-neutral-400 font-sans text-xs mb-2">Per unreviewed document:</p>
+          <p>confidenceCoverage = min(1, numericLikelihoodCount / schemaFieldCount)</p>
+          <p>base = conf != null ? (0.35 + 0.65 * conf) : 0.60</p>
+          <p>coverageFactor = 0.70 + 0.30 * confidenceCoverage</p>
+          <p>completenessFactor = 0.60 + 0.40 * (1 - criticalMissingCount / max(1, criticalFieldCount))</p>
+          <p>trust = base * coverageFactor * completenessFactor</p>
+          <p className="text-amber-600 dark:text-amber-400">if needsReview: trust = min(trust, 0.55)</p>
+          <p className="text-green-600 dark:text-green-400">if reviewed: trust = 1.0</p>
+          <p className="mt-2 border-t border-gray-200 dark:border-neutral-700 pt-2">docScore = round(trust * 100)</p>
+          <p>qualityScoreV2 = round(mean(docScores))</p>
+        </div>
+      </div>
+
+      {/* Observed accuracy formulas */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Observed accuracy formulas</h4>
+        <div className="p-4 bg-gray-50 dark:bg-neutral-800 rounded-lg border border-gray-200 dark:border-neutral-700 font-mono text-xs text-gray-700 dark:text-neutral-300 space-y-2">
+          <p className="text-gray-500 dark:text-neutral-400 font-sans text-xs mb-2">Per reviewed/edited document, for each schema field:</p>
+          <p>O = originalData[field]  (raw extraction)</p>
+          <p>F = finalData[field]    (merged with editedFields)</p>
+          <p className="mt-2">if isAbsent(F): HALLUCINATION if !isEmpty(O), else CORRECT_ABSENT</p>
+          <p>if !isEmpty(F) and isEmpty(O): MISS</p>
+          <p>if valuesEqual(O, F): CORRECT</p>
+          <p>else: WRONG_VALUE</p>
+          <p className="mt-2 border-t border-gray-200 dark:border-neutral-700 pt-2">present_accuracy = CORRECT / (CORRECT + WRONG_VALUE + MISS)</p>
+          <p>hallucination_rate = HALLUCINATION / (HALLUCINATION + CORRECT_ABSENT)</p>
+        </div>
+      </div>
+
+      {/* Eligibility rules */}
+      <div className="space-y-3">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Eligibility & exclusions</h4>
+        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-neutral-700">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50 dark:bg-neutral-800">
+              <tr className="text-left">
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Rule</th>
+                <th className="px-3 py-2 font-medium text-gray-700 dark:text-neutral-300">Condition</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-neutral-700 bg-white dark:bg-neutral-900">
+              <tr>
+                <td className="px-3 py-2 text-gray-700 dark:text-neutral-300">Eligible for observed accuracy</td>
+                <td className="px-3 py-2 font-mono text-gray-600 dark:text-neutral-400">status === "reviewed" OR Object.keys(editedFields).length &gt; 0</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-gray-700 dark:text-neutral-300">Excluded (reclassified)</td>
+                <td className="px-3 py-2 font-mono text-gray-600 dark:text-neutral-400">categoryOverride?.id && categoryOverride.id !== classification?.category</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-gray-700 dark:text-neutral-300">Field iteration</td>
+                <td className="px-3 py-2 font-mono text-gray-600 dark:text-neutral-400">Object.keys(schemas[docType].schema.properties)</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-gray-700 dark:text-neutral-300">Meta fields excluded</td>
+                <td className="px-3 py-2 font-mono text-gray-600 dark:text-neutral-400">reasoning___ and source___ prefixes</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-gray-700 dark:text-neutral-300">NOT_IN_DOCUMENT handling</td>
+                <td className="px-3 py-2 text-gray-600 dark:text-neutral-400">Treated as resolved (not missing) in quality v2; triggers HALLUCINATION/CORRECT_ABSENT in accuracy</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Code references */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">Code references</h4>
+        <div className="p-3 bg-gray-50 dark:bg-neutral-800 rounded-lg border border-gray-200 dark:border-neutral-700 text-xs text-gray-600 dark:text-neutral-400 font-mono space-y-1">
+          <p>src/lib/qualityV2.js — computeDocQualityV2, aggregateQualityV2</p>
+          <p>src/lib/reviewAccuracy.js — computeReviewedAccuracyMetrics, aggregateReviewedAccuracy</p>
+          <p>src/lib/utils.js — getMergedExtractionData, getExtractionData, NOT_IN_DOCUMENT_VALUE</p>
+          <p>src/lib/documentCategories.js — CRITICAL_FIELDS, checkNeedsReview</p>
+          <p>src/schemas/index.js — schema definitions (field lists)</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TechnicalReferenceContent() {
   const [activeSub, setActiveSub] = useState("architecture");
   const subs = [
@@ -2252,6 +2542,7 @@ function TechnicalReferenceContent() {
     { id: "api", label: "API", icon: FileCode },
     { id: "database", label: "Database", icon: Database },
     { id: "lifecycle", label: "Lifecycle", icon: RefreshCw },
+    { id: "scoring", label: "Scoring", icon: Target },
     { id: "env", label: "Config", icon: Settings },
     { id: "rate-limit", label: "Rates", icon: Gauge },
     { id: "errors", label: "Errors", icon: AlertTriangle },
@@ -2282,6 +2573,7 @@ function TechnicalReferenceContent() {
       {activeSub === "api" && <APIReferenceTable />}
       {activeSub === "database" && <DatabaseSchema />}
       {activeSub === "lifecycle" && <DocumentLifecycle />}
+      {activeSub === "scoring" && <ScoringTechnicalReference />}
       {activeSub === "env" && <EnvAndConfig />}
       {activeSub === "rate-limit" && <RateLimiting />}
       {activeSub === "errors" && <ErrorCodesTable />}
@@ -2390,6 +2682,11 @@ export function HelpDocumentation({ onClose }) {
         {/* Confidence Scores — understanding results */}
         <Section icon={Target} title="Likelihood & Confidence Scores">
           <ConfidenceThresholdGuide />
+        </Section>
+        
+        {/* Data Quality & Accuracy — scoring system */}
+        <Section icon={Gauge} title="Data Quality & Accuracy Scoring" badge="v2">
+          <DataQualityAccuracyGuide />
         </Section>
         
         {/* Consensus Mode — improving accuracy */}

@@ -39,6 +39,9 @@ import { Badge } from "./ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { cn, getExtractionData, formatDateTimeCST, getDocumentQualityTier, aggregateDocumentQuality } from "../lib/utils";
 import { getCategoryDisplayName } from "../lib/documentCategories";
+import { schemas } from "../schemas/index";
+import { aggregateQualityV2 } from "../lib/qualityV2";
+import { aggregateReviewedAccuracy } from "../lib/reviewAccuracy";
 import { getAdminMetrics, clearDatabase } from "../lib/api";
 import { useToast } from "./ui/toast";
 import { 
@@ -453,12 +456,14 @@ function AIAssistant({ metrics, retabConfig, onSuggestionApply }) {
     const suggestions = [];
     
     // Analyze metrics using holistic quality + knowledge base strategies
-    if (metrics.quality.score < 70 && metrics.quality.total > 0) {
+    const v2Score = metrics.qualityV2?.qualityScoreV2 ?? metrics.quality.score;
+    const v2Total = metrics.qualityV2?.total ?? metrics.quality.total;
+    if (v2Score < 70 && v2Total > 0) {
       const strategies = OPTIMIZATION_STRATEGIES.confidence.strategies.slice(0, 2);
       suggestions.push({
         type: "warning",
         title: "Low Data Quality",
-        message: `Your data quality score is ${metrics.quality.score}% — ${metrics.quality.needsAttention} document${metrics.quality.needsAttention !== 1 ? "s" : ""} still need${metrics.quality.needsAttention === 1 ? "s" : ""} review. ${RETAB_CONCEPTS.confidenceScoring.content.split('\n')[0]}`,
+        message: `Your quality score is ${v2Score}% — ${metrics.quality.needsAttention} document${metrics.quality.needsAttention !== 1 ? "s" : ""} still need${metrics.quality.needsAttention === 1 ? "s" : ""} review. ${RETAB_CONCEPTS.confidenceScoring.content.split('\n')[0]}`,
         details: strategies.map(s => `• **${s.name}**: ${s.description}`).join('\n'),
         action: "Enable consensus mode",
       });
@@ -756,7 +761,9 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
   const metrics = useMemo(() => {
     // Compute holistic quality from current in-memory packets (works for both paths)
     const currentDocs = packets.flatMap(p => p.documents || []);
-    const qualityMetrics = aggregateDocumentQuality(currentDocs);
+    const qualityMetrics = aggregateDocumentQuality(currentDocs, schemas);
+    const qualityV2 = aggregateQualityV2(currentDocs, schemas);
+    const reviewedAccuracy = aggregateReviewedAccuracy(currentDocs, schemas);
 
     if (serverMetrics && !serverMetricsLoading) {
       // Compute document-level timing from in-memory packets (server metrics
@@ -796,6 +803,8 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
         avgCreditsPerDoc: serverMetrics.avgCreditsPerDoc ?? 0,
         errorRate: serverMetrics.errorRate ?? 0,
         quality: qualityMetrics,
+        qualityV2,
+        reviewedAccuracy,
       };
     }
     // Fallback: compute from current packets + history
@@ -891,6 +900,8 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
       avgCreditsPerDoc: completedDocuments > 0 ? (usage?.totalCredits || 0) / completedDocuments : 0,
       errorRate: totalDocuments > 0 ? failedCount / totalDocuments : 0,
       quality: qualityMetrics,
+      qualityV2,
+      reviewedAccuracy,
     };
   }, [serverMetrics, serverMetricsLoading, packets, usage, history]);
   
@@ -1056,13 +1067,15 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
                 icon={FileText}
               />
               <MetricCard
-                title="Data Quality"
-                value={metrics.quality.total > 0 ? `${metrics.quality.score}%` : "N/A"}
-                subtitle={metrics.quality.total > 0
-                  ? `${metrics.quality.verified} verified, ${metrics.quality.needsAttention} need review`
+                title="Quality Score v2"
+                value={metrics.qualityV2.total > 0 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                subtitle={metrics.qualityV2.total > 0
+                  ? (metrics.reviewedAccuracy.reviewedDocCount > 0
+                    ? `Observed accuracy (reviewed): ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                    : `${metrics.qualityV2.reviewed} verified, ${metrics.qualityV2.needsReview} need review`)
                   : "No documents processed"}
                 icon={Target}
-                variant={metrics.quality.score >= 80 ? "success" : metrics.quality.score >= 60 ? "warning" : metrics.quality.total === 0 ? "default" : "danger"}
+                variant={metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : metrics.qualityV2.total === 0 ? "default" : "danger"}
               />
               <MetricCard
                 title="Pending Review"
@@ -1307,11 +1320,13 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
             {/* Holistic Quality Summary */}
             <div className="grid grid-cols-4 gap-4">
               <MetricCard
-                title="Data Quality"
-                value={metrics.quality.total > 0 ? `${metrics.quality.score}%` : "N/A"}
-                subtitle="Holistic score"
+                title="Quality Score v2"
+                value={metrics.qualityV2.total > 0 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                subtitle={metrics.reviewedAccuracy.reviewedDocCount > 0
+                  ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                  : "Operational trust score"}
                 icon={Gauge}
-                variant={metrics.quality.score >= 80 ? "success" : metrics.quality.score >= 60 ? "warning" : metrics.quality.total === 0 ? "default" : "danger"}
+                variant={metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : metrics.qualityV2.total === 0 ? "default" : "danger"}
               />
               <MetricCard
                 title="Human-Verified"
@@ -1524,11 +1539,13 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
                 variant={metrics.quality.verified > 0 ? "success" : "default"}
               />
               <MetricCard
-                title="Data Quality"
-                value={metrics.quality.total > 0 ? `${metrics.quality.score}%` : "N/A"}
-                subtitle="Holistic score"
+                title="Quality Score v2"
+                value={metrics.qualityV2.total > 0 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                subtitle={metrics.reviewedAccuracy.reviewedDocCount > 0
+                  ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                  : "Operational trust score"}
                 icon={Target}
-                variant={metrics.quality.score >= 80 ? "success" : metrics.quality.score >= 60 ? "warning" : metrics.quality.total === 0 ? "default" : "danger"}
+                variant={metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : metrics.qualityV2.total === 0 ? "default" : "danger"}
               />
             </div>
             

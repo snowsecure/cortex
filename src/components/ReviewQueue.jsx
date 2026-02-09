@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle, ShieldCheck, Loader2, Tag, Plus, X, Search, SearchSlash } from "lucide-react";
+import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle, ShieldCheck, Loader2, Tag, Plus, X, Search, SearchSlash, PenLine, Undo2, Sparkles, Filter } from "lucide-react";
 import { Button } from "./ui/button";
 import { SailboatIcon } from "./ui/sailboat-icon";
 import { getMergedExtractionData, NOT_IN_DOCUMENT_VALUE, NOT_IN_DOCUMENT_LABEL, displayValue } from "../lib/utils";
-import { getCategoryDisplayName } from "../lib/documentCategories";
+import { getCategoryDisplayName, CRITICAL_FIELDS } from "../lib/documentCategories";
 import { schemas } from "../schemas/index";
 import { PDFPreview } from "./DocumentDetailModal";
 import * as api from "../lib/api";
@@ -485,6 +485,126 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     return { critical, warning, ok, extra };
   }, [data, likelihoods, schemaFields]);
 
+  // Required fields — union of schema "required" array and CRITICAL_FIELDS for the doc type
+  const requiredFields = useMemo(() => {
+    const category = currentCatOverrideForSchema?.id
+      || current?.document?.classification?.category
+      || current?.document?.splitType
+      || null;
+    const set = new Set();
+    const schemaRequired = category && schemas[category]?.schema?.required;
+    if (Array.isArray(schemaRequired)) schemaRequired.forEach(k => set.add(k));
+    const critFields = category && CRITICAL_FIELDS[category];
+    if (Array.isArray(critFields)) critFields.forEach(k => set.add(k));
+    return set;
+  }, [currentCatOverrideForSchema, current?.document?.classification?.category, current?.document?.splitType]);
+
+  // Combine all fields in priority order (moved before early return for Rules of Hooks)
+  const allFields = useMemo(() => [
+    ...categorizedFields.critical,
+    ...categorizedFields.warning,
+    ...categorizedFields.ok,
+  ], [categorizedFields]);
+
+  const editedCount = Object.keys(editedFields).length;
+  const emptyCount = allFields.filter(f => f.isEmpty).length;
+  const lowConfCount = categorizedFields.critical.length + categorizedFields.warning.length;
+
+  // Count required fields that are still empty (not filled, not marked N/D)
+  const emptyRequiredCount = useMemo(() => {
+    return allFields.filter(f => {
+      if (!requiredFields.has(f.key)) return false;
+      const val = editedFields[f.key] !== undefined ? editedFields[f.key] : (f.value ?? "");
+      return val === null || val === undefined || val === "";
+    }).length;
+  }, [allFields, requiredFields, editedFields]);
+
+  // Per-item readiness for sidebar filtering and status badges
+  const itemReadiness = useMemo(() => {
+    return reviewItems.map(item => {
+      const doc = item.document;
+      const catId = categoryOverrides[doc.id]?.id
+        || doc.classification?.category
+        || doc.splitType
+        || null;
+      const reqSet = new Set();
+      const sr = catId && schemas[catId]?.schema?.required;
+      if (Array.isArray(sr)) sr.forEach(k => reqSet.add(k));
+      const cf = catId && CRITICAL_FIELDS[catId];
+      if (Array.isArray(cf)) cf.forEach(k => reqSet.add(k));
+      const { data: docData } = getMergedExtractionData(doc);
+      const edits = allEdits[doc.id] || {};
+      const merged = { ...docData, ...edits };
+      let emptyReq = 0;
+      for (const key of reqSet) {
+        const val = merged[key];
+        if (val === null || val === undefined || val === "") emptyReq++;
+      }
+      const displayCat = getCategoryDisplayName(catId || "Document");
+      return { docId: doc.id, category: displayCat, categoryId: catId, emptyRequired: emptyReq, hasIssues: emptyReq > 0 };
+    });
+  }, [reviewItems, categoryOverrides, allEdits]);
+
+  // Sidebar filter state
+  const [sidebarFilter, setSidebarFilter] = useState("all"); // "all" | "needs_fix" | "ready"
+  const [sidebarDocTypeFilter, setSidebarDocTypeFilter] = useState("all");
+
+  // Focused field key for PDF highlighting
+  const [focusedFieldKey, setFocusedFieldKey] = useState(null);
+
+  // Debounced highlight text for PDF
+  const [highlightText, setHighlightText] = useState("");
+  const highlightTimerRef = useRef(null);
+  useEffect(() => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    if (!focusedFieldKey) { setHighlightText(""); return; }
+    const val = editedFields[focusedFieldKey] !== undefined
+      ? editedFields[focusedFieldKey]
+      : (data[focusedFieldKey] ?? "");
+    const str = (val === NOT_IN_DOCUMENT_VALUE || val === null || val === undefined)
+      ? ""
+      : (typeof val === "object" ? JSON.stringify(val) : String(val));
+    if (str.length < 2) { setHighlightText(""); return; }
+    highlightTimerRef.current = setTimeout(() => setHighlightText(str), 300);
+    return () => { if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current); };
+  }, [focusedFieldKey, editedFields, data]);
+
+  // Undo snapshot for bulk "Mark all empty as N/D"
+  const [undoSnapshot, setUndoSnapshot] = useState(null);
+  const undoTimerRef = useRef(null);
+  useEffect(() => () => { if (undoTimerRef.current) clearTimeout(undoTimerRef.current); }, []);
+  useEffect(() => {
+    setUndoSnapshot(null);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+  }, [currentDocId]);
+
+  // Required fields warning for seal
+  const [showRequiredWarning, setShowRequiredWarning] = useState(false);
+
+  // Bulk action: mark all empty fields as "Not in Document"
+  const handleMarkAllEmptyAsNID = useCallback(() => {
+    if (!currentDocId) return;
+    const currentEdits = allEdits[currentDocId] || {};
+    const emptyFieldKeys = allFields.filter(f => {
+      const val = currentEdits[f.key] !== undefined ? currentEdits[f.key] : (f.value ?? "");
+      return val === null || val === undefined || val === "";
+    }).map(f => f.key);
+    if (emptyFieldKeys.length === 0) return;
+    setUndoSnapshot({ docId: currentDocId, edits: { ...currentEdits }, count: emptyFieldKeys.length });
+    const newEdits = { ...currentEdits };
+    for (const key of emptyFieldKeys) newEdits[key] = NOT_IN_DOCUMENT_VALUE;
+    setAllEdits(prev => ({ ...prev, [currentDocId]: newEdits }));
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => setUndoSnapshot(null), 5000);
+  }, [currentDocId, allEdits, allFields]);
+
+  const handleUndoMarkAll = useCallback(() => {
+    if (!undoSnapshot) return;
+    setAllEdits(prev => ({ ...prev, [undoSnapshot.docId]: undoSnapshot.edits }));
+    setUndoSnapshot(null);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+  }, [undoSnapshot]);
+
   const [expandedSections, setExpandedSections] = useState({
     critical: true,
     warning: true,
@@ -582,9 +702,9 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     }
   }, [current, saving, onApprove, editedFields, currentApprovedFields, categoryOverrides, reviewItems, categorizedFields]);
 
-  // --- handleApprove: "Seal & Save" — show last-document confirmation or perform seal ---
-  const handleApprove = useCallback(() => {
-    if (!current || saving || savingRef.current) return;
+  // "Accept AI" — fast seal when no required fields are empty
+  const handleAcceptAI = useCallback(() => {
+    if (!current || saving || savingRef.current || emptyRequiredCount > 0) return;
     if (!onApprove) {
       setSaveError("Review handler not available. Please reload the page.");
       return;
@@ -594,7 +714,26 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
       return;
     }
     performSeal();
-  }, [current, saving, onApprove, reviewItems.length, performSeal]);
+  }, [current, saving, emptyRequiredCount, onApprove, reviewItems.length, performSeal]);
+
+  // --- handleApprove: "Seal & Save" — warn about required fields, then show last-document confirmation or perform seal ---
+  const handleApprove = useCallback(() => {
+    if (!current || saving || savingRef.current) return;
+    if (!onApprove) {
+      setSaveError("Review handler not available. Please reload the page.");
+      return;
+    }
+    // Warn if required fields are still empty
+    if (emptyRequiredCount > 0) {
+      setShowRequiredWarning(true);
+      return;
+    }
+    if (reviewItems.length === 1) {
+      setShowLastSealConfirm(true);
+      return;
+    }
+    performSeal();
+  }, [current, saving, onApprove, reviewItems.length, performSeal, emptyRequiredCount]);
 
   // Summary for last-document confirmation modal (only what the user changed: category + trueEdits)
   const lastSealSummary = useMemo(() => {
@@ -644,19 +783,6 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
   const currentCategoryOverride = categoryOverrides[current.document?.id] || null;
   const displayName = currentCategoryOverride ? currentCategoryOverride.name : rawCategory;
   const isUnknownType = UNKNOWN_CATEGORIES.has(rawCategory) && !currentCategoryOverride;
-
-  // --- Flat field list: all fields visible with inline inputs for Tab navigation ---
-
-  // Combine all fields in priority order: critical first, then warning, then ok
-  const allFields = useMemo(() => [
-    ...categorizedFields.critical,
-    ...categorizedFields.warning,
-    ...categorizedFields.ok,
-  ], [categorizedFields]);
-
-  const editedCount = Object.keys(editedFields).length;
-  const emptyCount = allFields.filter(f => f.isEmpty).length;
-  const lowConfCount = categorizedFields.critical.length + categorizedFields.warning.length;
 
   // Render a single field row — always shows inline input for Tab-through editing
   const renderFieldRow = ({ key, value, likelihood, isEmpty }) => {
@@ -895,7 +1021,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
                 </span>
               )}
             </div>
-            {/* Status chips + category picker */}
+            {/* Status chips + category picker (always visible) */}
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
                 {allFields.length} fields
@@ -915,8 +1041,8 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
                   {editedCount} edited
                 </span>
               )}
-              {/* Inline category reclassify — only for "other" / unknown docs */}
-              {(isUnknownType || currentCategoryOverride) && (
+              {/* Category badge — always visible, reclassify picker for unknown types */}
+              {isUnknownType || currentCategoryOverride ? (
                 <CategoryPicker
                   currentCategory={currentCategoryOverride}
                   onSelect={(cat) => {
@@ -927,9 +1053,87 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
                     });
                   }}
                 />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const docId = current.document.id;
+                    const catId = rawCategory;
+                    const catName = getCategoryDisplayName(catId);
+                    setCategoryOverrides(prev => ({ ...prev, [docId]: { id: catId, name: catName, isCustom: false } }));
+                  }}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  title="Reclassify document type"
+                >
+                  <PenLine className="h-2.5 w-2.5" />
+                  <span className="truncate max-w-[100px]">{getCategoryDisplayName(rawCategory)}</span>
+                </button>
+              )}
+            </div>
+            {/* Bulk actions */}
+            <div className="flex items-center gap-1.5 mt-1.5">
+              {emptyCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleMarkAllEmptyAsNID}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                  <SearchSlash className="h-3 w-3" />
+                  Mark {emptyCount} empty as N/D
+                </button>
+              )}
+              {undoSnapshot && undoSnapshot.docId === currentDocId && (
+                <button
+                  type="button"
+                  onClick={handleUndoMarkAll}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
+                >
+                  <Undo2 className="h-3 w-3" />
+                  Undo ({undoSnapshot.count})
+                </button>
               )}
             </div>
           </div>
+
+          {/* Flagged fields summary — clickable chips for quick navigation */}
+          {(categorizedFields.critical.length > 0 || categorizedFields.warning.length > 0) && (
+            <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700 bg-amber-50/50 dark:bg-amber-900/10 shrink-0">
+              <p className="text-[10px] font-medium text-amber-700 dark:text-amber-300 mb-1">
+                <AlertTriangle className="h-3 w-3 inline-block mr-0.5 -mt-px" />
+                {categorizedFields.critical.length + categorizedFields.warning.length} fields need attention
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {[...categorizedFields.critical, ...categorizedFields.warning].slice(0, 8).map(f => {
+                  const pct = typeof f.likelihood === "number" ? `${Math.round(f.likelihood * 100)}%` : null;
+                  const isReq = requiredFields.has(f.key);
+                  return (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => {
+                        const el = document.getElementById(`review-field-${f.key}`);
+                        if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.focus(); }
+                      }}
+                      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] transition-colors ${
+                        f.isEmpty
+                          ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50"
+                          : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50"
+                      }`}
+                    >
+                      {isReq && <span className="text-red-500 font-bold">*</span>}
+                      {formatFieldName(f.key)}
+                      {pct && <span className="opacity-60">({pct})</span>}
+                    </button>
+                  );
+                })}
+                {(categorizedFields.critical.length + categorizedFields.warning.length) > 8 && (
+                  <span className="text-[9px] text-gray-400 dark:text-gray-500 self-center">
+                    +{categorizedFields.critical.length + categorizedFields.warning.length - 8} more
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Scrollable content — flat field list */}
           <div className="flex-1 overflow-y-auto min-h-0">
@@ -961,7 +1165,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
             )}
           </div>
 
-          {/* Bottom bar — save action */}
+          {/* Bottom bar — save actions */}
           <div className="px-3 py-2.5 border-t border-gray-200 dark:border-gray-700 shrink-0 space-y-2 bg-white dark:bg-gray-800">
             {/* Error message from failed save */}
             {saveError && (
@@ -970,18 +1174,37 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
                 {saveError} — your edits are still here, try again.
               </p>
             )}
-            <Button 
-              variant="success" 
-              onClick={handleApprove} 
-              className="w-full"
-              disabled={saving}
-            >
-              {saving ? (
-                <><Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Saving &amp; verifying...</>
-              ) : (
-                <><ShieldCheck className="h-4 w-4 mr-1.5" /> Seal &amp; Save</>
-              )}
-            </Button>
+            {/* Required fields warning */}
+            {emptyRequiredCount > 0 && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-tight">
+                <AlertTriangle className="h-3 w-3 inline-block mr-0.5 -mt-px" />
+                {emptyRequiredCount} required field{emptyRequiredCount !== 1 ? "s" : ""} still empty
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={handleAcceptAI}
+                className="flex-1"
+                disabled={saving || emptyRequiredCount > 0}
+                title={emptyRequiredCount > 0 ? `${emptyRequiredCount} required fields are empty` : "Accept AI extraction as-is"}
+              >
+                <Sparkles className="h-4 w-4 mr-1" />
+                Accept AI
+              </Button>
+              <Button 
+                variant="success" 
+                onClick={handleApprove} 
+                className="flex-1"
+                disabled={saving}
+              >
+                {saving ? (
+                  <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Saving...</>
+                ) : (
+                  <><ShieldCheck className="h-4 w-4 mr-1" /> Seal</>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

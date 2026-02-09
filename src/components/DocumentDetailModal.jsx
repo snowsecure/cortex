@@ -29,10 +29,12 @@ import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 /**
- * Renders a single PDF page on a <canvas> using pdfjs-dist.
+ * Renders a single PDF page on a <canvas> using pdfjs-dist,
+ * with optional text-search highlighting overlay.
  */
-function PdfCanvasPage({ pdfDoc, pageNumber, scale }) {
+function PdfCanvasPage({ pdfDoc, pageNumber, scale, highlightText }) {
   const canvasRef = useRef(null);
+  const overlayRef = useRef(null);
   const renderTaskRef = useRef(null);
 
   useEffect(() => {
@@ -63,6 +65,35 @@ function PdfCanvasPage({ pdfDoc, pageNumber, scale }) {
         const renderTask = page.render({ canvasContext: ctx, viewport });
         renderTaskRef.current = renderTask;
         await renderTask.promise;
+
+        // Build text-highlight overlay if highlightText is provided
+        if (overlayRef.current && highlightText && highlightText.length >= 2) {
+          const overlay = overlayRef.current;
+          overlay.innerHTML = "";
+          overlay.style.width = `${Math.floor(viewport.width)}px`;
+          overlay.style.height = `${Math.floor(viewport.height)}px`;
+          try {
+            const textContent = await page.getTextContent();
+            if (cancelled) return;
+            const needle = highlightText.toLowerCase().trim();
+            for (const item of textContent.items) {
+              if (!item.str) continue;
+              const hay = item.str.toLowerCase();
+              if (!hay.includes(needle) && !needle.includes(hay.trim())) continue;
+              // item.transform = [scaleX, skewX, skewY, scaleY, translateX, translateY]
+              const tx = item.transform;
+              const x = tx[4] * scale;
+              const y = viewport.height - tx[5] * scale - Math.abs(tx[3]) * scale;
+              const w = item.width * scale;
+              const h = Math.abs(tx[3]) * scale;
+              const mark = document.createElement("div");
+              mark.style.cssText = `position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;background:rgba(250,204,21,0.35);border-radius:2px;pointer-events:none;`;
+              overlay.appendChild(mark);
+            }
+          } catch { /* text extraction not available for some PDFs */ }
+        } else if (overlayRef.current) {
+          overlayRef.current.innerHTML = "";
+        }
       } catch (err) {
         if (err?.name !== "RenderingCancelledException" && !cancelled) {
           console.error("PDF page render error:", err);
@@ -77,9 +108,14 @@ function PdfCanvasPage({ pdfDoc, pageNumber, scale }) {
         renderTaskRef.current = null;
       }
     };
-  }, [pdfDoc, pageNumber, scale]);
+  }, [pdfDoc, pageNumber, scale, highlightText]);
 
-  return <canvas ref={canvasRef} className="block mx-auto shadow-md" />;
+  return (
+    <div className="relative inline-block mx-auto">
+      <canvas ref={canvasRef} className="block shadow-md" />
+      <div ref={overlayRef} className="absolute inset-0 pointer-events-none" />
+    </div>
+  );
 }
 
 /**
@@ -92,7 +128,7 @@ function PdfCanvasPage({ pdfDoc, pageNumber, scale }) {
  *   filename    — display name
  *   loading     — show spinner
  */
-function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loading }) {
+function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loading, highlightText }) {
   const [zoom, setZoom] = useState(100);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -262,6 +298,7 @@ function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loa
             pdfDoc={pdfDoc}
             pageNumber={pageNum}
             scale={scale}
+            highlightText={highlightText}
           />
         )}
       </div>

@@ -14,6 +14,8 @@
 10. [Security](#security)
 11. [Deployment](#deployment)
 
+**Data scientist guide**: For a full treatment of system goals, the data quality system, and how extraction-accuracy-related scores are defined and computed (and their limitations), see [Data Quality and Extraction Accuracy](DATA_QUALITY_AND_EXTRACTION_ACCURACY.md).
+
 ---
 
 ## System Overview
@@ -35,6 +37,8 @@ CORTEX is a document processing application designed for Stewart Title's title i
 - **Document Splitting**: Automatically detect and separate individual documents within PDFs
 - **Data Extraction**: Extract structured fields using category-specific JSON schemas
 - **Confidence Scoring**: Per-field likelihood scores for extraction quality assessment
+- **Quality Score v2**: Continuous trust scoring (confidence coverage, critical completeness, review status)
+- **Observed Accuracy**: Field-level model agreement measured from human review outcomes
 - **Human Review**: Flag low-confidence extractions for manual verification
 - **Export**: JSON, CSV, and human-readable summary exports
 - **Usage Tracking**: Credit, cost, and API call metrics

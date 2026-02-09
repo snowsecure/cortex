@@ -140,20 +140,41 @@ export async function extractDocument({
     signal: signal || undefined,
   });
 
-  if (!response.ok) {
-    // For streaming, errors may still come as JSON
-    const errorData = await response.json().catch(() => ({}));
-    const errorMsg = errorData.detail || errorData.error || errorData.message || `API error: ${response.status}`;
-    console.error("Extraction API error:", response.status, errorData);
-    throw new Error(errorMsg);
-  }
-
-  // Streaming: read SSE stream and accumulate into final result
+  // Streaming: read SSE stream and accumulate into final result (body consumed there)
   if (stream) {
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errorMsg = errorData.detail || errorData.error || errorData.message || `API error: ${response.status}`;
+      throw new Error(errorMsg);
+    }
     return handleStreamingResponse(response, signal);
   }
 
-  return response.json();
+  // Non-streaming: read body once and parse; detect HTML so we don't throw raw JSON parse errors
+  const text = await response.text();
+  const trimmed = text.trim();
+  if (trimmed.startsWith("<") || trimmed.toLowerCase().startsWith("<!doctype")) {
+    throw new Error(
+      "Server returned an HTML page instead of JSON. The extraction service may be unavailable or returning an error page. Check your API key and connection, or try again later."
+    );
+  }
+  let data;
+  try {
+    data = JSON.parse(trimmed);
+  } catch (e) {
+    if (response.ok) {
+      throw new Error("Server returned invalid JSON. The extraction service may be temporarily unavailable.");
+    }
+    throw new Error(
+      `API error: ${response.status}. The server may have returned an error page instead of JSON.`
+    );
+  }
+  if (!response.ok) {
+    const errorMsg = data.detail || data.error || data.message || response.statusText || `API error: ${response.status}`;
+    console.error("Extraction API error:", response.status, data);
+    throw new Error(errorMsg);
+  }
+  return data;
 }
 
 /**

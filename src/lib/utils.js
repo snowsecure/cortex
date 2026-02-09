@@ -235,7 +235,7 @@ export function getDocumentQualityTier(doc) {
  * @param {Array<Object>} documents - array of document objects
  * @returns {{ score: number, verified: number, high: number, unscored: number, needsAttention: number, total: number, fieldAccuracy: number|null, totalFields: number, scoredFields: number, highFields: number }}
  */
-export function aggregateDocumentQuality(documents) {
+export function aggregateDocumentQuality(documents, schemasMap) {
   let verified = 0, high = 0, unscored = 0, needsAttention = 0;
   let totalFields = 0;   // all extracted fields (for display context)
   let scoredFields = 0;  // fields with actual confidence data or human corrections
@@ -250,7 +250,7 @@ export function aggregateDocumentQuality(documents) {
 
     // Field-level accuracy — only count fields where we have evidence
     const hasCorrected = doc?.editedFields && Object.keys(doc.editedFields).length > 0;
-    const { data, likelihoods } = getMergedExtractionData(doc);
+    const { data, likelihoods } = getMergedExtractionData(doc, schemasMap);
     if (data) {
       const fields = Object.keys(data).filter((k) => !k.startsWith("reasoning___") && !k.startsWith("source___"));
       totalFields += fields.length;

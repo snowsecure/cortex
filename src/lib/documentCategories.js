@@ -439,10 +439,9 @@ export const CRITICAL_FIELDS = {
   survey_plat: ["surveyor_name", "survey_date", "surveyor_signature_present", "surveyor_seal_present", "requires_visual_verification"],
   property_details: ["legal_description"],
   power_of_attorney: ["principal_name", "agent_name", "principal_signature_present", "notary_signature_present"],
-  affidavit: ["affiant_name", "affiant_signature_present", "notary_signature_present"],
+  affidavit: ["affiant_name", "affidavit_type", "affiant_signature_present", "notary_signature_present"],
   entity_authority: ["entity_name", "entity_type"],
   trust_certification: ["trust_name", "trustee_name"],
-  affidavit: ["affiant_name", "affidavit_type"],
   settlement_statement: ["closing_date", "buyer_name", "seller_name"],
   lease_document: ["landlord_name", "tenant_name", "lease_term"],
   // Catch-all types - flexible critical fields

@@ -589,6 +589,11 @@ function PacketRunInfo({ packet, isProcessing }) {
       {consensus > 1 && <>{dot}<span>{consensus}x consensus</span></>}
       {smartRouting && <>{dot}<span>smart routing</span></>}
       {pages > 0 && <>{dot}<span>{pages} pg{pages !== 1 ? "s" : ""}</span></>}
+      {u?.pageCountMismatch && (
+        <>{dot}<span className="text-amber-500 dark:text-amber-400" title={`${u.pageCountMismatch.upload ? `Upload: ${u.pageCountMismatch.upload} pages\n` : ""}${u.pageCountMismatch.api ? `API: ${u.pageCountMismatch.api} pages\n` : ""}Documents: ${u.pageCountMismatch.documents} pages`}>
+          page count mismatch
+        </span></>
+      )}
       {cost > 0 && <>{dot}<span>${cost.toFixed(3)}</span></>}
       {credits > 0 && <>{dot}<span className="tabular-nums">{credits.toFixed(1)} cr</span></>}
       {elapsedLabel && (

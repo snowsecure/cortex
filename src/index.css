@@ -54,3 +54,60 @@ body {
 .dark .border-gray-200 { border-color: #404040; }
 .dark .border-gray-100 { border-color: #333333; }
 .dark .border-gray-700 { border-color: #404040; }
+
+/* ============================================================================
+   ANIMATIONS — used by onboarding modal, toasts, confirm dialogs, etc.
+   ============================================================================ */
+
+@keyframes anim-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes anim-fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes anim-fade-in-scale {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes anim-slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes anim-slide-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes anim-slide-in-right-sm {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.anim-fade-in         { animation: anim-fade-in 0.3s ease-out both; }
+.anim-fade-in-up      { animation: anim-fade-in-up 0.4s ease-out both; }
+.anim-fade-in-scale   { animation: anim-fade-in-scale 0.4s ease-out both; }
+.anim-slide-right     { animation: anim-slide-in-right 0.3s ease-out both; }
+.anim-slide-left      { animation: anim-slide-in-left 0.3s ease-out both; }
+.anim-slide-right-sm  { animation: anim-slide-in-right-sm 0.2s ease-out both; }
+
+/* Sailboat easter egg */
+/* Sailboat: smooth horizontal glide + separate gentle bob */
+@keyframes sailboat-glide {
+  0%   { transform: translateX(-60px); opacity: 0; }
+  4%   { opacity: 1; }
+  96%  { opacity: 1; }
+  100% { transform: translateX(105vw); opacity: 0; }
+}
+@keyframes sailboat-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25%      { transform: translateY(-6px) rotate(-1.5deg); }
+  75%      { transform: translateY(6px) rotate(1.5deg); }
+}
+.anim-sailboat {
+  animation: sailboat-glide 5s ease-in-out forwards;
+  pointer-events: none;
+}
+.anim-sailboat-inner {
+  animation: sailboat-bob 1.2s ease-in-out infinite;
+}

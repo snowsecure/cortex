@@ -8,6 +8,7 @@ import {
   SPLIT_TO_CATEGORY_MAP,
   getSchemaForCategory,
   checkNeedsReview,
+  getCategoryDisplayName,
 } from "../lib/documentCategories";
 import {
   RETAB_MODELS,
@@ -140,10 +141,30 @@ export function usePacketPipeline() {
           
           // Track split usage — use the actual model used for splitting
           const splitModelInfo = RETAB_MODELS[splitModel] || microModelInfo;
-          const splitPages = splitResponse.usage?.page_count || splits.reduce((acc, s) => acc + (s.pages?.length || 1), 0);
+          const apiPageCount = splitResponse.usage?.page_count || 0;
+          const docPageCount = new Set(splits.flatMap(s => s.pages || [])).size || splits.reduce((acc, s) => acc + (s.pages?.length || 1), 0);
+          // Prefer document-derived page count for UI; keep API count for billing
+          const splitPages = apiPageCount || docPageCount;
           result.usage.splitCredits = splitPages * splitModelInfo.creditsPerPage;
           result.usage.totalPages = splitPages;
+          result.usage.documentPages = docPageCount;
           result.usage.apiCalls++;
+          // Log warning if API and document page counts differ
+          if (apiPageCount > 0 && docPageCount > 0 && apiPageCount !== docPageCount) {
+            console.warn(`[Pipeline] Page count mismatch for ${packet.name || packet.filename}: API reported ${apiPageCount}, documents span ${docPageCount} pages`);
+            result.usage.pageCountMismatch = { api: apiPageCount, documents: docPageCount };
+          }
+          // Also compare with upload-time page count (from getPdfPageCount)
+          const uploadPageCount = packet.pageCount;
+          if (uploadPageCount && docPageCount > 0 && uploadPageCount !== docPageCount) {
+            console.warn(`[Pipeline] Upload vs split mismatch for ${packet.name || packet.filename}: upload detected ${uploadPageCount} pages, splits span ${docPageCount} pages`);
+            result.usage.pageCountMismatch = {
+              ...(result.usage.pageCountMismatch || {}),
+              upload: uploadPageCount,
+              api: apiPageCount || undefined,
+              documents: docPageCount,
+            };
+          }
           
           // Filter out splits with no pages (empty categories)
           splits = splits.filter(s => s.pages && s.pages.length > 0);
@@ -647,9 +668,16 @@ function mapSplitTypeToCategory(splitType) {
 }
 
 /**
- * Get display name for split type
+ * Get display name for split type. Uses category display name when split type
+ * maps to a category (so Results and Export show the same labels, e.g. "Title Policy / Commitment").
  */
 export function getSplitTypeDisplayName(splitType) {
+  const normalized = splitType?.toLowerCase()?.replace(/-/g, "_");
+  const category = normalized && SPLIT_TO_CATEGORY_MAP[normalized];
+  if (category) {
+    return getCategoryDisplayName(category);
+  }
+
   const names = {
     // Admin
     cover_sheet: "Cover Sheet / Order Form",
@@ -705,9 +733,7 @@ export function getSplitTypeDisplayName(splitType) {
     // Other
     other: "Other Document",
   };
-  
-  const normalized = splitType?.toLowerCase()?.replace(/-/g, '_');
-  
+
   if (names[normalized]) {
     return names[normalized];
   }

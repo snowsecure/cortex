@@ -12,6 +12,9 @@ import {
   Eye,
   Square,
   ChevronDown,
+  Sparkles,
+  CheckCircle2,
+  Check,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { ConfirmDialog } from "./ui/confirm-dialog";
@@ -19,6 +22,8 @@ import { SailboatIcon } from "./ui/sailboat-icon";
 import { useToast } from "./ui/toast";
 import { PacketStatus } from "../hooks/useBatchQueue";
 import { getMergedExtractionData, aggregateDocumentQuality } from "../lib/utils";
+import { aggregateQualityV2 } from "../lib/qualityV2";
+import { aggregateReviewedAccuracy } from "../lib/reviewAccuracy";
 import { EXPORT_PRESETS, executePresetExport, getExportOutcomeDescription } from "../lib/exportPresets";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { schemas } from "../schemas/index";
@@ -222,20 +227,20 @@ function PacketSelector({
         </div>
       )}
 
-      {/* Select all/none */}
-      <div className="flex items-center justify-between">
+      {/* Select all / Deselect all — both visible so user can fix fat-fingers */}
+      <div className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1">
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={allSelected ? selectNone : selectAll}
-            className="text-xs font-medium text-[#9e2339] hover:underline"
-          >
-            {allSelected ? "Deselect all" : "Select all"}
+          <button type="button" onClick={selectAll} className="text-xs font-medium text-[#9e2339] hover:underline disabled:opacity-50" disabled={allSelected} title="Include all files">
+            Select all
           </button>
-          <span className="text-xs text-gray-400 dark:text-gray-500">
-            {selectedPacketIds.size} of {exportablePackets.length} file{exportablePackets.length !== 1 ? "s" : ""}
-          </span>
+          <span className="text-gray-300 dark:text-neutral-600">|</span>
+          <button type="button" onClick={selectNone} className="text-xs font-medium text-[#9e2339] hover:underline disabled:opacity-50" disabled={noneSelected} title="Exclude all files">
+            Deselect all
+          </button>
         </div>
+        <span className="text-xs text-gray-400 dark:text-gray-500">
+          {selectedPacketIds.size} of {exportablePackets.length} file{exportablePackets.length !== 1 ? "s" : ""} selected
+        </span>
       </div>
 
       {/* Packet checkboxes (scrollable for many) */}
@@ -300,32 +305,41 @@ function PacketSelector({
         fileListContent
       )}
 
-      {/* Document type filter pills */}
+      {/* Document type chips — visible checked/unchecked; Select all = include all types */}
       {allDocTypes.length > 1 && (
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Document types</span>
-            {!allDocTypesSelected && (
-              <button onClick={() => setSelectedDocTypes(new Set())} className="text-xs text-[#9e2339] hover:underline">
-                Clear filter
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setSelectedDocTypes(new Set())}
+              className="text-xs font-medium text-[#9e2339] hover:underline disabled:opacity-50"
+              disabled={allDocTypesSelected}
+              title="Include all document types in export"
+            >
+              Select all
+            </button>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {allDocTypes.map(({ category, count }) => {
-              const active = selectedDocTypes.has(category);
+              const included = allDocTypesSelected || selectedDocTypes.has(category);
               return (
                 <button
                   key={category}
+                  type="button"
                   onClick={() => toggleDocType(category)}
-                  className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
-                    active
-                      ? "bg-[#9e2339]/10 dark:bg-[#9e2339]/20 border-[#9e2339]/30 text-[#9e2339] dark:text-[#9e2339] font-medium"
-                      : "bg-white dark:bg-neutral-800 border-gray-200 dark:border-neutral-700 text-gray-600 dark:text-gray-400 hover:border-gray-300"
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border transition-colors ${
+                    included
+                      ? "bg-[#9e2339]/10 dark:bg-[#9e2339]/20 border-[#9e2339]/40 text-[#9e2339] dark:text-[#9e2339] font-medium"
+                      : "bg-white dark:bg-neutral-800 border-gray-200 dark:border-neutral-600 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-neutral-500"
                   }`}
+                  title={included ? "Included in export — click to exclude" : "Excluded — click to include"}
                 >
+                  <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${included ? "border-[#9e2339]/50 bg-[#9e2339]/20" : "border-gray-300 dark:border-neutral-500"}`}>
+                    {included ? <Check className="h-2.5 w-2.5 text-[#9e2339]" strokeWidth={2.5} /> : null}
+                  </span>
                   {getCategoryDisplayName(category)}
-                  <span className="ml-1 text-gray-400 dark:text-gray-500">{count}</span>
+                  <span className={included ? "text-[#9e2339]/70 dark:text-[#9e2339]/80" : "text-gray-400 dark:text-gray-500"}>{count}</span>
                 </button>
               );
             })}
@@ -342,7 +356,7 @@ function PacketSelector({
 
 function ExportSummaryPanel({ packets, formatName }) {
   const [showDetails, setShowDetails] = useState(false);
-  const { docCount, typeBreakdown, quality, packetCount } = useMemo(() => {
+  const { docCount, typeBreakdown, quality, qualityV2, reviewedAccuracy, packetCount } = useMemo(() => {
     const types = {};
     const allDocs = [];
 
@@ -355,33 +369,40 @@ function ExportSummaryPanel({ packets, formatName }) {
     }
 
     const sorted = Object.entries(types).sort((a, b) => b[1] - a[1]).map(([cat, count]) => ({ category: cat, count }));
-    const q = aggregateDocumentQuality(allDocs);
+    const q = aggregateDocumentQuality(allDocs, schemas);
+    const qV2 = aggregateQualityV2(allDocs, schemas);
+    const ra = aggregateReviewedAccuracy(allDocs, schemas);
 
     return {
       docCount: allDocs.length,
       typeBreakdown: sorted,
       quality: q,
+      qualityV2: qV2,
+      reviewedAccuracy: ra,
       packetCount: packets.length,
     };
   }, [packets]);
 
   const recentExports = useMemo(() => loadRecentExports(), []);
 
+  const v2Score = qualityV2.qualityScoreV2;
   const qualityHint = docCount > 0
-    ? quality.needsAttention > 0
-      ? `Includes ${quality.needsAttention} needing review`
-      : "All reviewed"
+    ? (reviewedAccuracy.reviewedDocCount > 0
+      ? `Observed accuracy (reviewed): ${Math.round((reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+      : qualityV2.needsReview > 0
+        ? `Includes ${qualityV2.needsReview} needing review`
+        : "All reviewed")
     : null;
 
-  // Quality score color (for details section)
-  const scoreColor = quality.score >= 80
+  // Quality score color (for details section) — now uses v2
+  const scoreColor = v2Score >= 80
     ? "text-green-600 dark:text-green-400"
-    : quality.score >= 60
+    : v2Score >= 60
       ? "text-amber-600 dark:text-amber-400"
       : "text-red-600 dark:text-red-400";
-  const barColor = quality.score >= 80
+  const barColor = v2Score >= 80
     ? "bg-green-500"
-    : quality.score >= 60
+    : v2Score >= 60
       ? "bg-amber-400"
       : "bg-red-400";
 
@@ -435,27 +456,32 @@ function ExportSummaryPanel({ packets, formatName }) {
 
           {docCount > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Data Quality</h4>
+              <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Quality Score v2</h4>
               <div className="flex items-center gap-3">
-                <span className={`text-xl font-bold tabular-nums ${scoreColor}`}>{quality.score}%</span>
+                <span className={`text-xl font-bold tabular-nums ${scoreColor}`}>{v2Score}%</span>
                 <div className="flex-1">
                   <div className="h-2 rounded-full overflow-hidden bg-gray-200 dark:bg-neutral-700">
-                    <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${quality.score}%` }} />
+                    <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${v2Score}%` }} />
                   </div>
                 </div>
               </div>
               <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
-                {quality.verified > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />{quality.verified} human-verified</div>}
+                {qualityV2.reviewed > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />{qualityV2.reviewed} human-verified</div>}
                 {quality.high > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />{quality.high} high-confidence</div>}
-                {quality.unscored > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0" />{quality.unscored} awaiting scores</div>}
-                {quality.needsAttention > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />{quality.needsAttention} need{quality.needsAttention === 1 ? "s" : ""} review</div>}
+                {qualityV2.unscored > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0" />{qualityV2.unscored} awaiting scores</div>}
+                {qualityV2.needsReview > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />{qualityV2.needsReview} need{qualityV2.needsReview === 1 ? "s" : ""} review</div>}
               </div>
-              {quality.fieldAccuracy !== null && quality.scoredFields > 0 && (
+              {reviewedAccuracy.reviewedDocCount > 0 && reviewedAccuracy.rates.observed_present_accuracy != null && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700" title="Observed accuracy is agreement on present fields after review; not computed without review.">
+                  Observed accuracy (reviewed): {Math.round(reviewedAccuracy.rates.observed_present_accuracy * 100)}% across {reviewedAccuracy.totalEvaluatedFields} fields
+                </p>
+              )}
+              {reviewedAccuracy.reviewedDocCount === 0 && quality.fieldAccuracy !== null && quality.scoredFields > 0 && (
                 <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
                   {quality.highFields} of {quality.scoredFields} scored fields high-confidence or human-corrected.
                 </p>
               )}
-              {quality.fieldAccuracy === null && quality.totalFields > 0 && (
+              {reviewedAccuracy.reviewedDocCount === 0 && quality.fieldAccuracy === null && quality.totalFields > 0 && (
                 <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
                   {quality.totalFields} fields extracted — enable consensus for per-field scores.
                 </p>
@@ -641,165 +667,257 @@ function DocumentFillSection({ packets, exportablePackets }) {
     );
   }
 
+  // Progress: 1 = upload form, 2 = choose data + instructions, 3 = fill (or in progress), 4 = done
+  const stepUploadDone = !!formFile;
+  const stepDataDone = stepUploadDone && !!instructions.trim();
+  const stepFilled = !!filledPdfUrl;
+  const currentStep = stepFilled ? 4 : filling ? 3 : stepDataDone ? 3 : stepUploadDone ? 2 : 1;
+  const steps = [
+    { num: 1, label: "Upload form", done: stepUploadDone },
+    { num: 2, label: "Choose data", done: stepDataDone },
+    { num: 3, label: "Fill document", done: stepFilled || filling },
+    { num: 4, label: "Download", done: stepFilled },
+  ];
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="space-y-4">
-        {!formFile ? (
-          <div
-            onDrop={handleDrop}
-            onDragOver={(e) => e.preventDefault()}
-            onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-gray-300 dark:border-neutral-600 rounded-xl p-8 text-center cursor-pointer hover:border-[#9e2339]/40 hover:bg-[#9e2339]/5 transition-all"
-          >
-            <Upload className="h-8 w-8 mx-auto mb-3 text-gray-400" />
-            <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Drop a blank PDF form here</p>
-            <p className="text-xs text-gray-400 mt-1">or click to browse</p>
-            <input ref={fileInputRef} type="file" accept=".pdf" onChange={handleFileSelect} className="hidden" />
+    <div className="space-y-6">
+      {/* Feature intro */}
+      <div className="rounded-xl bg-linear-to-br from-[#9e2339]/10 to-[#9e2339]/5 dark:from-[#9e2339]/20 dark:to-[#9e2339]/10 border border-[#9e2339]/20 p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#9e2339]/20 text-[#9e2339]">
+            <Sparkles className="h-5 w-5" />
           </div>
-        ) : (
-          <div className="border border-gray-200 dark:border-neutral-600 rounded-lg p-3 flex items-center justify-between bg-gray-50 dark:bg-neutral-800">
-            <div className="flex items-center gap-2 min-w-0">
-              <FileText className="h-4 w-4 text-[#9e2339] shrink-0" />
-              <span className="text-sm text-gray-700 dark:text-gray-200 truncate">{formFile.name}</span>
-              <span className="text-xs text-gray-400">({(formFile.size / 1024).toFixed(0)} KB)</span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Fill any PDF form with your extracted data</h4>
+              <span className="rounded-full bg-[#9e2339]/20 px-2 py-0.5 text-xs font-medium text-[#9e2339]">Bonus feature</span>
             </div>
-            <button type="button" onClick={handleFormReset} className="p-1 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded">
-              <X className="h-3.5 w-3.5 text-gray-400" />
-            </button>
+            <p className="mt-1 text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+              Upload a blank PDF form (settlement statement, deed, ALTA form, etc.) and we’ll fill it using data from your processed packets. 
+              No copy-paste — the AI maps your extracted fields to the form and returns a ready-to-use PDF. Pick a packet to auto-fill from its extractions, or type custom key-value instructions.
+            </p>
           </div>
-        )}
-        {formFile && (
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">Data source</label>
-              <select
-                value={selectedPacketId}
-                onChange={handlePacketChange}
-                className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-700 dark:text-gray-200"
-              >
-                <option value="">Select a processed packet...</option>
-                {exportablePackets.map((pkt) => (
-                  <option key={pkt.id} value={pkt.id}>
-                    {pkt.filename || pkt.name} ({pkt.documents?.length || 0} docs)
-                  </option>
-                ))}
-              </select>
+        </div>
+      </div>
+
+      {/* Step progress indicator */}
+      <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+        {steps.map((s, i) => (
+          <div key={s.num} className="flex items-center gap-1.5">
+            <div
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium transition-colors ${
+                s.done
+                  ? "bg-green-500 text-white"
+                  : currentStep === s.num
+                    ? "bg-[#9e2339] text-white"
+                    : "bg-gray-200 dark:bg-neutral-600 text-gray-500 dark:text-gray-400"
+              }`}
+            >
+              {s.done ? <CheckCircle2 className="h-3.5 w-3.5" /> : s.num}
             </div>
-            <div>
-              <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">
-                Fill instructions
-                {selectedPacketId && <span className="text-gray-400 font-normal"> (auto-generated from packet)</span>}
-              </label>
-              <textarea
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                placeholder={"Enter field values, e.g.:\nBuyer Name: John Smith\nProperty Address: 123 Main St"}
-                rows={6}
-                className="w-full px-3 py-2 text-xs font-mono border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-700 dark:text-gray-200 resize-y"
-              />
+            <span className={`text-xs font-medium ${currentStep === s.num ? "text-gray-900 dark:text-gray-100" : s.done ? "text-green-600 dark:text-green-400" : "text-gray-500 dark:text-gray-400"}`}>
+              {s.label}
+            </span>
+            {i < steps.length - 1 && (
+              <span className="hidden sm:inline text-gray-300 dark:text-neutral-600 mx-0.5" aria-hidden="true">→</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* How it works (always visible, compact) */}
+      <details className="group rounded-lg border border-gray-200 dark:border-neutral-700 bg-gray-50/50 dark:bg-neutral-800/30">
+        <summary className="cursor-pointer px-4 py-2.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 list-none flex items-center gap-2">
+          <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+          How it works
+        </summary>
+        <div className="px-4 pb-3 pt-3 text-xs text-gray-600 dark:text-gray-400 space-y-1.5 border-t border-gray-100 dark:border-neutral-700">
+          <p><strong>1. Upload a blank PDF form.</strong> Any fillable or static PDF works; fillable forms often give the best field mapping.</p>
+          <p><strong>2. Choose a data source.</strong> Select a processed packet — we’ll turn its extracted fields into “Field: value” instructions. You can edit the text before filling.</p>
+          <p><strong>3. Click Fill document.</strong> The AI analyzes the form, matches your data to the right fields, and generates a filled PDF (usually 15–60 seconds).</p>
+          <p><strong>4. Download.</strong> Preview the result in the panel and download when you’re happy. You can change instructions and fill again without re-uploading the form.</p>
+        </div>
+      </details>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-4">
+          {!formFile ? (
+            <div
+              onDrop={handleDrop}
+              onDragOver={(e) => e.preventDefault()}
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-gray-300 dark:border-neutral-600 rounded-xl p-8 text-center cursor-pointer hover:border-[#9e2339]/40 hover:bg-[#9e2339]/5 transition-all"
+            >
+              <Upload className="h-8 w-8 mx-auto mb-3 text-gray-400" />
+              <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Drop a blank PDF form here</p>
+              <p className="text-xs text-gray-400 mt-1">or click to browse</p>
+              <input ref={fileInputRef} type="file" accept=".pdf" onChange={handleFileSelect} className="hidden" />
             </div>
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">Model</label>
+          ) : (
+            <div className="border border-gray-200 dark:border-neutral-600 rounded-lg p-3 flex items-center justify-between bg-gray-50 dark:bg-neutral-800">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="h-4 w-4 text-[#9e2339] shrink-0" />
+                <span className="text-sm text-gray-700 dark:text-gray-200 truncate">{formFile.name}</span>
+                <span className="text-xs text-gray-400">({(formFile.size / 1024).toFixed(0)} KB)</span>
+              </div>
+              <button type="button" onClick={handleFormReset} className="p-1 hover:bg-gray-200 dark:hover:bg-neutral-700 rounded">
+                <X className="h-3.5 w-3.5 text-gray-400" />
+              </button>
+            </div>
+          )}
+          {formFile && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">Data source</label>
                 <select
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
+                  value={selectedPacketId}
+                  onChange={handlePacketChange}
                   className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-700 dark:text-gray-200"
                 >
-                  {Object.entries(RETAB_MODELS)
-                    .filter(([id]) => !id.startsWith("auto"))
-                    .map(([id, m]) => (
-                      <option key={id} value={id}>
-                        {m.name} — ${m.costPerPage.toFixed(3)}/pg
-                      </option>
-                    ))}
+                  <option value="">Select a processed packet...</option>
+                  {exportablePackets.map((pkt) => (
+                    <option key={pkt.id} value={pkt.id}>
+                      {pkt.filename || pkt.name} ({pkt.documents?.length || 0} docs)
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
-                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 flex items-center gap-1">
-                  <Palette className="h-3 w-3" /> Color
+                <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">
+                  Fill instructions
+                  {selectedPacketId && <span className="text-gray-400 font-normal"> (auto-generated from packet)</span>}
                 </label>
-                <input
-                  type="color"
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  className="w-12 h-[38px] rounded-lg border border-gray-200 dark:border-neutral-600 cursor-pointer"
+                <textarea
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  placeholder={"Enter field values, e.g.:\nBuyer Name: John Smith\nProperty Address: 123 Main St"}
+                  rows={6}
+                  className="w-full px-3 py-2 text-xs font-mono border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-700 dark:text-gray-200 resize-y"
                 />
               </div>
-            </div>
-            {filling ? (
-              <Button onClick={handleCancel} className="w-full bg-gray-600 hover:bg-gray-700 text-white">
-                <Square className="h-4 w-4 mr-2" /> Cancel ({formatElapsed(elapsed)})
-              </Button>
-            ) : (
-              <Button
-                onClick={handleFill}
-                disabled={!instructions.trim()}
-                className="w-full bg-[#9e2339] hover:bg-[#9e2339]/90 text-white"
-              >
-                <Upload className="h-4 w-4 mr-2" /> Fill document
-              </Button>
-            )}
-            {error && (
-              <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
-                <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      <div>
-        {filledPdfUrl ? (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Filled document</h4>
-              <Button size="sm" onClick={handleDownload} className="bg-[#9e2339] hover:bg-[#9e2339]/90 text-white">
-                <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
-              </Button>
-            </div>
-            <div
-              className="border border-gray-200 dark:border-neutral-600 rounded-lg overflow-hidden bg-gray-100 dark:bg-neutral-900"
-              style={{ height: "400px" }}
-            >
-              <iframe src={filledPdfUrl} title="Filled document preview" className="w-full h-full" />
-            </div>
-            {formData?.length > 0 && (
-              <div className="max-h-32 overflow-y-auto space-y-1">
-                {formData.map((field, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between text-xs px-2 py-1.5 rounded bg-gray-50 dark:bg-neutral-800"
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">Model</label>
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-neutral-600 rounded-lg bg-white dark:bg-neutral-800 text-gray-700 dark:text-gray-200"
                   >
-                    <span className="text-gray-500 dark:text-gray-400 font-mono">{field.key}</span>
-                    <span className="text-gray-700 dark:text-gray-200 truncate max-w-[60%]">{field.value || "\u2014"}</span>
-                  </div>
-                ))}
+                    {Object.entries(RETAB_MODELS)
+                      .filter(([id]) => !id.startsWith("auto"))
+                      .map(([id, m]) => (
+                        <option key={id} value={id}>
+                          {m.name} — ${m.costPerPage.toFixed(3)}/pg
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 flex items-center gap-1">
+                    <Palette className="h-3 w-3" /> Color
+                  </label>
+                  <input
+                    type="color"
+                    value={color}
+                    onChange={(e) => setColor(e.target.value)}
+                    className="w-12 h-[38px] rounded-lg border border-gray-200 dark:border-neutral-600 cursor-pointer"
+                  />
+                </div>
               </div>
-            )}
-          </div>
-        ) : (
-          <div
-            className="border-2 border-dashed border-gray-200 dark:border-neutral-700 rounded-xl flex items-center justify-center text-center"
-            style={{ height: "320px" }}
-          >
-            <div>
               {filling ? (
-                <>
-                  <Loader2 className="h-8 w-8 mx-auto mb-3 text-[#9e2339] animate-spin" />
-                  <p className="text-sm text-gray-600 dark:text-gray-300 font-medium">Filling form...</p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">{formatElapsed(elapsed)} elapsed</p>
-                </>
+                <Button onClick={handleCancel} className="w-full bg-gray-600 hover:bg-gray-700 text-white">
+                  <Square className="h-4 w-4 mr-2" /> Cancel ({formatElapsed(elapsed)})
+                </Button>
               ) : (
-                <>
-                  <Eye className="h-8 w-8 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
-                  <p className="text-sm text-gray-400 dark:text-gray-500">Filled document preview</p>
-                  <p className="text-xs text-gray-300 dark:text-gray-600 mt-1">Upload a form and fill to see results</p>
-                </>
+                <Button
+                  onClick={handleFill}
+                  disabled={!instructions.trim()}
+                  className="w-full bg-[#9e2339] hover:bg-[#9e2339]/90 text-white"
+                >
+                  <Sparkles className="h-4 w-4 mr-2" /> Fill document
+                </Button>
+              )}
+              {error && (
+                <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+                </div>
               )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
+        <div>
+          {filledPdfUrl ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                  <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Filled document</h4>
+                </div>
+                <Button size="sm" onClick={handleDownload} className="bg-[#9e2339] hover:bg-[#9e2339]/90 text-white shrink-0">
+                  <Download className="h-3.5 w-3.5 mr-1.5" /> Download PDF
+                </Button>
+              </div>
+              <p className="text-xs text-green-600 dark:text-green-400">Done! Preview below or download the PDF.</p>
+              <div
+                className="border border-gray-200 dark:border-neutral-600 rounded-lg overflow-hidden bg-gray-100 dark:bg-neutral-900"
+                style={{ height: "400px" }}
+              >
+                <iframe src={filledPdfUrl} title="Filled document preview" className="w-full h-full" />
+              </div>
+              {formData?.length > 0 && (
+                <details className="mt-2">
+                  <summary className="text-xs font-medium text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">Fields written ({formData.length})</summary>
+                  <div className="max-h-32 overflow-y-auto space-y-1 mt-1.5">
+                    {formData.map((field, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between text-xs px-2 py-1.5 rounded bg-gray-50 dark:bg-neutral-800"
+                      >
+                        <span className="text-gray-500 dark:text-gray-400 font-mono">{field.key}</span>
+                        <span className="text-gray-700 dark:text-gray-200 truncate max-w-[60%]">{field.value || "\u2014"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          ) : (
+            <div
+              className="border-2 border-dashed border-gray-200 dark:border-neutral-700 rounded-xl flex flex-col items-center justify-center text-center min-h-[320px] p-6"
+            >
+              {filling ? (
+                <div className="space-y-4 w-full max-w-xs">
+                  <Loader2 className="h-10 w-10 mx-auto text-[#9e2339] animate-spin" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-200">Filling your form</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">The AI is mapping your data to the form fields. This usually takes 15–60 seconds.</p>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>Elapsed: {formatElapsed(elapsed)}</span>
+                    <span className="text-[#9e2339]">In progress…</span>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-gray-200 dark:bg-neutral-700 overflow-hidden">
+                    <div
+                      className="h-full bg-[#9e2339] rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(90, 20 + (elapsed / 60) * 50)}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 dark:bg-neutral-700">
+                    <Eye className="h-6 w-6 text-gray-400 dark:text-gray-500" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Filled document preview</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 max-w-[260px]">
+                    Upload a form, choose your data, and click Fill document. Your filled PDF will appear here. Use a blank, fillable PDF for best results.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -821,6 +939,7 @@ export function ExportPage({ packets, stats }) {
   const [selectedPacketIds, setSelectedPacketIds] = useState(new Set());
   const [selectedDocTypes, setSelectedDocTypes] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState("");
+  const [formFillOpen, setFormFillOpen] = useState(false);
 
   // Exportable packets
   const exportablePackets = useMemo(() => {
@@ -1061,14 +1180,22 @@ export function ExportPage({ packets, stats }) {
                 ) : exportSuccess && exportTarget === "generic" ? (
                   <><SailboatIcon className="h-4 w-4 mr-2" /> Exported!</>
                 ) : (
-                  <><Download className="h-4 w-4 mr-2" /> Download {currentGenericPreset?.name}</>
+                  <><Download className="h-4 w-4 mr-2" /> Download {currentGenericPreset?.format?.toUpperCase() || currentGenericPreset?.name} (generic)</>
                 )}
               </Button>
             </div>
             {outcomeGeneric && (
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                You'll get: {outcomeGeneric.fileCount} {outcomeGeneric.format.toUpperCase()} file{outcomeGeneric.fileCount !== 1 ? "s" : ""}, {outcomeGeneric.rowOrDocCount} {outcomeGeneric.format === "json" ? "document" : "row"}{outcomeGeneric.rowOrDocCount !== 1 ? "s" : ""}{outcomeGeneric.columns?.length ? `. Columns: ${outcomeGeneric.columns.slice(0, 5).map((c) => c.replace(/_/g, " ")).join(", ")}${outcomeGeneric.columns.length > 5 ? "…" : ""}` : ""}
+                You'll get: {outcomeGeneric.fileCount} {outcomeGeneric.format.toUpperCase()} file{outcomeGeneric.fileCount !== 1 ? "s" : ""}, {outcomeGeneric.rowOrDocCount} {outcomeGeneric.format === "json" ? "document" : "row"}{outcomeGeneric.rowOrDocCount !== 1 ? "s" : ""}.
               </p>
+            )}
+            {outcomeGeneric?.columns?.length > 0 && (
+              <details className="mt-2">
+                <summary className="text-xs font-medium text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">Columns in this export ({outcomeGeneric.columns.length})</summary>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono break-all">
+                  {outcomeGeneric.columns.slice(0, 12).map((c) => c.replace(/_/g, " ")).join(", ")}{outcomeGeneric.columns.length > 12 ? "…" : ""}
+                </p>
+              </details>
             )}
           </div>
 
@@ -1112,13 +1239,26 @@ export function ExportPage({ packets, stats }) {
             )}
           </div>
 
-          {/* Section 3: Form fill */}
-          <div className="border border-gray-200 dark:border-neutral-700 rounded-xl p-5 bg-white dark:bg-neutral-900/50">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">3. Form fill</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-              Upload a blank PDF form and fill it with extracted data using AI.
-            </p>
-            <DocumentFillSection packets={packets} exportablePackets={exportablePackets} />
+          {/* Section 3: Form fill (starts collapsed) */}
+          <div className="border border-gray-200 dark:border-neutral-700 rounded-xl bg-white dark:bg-neutral-900/50 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setFormFillOpen((o) => !o)}
+              className="w-full flex items-center justify-between gap-2 p-5 text-left hover:bg-gray-50 dark:hover:bg-neutral-800/50 transition-colors"
+            >
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">3. Form fill</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Upload a blank PDF form and fill it with extracted data using AI.
+                </p>
+              </div>
+              <ChevronDown className={`h-4 w-4 text-gray-400 shrink-0 transition-transform ${formFillOpen ? "rotate-180" : ""}`} />
+            </button>
+            {formFillOpen && (
+              <div className="px-5 pb-5 pt-0 border-t border-gray-100 dark:border-neutral-800">
+                <DocumentFillSection packets={packets} exportablePackets={exportablePackets} />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1127,3 +1267,4 @@ export function ExportPage({ packets, stats }) {
 }
 
 export default ExportPage;
+export { DocumentFillSection };
