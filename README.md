@@ -125,6 +125,8 @@ One URL serves both app and API; no Node.js required on the host.
 | Stop + remove data | `docker-compose down -v` |
 | Rebuild after code change | `docker-compose up -d --build` |
 
+Data (database and uploaded PDFs) is stored in the `cortex-data` volume and persists across `docker-compose up -d --build` and container restarts; use `docker-compose down` without `-v` to keep it.
+
 **Without Compose:** `docker build -t sail-idp .` then  
 `docker run -d -p 3005:3005 -v sail-idp-data:/app/data --name sail-idp sail-idp`
 

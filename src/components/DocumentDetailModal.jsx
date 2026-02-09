@@ -10,7 +10,7 @@ import {
   ZoomOut,
   ChevronLeft,
   ChevronRight,
-  Maximize2,
+  RotateCcw,
   Loader2,
   PenLine,
 } from "lucide-react";
@@ -247,8 +247,9 @@ function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loa
             size="icon"
             className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
             onClick={() => setZoom(100)}
+            title="Reset zoom to 100%"
           >
-            <Maximize2 className="h-4 w-4" />
+            <RotateCcw className="h-4 w-4" />
           </Button>
         </div>
       </div>

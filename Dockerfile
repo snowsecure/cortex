@@ -38,6 +38,7 @@ RUN apk del python3 make g++
 # Copy application files
 COPY server.js ./
 COPY db/ ./db/
+COPY lib/ ./lib/
 COPY public/ ./public/
 COPY --from=frontend-builder /app/dist ./dist
 

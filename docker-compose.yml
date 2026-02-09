@@ -29,6 +29,7 @@ services:
     env_file:
       - path: .env.docker
         required: false
+    # Persist DB and uploads across container updates (do not use 'down -v' if you want to keep data)
     volumes:
       - cortex-data:/app/data
     healthcheck:

@@ -5,13 +5,14 @@
 1. [System Overview](#system-overview)
 2. [Technology Stack](#technology-stack)
 3. [Architecture Diagram](#architecture-diagram)
-4. [Document Processing Pipeline](#document-processing-pipeline)
-5. [Database Schema](#database-schema)
-6. [REST API Reference](#rest-api-reference)
-7. [State Machines](#state-machines)
-8. [Configuration](#configuration)
-9. [Security](#security)
-10. [Deployment](#deployment)
+4. [Detailed Mermaid flowcharts](#detailed-mermaid-flowcharts)
+5. [Document Processing Pipeline](#document-processing-pipeline)
+6. [Database Schema](#database-schema)
+7. [REST API Reference](#rest-api-reference)
+8. [State Machines](#state-machines)
+9. [Configuration](#configuration)
+10. [Security](#security)
+11. [Deployment](#deployment)
 
 ---
 
@@ -124,6 +125,362 @@ Retab API          - https://api.retab.com/v1
                                           │ - /documents/extract│
                                           │ - /schemas/generate │
                                           └─────────────────────┘
+```
+
+---
+
+## Detailed Mermaid flowcharts
+
+The following Mermaid diagrams provide technical detail for CORTEX subsystems. They reference `App.jsx`, `useBatchQueue.js`, `usePacketPipeline.js`, `server.js`, `db/database.js`, and `exportPresets.js`.
+
+### System architecture (high-level)
+
+Browser (React SPA), Express server, storage (SQLite + temp PDFs), and Retab API with main data flows. Pipeline calls the Retab proxy for split/classify/extract; BatchQueue syncs and restores via REST; uploads write to temp-pdfs.
+
+```mermaid
+flowchart LR
+  subgraph browser [Browser]
+    direction TB
+    appJsx["App.jsx (Router)"]
+    useBatchQueue["useBatchQueue (State & Queue)"]
+    usePacketPipeline["usePacketPipeline (Processing)"]
+    localStorage[("localStorage: API key, settings")]
+    appJsx --- useBatchQueue
+    useBatchQueue --- usePacketPipeline
+    useBatchQueue --- localStorage
+  end
+
+  subgraph server [Express Server]
+    direction TB
+    restApi["REST API: sessions, packets, documents, history, admin"]
+    retabProxy["Retab Proxy: split, extract, classify"]
+    multerUpload["Multer Upload"]
+    restApi --- retabProxy
+    restApi --- multerUpload
+  end
+
+  subgraph storage [Storage]
+    direction TB
+    sqlite[("SQLite: sessions, packets, documents, history, usage")]
+    tempPdfs[("Temp PDFs: temp-pdfs/")]
+  end
+
+  retabApi(("Retab API\napi.retab.com/v1"))
+
+  usePacketPipeline -->|"split, classify, extract"| retabProxy
+  retabProxy -->|"HTTPS, retry"| retabApi
+  useBatchQueue -->|"sync & restore"| restApi
+  restApi --> sqlite
+  restApi --> tempPdfs
+  multerUpload --> tempPdfs
+```
+
+### End-to-end document processing pipeline
+
+Single packet from user adding a file to final state (completed, needs_review, or failed). Includes split API, per-document extract with schema and checkNeedsReview, aggregation, and POST /api/packets/:id/complete.
+
+```mermaid
+flowchart TB
+  start([User adds file])
+  createPacket[Create packet, queued]
+  persistDb[Persist to DB if server upload]
+  split[Call Retab split API]
+  splitOk{Split OK?}
+  fallbackSplit[Fallback: single other doc]
+  mapCategory[Map split type to category]
+  getSchema[Get schema for category]
+  extract[Call Retab extract API]
+  extractOk{Extract OK?}
+  confidence[Compute confidence]
+  checkReview[checkNeedsReview]
+  needsReview{Needs review?}
+  docCompleted[Doc: completed]
+  docReview[Doc: needs_review]
+  docFailed[Doc: failed]
+  aggregate[Aggregate stats and usage]
+  sync[POST /api/packets/:id/complete]
+  pktCompleted[Packet: completed]
+  pktNeedsReview[Packet: needs_review]
+  pktFailed[Packet: failed]
+
+  start --> createPacket
+  createPacket --> persistDb
+  persistDb --> split
+  split --> splitOk
+  splitOk -->|No| fallbackSplit
+  splitOk -->|Yes| mapCategory
+  fallbackSplit --> mapCategory
+  mapCategory --> getSchema
+  getSchema --> extract
+  extract --> extractOk
+  extractOk -->|No| docFailed
+  extractOk -->|Yes| confidence
+  confidence --> checkReview
+  checkReview --> needsReview
+  needsReview -->|Yes| docReview
+  needsReview -->|No| docCompleted
+  docCompleted --> aggregate
+  docReview --> aggregate
+  docFailed --> aggregate
+  aggregate --> sync
+  sync --> pktCompleted
+  sync --> pktNeedsReview
+  sync --> pktFailed
+```
+
+### Upload flow (client and server paths)
+
+Two paths: client-side base64 (no DB until /complete) or server upload (POST /api/upload, temp file, packet in DB). Convergence: packet in queue with base64 or packet_id; server-stored packets get base64 via GET /api/packets/:id/file when processing runs.
+
+```mermaid
+flowchart TB
+  userSelects([User selects PDF])
+  pathA[Path A: Client]
+  pathB[Path B: Server]
+  fileReader[FileReader readAsDataURL]
+  base64Mem[base64 in memory]
+  packetQueue[Packet in queue, no DB yet]
+  uploadLater[Optional: POST /api/upload later]
+  postUpload[POST /api/upload multipart]
+  multerSave[Multer saves to temp-pdfs]
+  createSession[Create session if needed]
+  createPacketDb[Create packet in DB, temp_file_path]
+  responsePacketId[Response: packet_id]
+  clientAddsQueue[Client adds packet to queue]
+  getFile[GET /api/packets/:id/file for base64]
+  converge[Packet in queue with base64 or packet_id]
+  processing[Runs processing]
+
+  userSelects --> pathA
+  userSelects --> pathB
+  pathA --> fileReader
+  fileReader --> base64Mem
+  base64Mem --> packetQueue
+  packetQueue -.->|optional| uploadLater
+  pathB --> postUpload
+  postUpload --> multerSave
+  multerSave --> createSession
+  createSession --> createPacketDb
+  createPacketDb --> responsePacketId
+  responsePacketId --> clientAddsQueue
+  clientAddsQueue --> getFile
+  getFile --> converge
+  packetQueue --> converge
+  converge --> processing
+```
+
+### Single-packet processing (split to extract)
+
+Detail inside processPacket: split phase (splitDocument Retab call, filter empty, fallback to other), then doc placeholders, then extract phase in parallel batches (schema, annotate, extractDocument with retries, checkNeedsReview). Output: result with documents, stats, usage; caller syncs via /complete.
+
+```mermaid
+flowchart TB
+  input[Packet: id, base64, filename]
+  skipSplit{skipSplit?}
+  splitCall[splitDocument Retab API]
+  parseSplits[Parse splits, filter empty]
+  splitErr{Error?}
+  fallbackOther[Fallback: one other doc]
+  genIds[Generate doc IDs]
+  mapCategory[SPLIT_TO_CATEGORY_MAP]
+  pendingDocs[Build pending docs]
+  onDetected[onDocumentsDetected callback]
+  extractLoop[For each split, parallel batches]
+  getSchema[getSchemaForCategory]
+  annotate[Optional: sourceQuotes, reasoningPrompts]
+  extractCall[extractDocument Retab, retries]
+  parseExt[Parse extraction and likelihoods]
+  checkReview[checkNeedsReview]
+  docStatus[Set doc: completed or needs_review or failed]
+  aggregateCredits[Aggregate credits and cost]
+  result[result: documents, stats, usage]
+  syncComplete[Caller: POST /complete]
+
+  input --> skipSplit
+  skipSplit -->|Yes| genIds
+  skipSplit -->|No| splitCall
+  splitCall --> parseSplits
+  parseSplits --> splitErr
+  splitErr -->|Yes| fallbackOther
+  splitErr -->|No| genIds
+  fallbackOther --> genIds
+  genIds --> mapCategory
+  mapCategory --> pendingDocs
+  pendingDocs --> onDetected
+  onDetected --> extractLoop
+  extractLoop --> getSchema
+  getSchema --> annotate
+  annotate --> extractCall
+  extractCall --> parseExt
+  parseExt --> checkReview
+  checkReview --> docStatus
+  docStatus --> aggregateCredits
+  aggregateCredits --> result
+  result --> syncComplete
+```
+
+### Review workflow
+
+From GET /api/sessions/:id/review-queue to opening a document in DocumentDetailModal (PDF via GET file or cache, getMergedExtractionData), user edits and Approve/Reject/Save, POST /api/documents/:id/review, server updates documents row and returns; UI updates queue and packet counts.
+
+```mermaid
+flowchart TB
+  entry[GET /api/sessions/:id/review-queue]
+  docList[Documents with needs_review or editable]
+  uiQueue[ReviewQueue: document list]
+  openDoc[User clicks document]
+  modal[DocumentDetailModal]
+  loadPdf[Load PDF: GET file or blob cache]
+  showData[getMergedExtractionData with editedFields]
+  userEdits[User edits fields, notes]
+  approve[Approve / Reject / Save]
+  postReview[POST /api/documents/:id/review]
+  body[Body: status, editedFields, reviewerNotes, reviewedBy]
+  serverUpdate[Server: update documents row]
+  mergeData[Merge extraction_data with editedFields]
+  returnDoc[Return updated doc]
+  uiUpdate[Queue and packet counts updated]
+
+  entry --> docList
+  docList --> uiQueue
+  uiQueue --> openDoc
+  openDoc --> modal
+  modal --> loadPdf
+  modal --> showData
+  loadPdf --> userEdits
+  showData --> userEdits
+  userEdits --> approve
+  approve --> postReview
+  postReview --> body
+  body --> serverUpdate
+  serverUpdate --> mergeData
+  mergeData --> returnDoc
+  returnDoc --> uiUpdate
+```
+
+### Export flow
+
+Select scope (packets and doc types), choose preset (generic or TPS), execute preset.transform(packets), download file, save last format and recent exports to localStorage.
+
+```mermaid
+flowchart TB
+  selectScope[Select packets and doc types]
+  filterDocs[Filtered document list]
+  choosePreset[Choose preset: generic or TPS]
+  getPreset[Get preset by id from EXPORT_PRESETS]
+  transform[preset.transform: buildGenericCSV, buildTPS, etc.]
+  content[Content or ArrayBuffer for XLSX]
+  download[Download file: preset name + timestamp]
+  saveLast[Save last format to localStorage]
+  recentExports[Append to recent exports]
+
+  selectScope --> filterDocs
+  filterDocs --> choosePreset
+  choosePreset --> getPreset
+  getPreset --> transform
+  transform --> content
+  content --> download
+  download --> saveLast
+  saveLast --> recentExports
+```
+
+### Database entity relationship
+
+Tables: sessions (PK id), packets (PK id, FK session_id), documents (PK id, FK packet_id, FK session_id). Cardinality 1:N. Additional tables: history (session_id nullable), usage_daily (date PK), export_templates (PK id).
+
+```mermaid
+flowchart LR
+  sessions[(sessions\nid PK)]
+  packets[(packets\nid PK, session_id FK)]
+  documents[(documents\nid PK, packet_id FK, session_id FK)]
+  history[(history\nid PK, session_id FK nullable)]
+  usageDaily[(usage_daily\ndate PK)]
+  exportTemplates[(export_templates\nid PK)]
+
+  sessions -->|"1:N"| packets
+  packets -->|"1:N"| documents
+  sessions -.->|"optional"| history
+  usageDaily
+  exportTemplates
+```
+
+### Packet state machine
+
+Packet status transitions: queued to splitting to extracting; from extracting to completed, needs_review, or failed. Optional retry from failed back to queued.
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued
+  queued --> splitting: start processing
+  splitting --> extracting: splits ready
+  extracting --> completed: all done, none need review
+  extracting --> needs_review: at least one needs review
+  extracting --> failed: at least one failed or error
+  failed --> queued: user retry
+  completed --> [*]
+  needs_review --> [*]
+  failed --> [*]
+```
+
+### Document state machine
+
+Document status: pending (after split) to processing (extract in progress) to completed, needs_review, or failed. From needs_review, human action to completed (approved) or rejected.
+
+```mermaid
+stateDiagram-v2
+  [*] --> pending
+  pending --> processing: extract started
+  processing --> completed: success, no review
+  processing --> needs_review: success, below threshold
+  processing --> failed: extract error
+  needs_review --> completed: approved
+  needs_review --> rejected: rejected
+  completed --> [*]
+  needs_review --> [*]
+  failed --> [*]
+  rejected --> [*]
+```
+
+### API request lifecycle (server)
+
+Incoming request through Helmet, CORS, express.json, rate limit (general vs proxy), then route: DB read/write, upload (Multer to temp-pdfs), or Retab proxy (Api-Key, fetchWithRetry to api.retab.com/v1). Response: JSON or file stream; static dist for SPA.
+
+```mermaid
+flowchart TB
+  request([Incoming request])
+  helmet[Helmet: security headers]
+  cors[CORS: origin check]
+  json[express.json: body parse]
+  rateLimit[Rate limit: 120/min general, 60/min proxy]
+  route[Route match]
+  dbRoute[DB route: sessions, packets, documents, history, admin]
+  uploadRoute[Upload: Multer to temp-pdfs]
+  proxyRoute[Retab proxy]
+  sqlite[SQLite read/write]
+  createPacket[Create packet in DB]
+  validateKey[Validate Api-Key]
+  fetchRetab[fetchWithRetry to api.retab.com/v1]
+  responseJson[JSON response]
+  responseFile[File stream: GET /packets/:id/file]
+  static[Static: dist/ SPA]
+
+  request --> helmet
+  helmet --> cors
+  cors --> json
+  json --> rateLimit
+  rateLimit --> route
+  route --> dbRoute
+  route --> uploadRoute
+  route --> proxyRoute
+  dbRoute --> sqlite
+  sqlite --> responseJson
+  uploadRoute --> createPacket
+  createPacket --> responseJson
+  proxyRoute --> validateKey
+  validateKey --> fetchRetab
+  fetchRetab --> responseJson
+  route --> responseFile
+  route --> static
 ```
 
 ---
