@@ -142,7 +142,8 @@ function WelcomeDashboard({
   const handleDragLeave = React.useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragOver(false);
+    // Only clear when actually leaving the drop zone (not when entering a child element)
+    if (!e.currentTarget.contains(e.relatedTarget)) setIsDragOver(false);
   }, []);
 
   const handleDrop = React.useCallback((e) => {
@@ -181,7 +182,7 @@ function WelcomeDashboard({
 
   return (
     <div
-      className={`flex-1 flex flex-col items-center justify-center p-8 min-h-0 bg-[#fafafa] dark:bg-neutral-900 relative overflow-hidden transition-colors ${isDragOver ? "bg-[#9e2339]/5 dark:bg-[#9e2339]/10 ring-2 ring-[#9e2339]/30 ring-inset" : ""}`}
+      className={`flex-1 flex flex-col items-center justify-center p-8 min-h-0 bg-[#fafafa] dark:bg-neutral-900 relative overflow-hidden transition-colors ${isDragOver ? "bg-[#9e2339]/5 dark:bg-[#9e2339]/10 outline-2 outline-[#9e2339]/30 -outline-offset-2" : ""}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -639,9 +640,15 @@ function App() {
     addPackets(files);
   }, [addPackets]);
 
-  // Handle clear all files
+  // Handle clear all files — require confirmation so we don't accidentally wipe server data
   const handleClearAll = useCallback(() => {
-    clearAll();
+    setConfirmDialog({
+      isOpen: true,
+      title: "Remove all packets?",
+      message: "This will remove all files from the queue and delete them from the server. Completed or in-progress work cannot be recovered.",
+      confirmText: "Remove all",
+      action: () => clearAll(),
+    });
   }, [clearAll]);
 
   // Handle remove packet (from Upload or Results). Shows toast if server delete fails.
@@ -742,15 +749,6 @@ function App() {
       ...(catOverride && { categoryOverride: catOverride }),
     });
 
-    // Informative toast — use userEditedCount for accuracy (excludes phantom/schema-fill)
-    if (catOverride) {
-      toast.success(`Sealed — ${docName}${userEditedCount > 0 ? ` (${userEditedCount} field${userEditedCount !== 1 ? "s" : ""} edited)` : ""}`);
-    } else if (userEditedCount > 0) {
-      toast.success(`Sealed — ${userEditedCount} field${userEditedCount !== 1 ? "s" : ""} updated on ${docName}`);
-    } else {
-      toast.success(`Sealed — ${docName} approved as-is`);
-    }
-
     if (!isProduction) console.log("Review sealed:", document.id, { editedCount, userEditedCount });
 
     // Return result for ReviewQueue UI feedback
@@ -785,12 +783,11 @@ function App() {
     }
   }, [updateDocument, toast]);
 
-  // Handle new upload - go back to upload without clearing results
+  // Handle new upload — go to upload page to add more files; do not clear existing packets
   const handleNewUpload = useCallback(() => {
-    clearAll();
     setCurrentRunSaved(false);
     setViewMode(ViewMode.UPLOAD);
-  }, [clearAll]);
+  }, []);
 
   // Handle view history
   const handleViewHistory = useCallback(() => {
@@ -1453,9 +1450,10 @@ function App() {
         isOpen={confirmDialog.isOpen}
         onClose={() => setConfirmDialog({ isOpen: false, action: null })}
         onConfirm={() => confirmDialog.action?.()}
-        title={confirmDialog.title}
-        message={confirmDialog.message}
-        confirmText="Clear Data"
+        title={confirmDialog.title ?? "Confirm"}
+        message={confirmDialog.message ?? ""}
+        confirmText={confirmDialog.confirmText ?? "Confirm"}
+        cancelText={confirmDialog.cancelText ?? "Cancel"}
         variant="danger"
       />
     </div>

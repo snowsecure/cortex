@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle, ShieldCheck, Loader2, Tag, Plus, X, Search, SearchSlash } from "lucide-react";
 import { Button } from "./ui/button";
 import { SailboatIcon } from "./ui/sailboat-icon";
-import { getMergedExtractionData, NOT_IN_DOCUMENT_VALUE, NOT_IN_DOCUMENT_LABEL } from "../lib/utils";
+import { getMergedExtractionData, NOT_IN_DOCUMENT_VALUE, NOT_IN_DOCUMENT_LABEL, displayValue } from "../lib/utils";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { schemas } from "../schemas/index";
 import { PDFPreview } from "./DocumentDetailModal";
@@ -350,6 +350,8 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
   const [sealedResult, setSealedResult] = useState(null); // { ok, editedCount, documentName }
   const [saveError, setSaveError] = useState(null);
   const sealTimerRef = useRef(null);
+  // Last-document confirmation: show summary before sealing final item in queue
+  const [showLastSealConfirm, setShowLastSealConfirm] = useState(false);
 
   // Clear sealed overlay timer on unmount
   useEffect(() => () => { if (sealTimerRef.current) clearTimeout(sealTimerRef.current); }, []);
@@ -490,20 +492,14 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     extra: false, // Reference fields from original schema
   });
 
-  // --- handleApprove: the main "Seal & Save" action ---
-  const handleApprove = useCallback(async () => {
-    // Synchronous ref guard — prevents double-click race where two clicks both
-    // pass the `saving` state check before the first setSaving(true) takes effect.
+  // --- performSeal: core seal logic (used directly or after last-document confirmation) ---
+  const performSeal = useCallback(async () => {
     if (!current || saving || savingRef.current) return;
-    savingRef.current = true;
-
-    // Guard: onApprove must be provided — fail loudly instead of silently doing nothing
     if (!onApprove) {
       setSaveError("Review handler not available. Please reload the page.");
-      savingRef.current = false;
       return;
     }
-
+    savingRef.current = true;
     const docId = current.document.id;
     const catOverride = categoryOverrides[docId] || null;
     setSaving(true);
@@ -511,21 +507,15 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     setSealedResult(null);
 
     try {
-      // --- Filter phantom edits: only include fields whose value actually changed ---
       const baseline = baselineRef.current[docId] || {};
       const trueEdits = {};
       for (const [key, value] of Object.entries(editedFields)) {
-        // Compare as strings since input values are always strings
         if (String(value ?? "") !== String(baseline[key] ?? "")) {
           trueEdits[key] = value;
         }
       }
       const userEditedCount = Object.keys(trueEdits).length;
 
-      // --- For reclassified documents, save ALL target schema fields ---
-      // This ensures the complete new-schema data set is persisted, not just
-      // the sparse edits. Without this, getMergedExtractionData would mix
-      // old-schema extraction fields with new-schema edits on export/reload.
       let finalEdits;
       if (catOverride && !catOverride.isCustom && catOverride.id) {
         const targetSchema = schemas[catOverride.id];
@@ -547,7 +537,6 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
         finalEdits = trueEdits;
       }
 
-      // Default any review field (critical/warning) the human didn't give a value to "not in document"
       const reviewFieldKeys = [...categorizedFields.critical, ...categorizedFields.warning].map(f => f.key);
       for (const key of reviewFieldKeys) {
         const v = finalEdits[key];
@@ -559,19 +548,14 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
         editedFields: finalEdits,
         approvedFields: { ...currentApprovedFields },
         categoryOverride: catOverride,
-        userEditedCount, // how many fields the reviewer actually typed into
+        userEditedCount,
       });
 
-      // Immediately mark this document as sealed locally — removes it from the queue
-      // without waiting for the parent state update to propagate back through props.
       setSealedDocIds(prev => new Set(prev).add(docId));
-
-      // Show "Sealed" confirmation overlay
       setSealedResult(result || { ok: true, editedCount: userEditedCount, documentName: catOverride?.name || "Document" });
       setSaving(false);
       savingRef.current = false;
 
-      // Clean up local state for this document
       setAllEdits(prev => { const u = { ...prev }; delete u[docId]; return u; });
       setCategoryOverrides((prev) => { const u = { ...prev }; delete u[docId]; return u; });
       setApprovedFields((prev) => {
@@ -579,27 +563,63 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
         delete updated[docId];
         return updated;
       });
-      delete baselineRef.current[docId]; // free baseline memory
+      delete baselineRef.current[docId];
 
-      // Free cached PDF data for this packet if no other documents from it remain in the queue
       const packetId = current.packet.id;
       const remainingFromPacket = reviewItems.filter(
-        item => item.packet.id === packetId && item.document.id !== docId && !sealedDocIds.has(item.document.id)
+        item => item.packet.id === packetId && item.document.id !== docId
       );
       if (remainingFromPacket.length === 0) {
         setBase64ByPacketId(prev => { const u = { ...prev }; delete u[packetId]; return u; });
         pdfBlobCache.evict(packetId);
       }
-      // Clamp index — the item was just removed so the list is now shorter
       setCurrentIndex((i) => Math.min(i, Math.max(0, reviewItems.length - 2)));
     } catch (error) {
       console.error("Failed to seal review:", error);
       setSaveError(error.message || "Failed to save review");
       setSaving(false);
       savingRef.current = false;
-      // Stay on current document so the user can retry
     }
-  }, [current, saving, onApprove, editedFields, currentApprovedFields, categoryOverrides, reviewItems.length, categorizedFields]);
+  }, [current, saving, onApprove, editedFields, currentApprovedFields, categoryOverrides, reviewItems, categorizedFields]);
+
+  // --- handleApprove: "Seal & Save" — show last-document confirmation or perform seal ---
+  const handleApprove = useCallback(() => {
+    if (!current || saving || savingRef.current) return;
+    if (!onApprove) {
+      setSaveError("Review handler not available. Please reload the page.");
+      return;
+    }
+    if (reviewItems.length === 1) {
+      setShowLastSealConfirm(true);
+      return;
+    }
+    performSeal();
+  }, [current, saving, onApprove, reviewItems.length, performSeal]);
+
+  // Summary for last-document confirmation modal (only what the user changed: category + trueEdits)
+  const lastSealSummary = useMemo(() => {
+    if (!showLastSealConfirm || !current) return { categoryLine: null, fieldLines: [], empty: true };
+    const docId = current.document.id;
+    const catOverride = categoryOverrides[docId] || null;
+    const baseline = baselineRef.current[docId] || {};
+    const trueEdits = {};
+    for (const [key, value] of Object.entries(editedFields)) {
+      if (String(value ?? "") !== String(baseline[key] ?? "")) trueEdits[key] = value;
+    }
+    const categoryLine = catOverride
+      ? `Document type: ${getCategoryDisplayName(current.document?.splitType || current.document?.classification?.category || "Document")} → ${catOverride.name}`
+      : null;
+    const truncate = (s, max) => (s.length <= max ? s : s.slice(0, max) + "…");
+    const fieldLines = Object.entries(trueEdits).map(([key, val]) => {
+      const raw = typeof val === "object" && val !== null ? JSON.stringify(val) : displayValue(val);
+      return { key, label: formatFieldName(key), value: truncate(String(raw ?? ""), 60) };
+    });
+    return {
+      categoryLine,
+      fieldLines,
+      empty: !categoryLine && fieldLines.length === 0,
+    };
+  }, [showLastSealConfirm, current, editedFields, categoryOverrides]);
 
   // --- Early return: empty state (AFTER all hooks) ---
 
@@ -744,6 +764,61 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     <div className="h-full relative flex flex-col bg-gray-50 dark:bg-gray-900">
       {/* Sealed overlay — covers entire review UI */}
       {sealedResult && <SealedOverlay result={sealedResult} />}
+      {/* Last-document confirmation modal */}
+      {showLastSealConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="last-seal-modal-title">
+          <div
+            className="absolute inset-0 bg-black/50 dark:bg-black/60"
+            onClick={() => setShowLastSealConfirm(false)}
+            aria-hidden
+          />
+          <div className="relative bg-white dark:bg-neutral-800 rounded-xl shadow-xl max-w-md w-full p-6 flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start gap-4 mb-4">
+              <div className="p-2 rounded-full shrink-0 bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 id="last-seal-modal-title" className="text-lg font-semibold text-gray-900 dark:text-neutral-100 mb-1">Confirm sealing — last document</h3>
+                <p className="text-sm text-gray-600 dark:text-neutral-400">
+                  This is the last document in the review queue. The following changes will be saved. You can seal and complete review now, or go back to make more edits.
+                </p>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-900/50 p-3 mb-4 max-h-[220px]">
+              {lastSealSummary.empty ? (
+                <p className="text-sm text-gray-500 dark:text-neutral-400">No changes — document will be approved as-is.</p>
+              ) : (
+                <ul className="space-y-1.5 text-sm">
+                  {lastSealSummary.categoryLine && (
+                    <li className="text-gray-700 dark:text-neutral-200">{lastSealSummary.categoryLine}</li>
+                  )}
+                  {lastSealSummary.fieldLines.map(({ key, label, value }) => (
+                    <li key={key} className="text-gray-700 dark:text-neutral-200">
+                      <span className="font-medium text-gray-500 dark:text-neutral-400">{label}:</span>{" "}
+                      <span className="wrap-break-word">{value}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <Button variant="outline" onClick={() => setShowLastSealConfirm(false)}>
+                Back to review
+              </Button>
+              <Button
+                variant="default"
+                className="bg-[#9e2339] hover:bg-[#852030] text-white"
+                onClick={() => {
+                  setShowLastSealConfirm(false);
+                  performSeal();
+                }}
+              >
+                Seal and complete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Fixed header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Document: {displayName}</h2>
