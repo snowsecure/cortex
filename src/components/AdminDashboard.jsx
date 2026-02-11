@@ -1068,16 +1068,20 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
               />
               <MetricCard
                 title="Quality Score v2"
-                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5
+                  ? `${(metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2)}%`
+                  : "N/A"}
                 subtitle={metrics.qualityV2.total === 0
                   ? "No documents processed"
                   : (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5
                     ? "Use Production or Best preset"
-                    : metrics.reviewedAccuracy.reviewedDocCount > 0
-                      ? `Observed accuracy (reviewed): ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
-                      : `${metrics.qualityV2.reviewed} verified, ${metrics.qualityV2.needsReview} need review`}
+                    : metrics.qualityV2.unscored > 0 && metrics.qualityV2.scoredCount > 0
+                      ? `From ${metrics.qualityV2.scoredCount} of ${metrics.qualityV2.total} with confidence data`
+                      : metrics.reviewedAccuracy.reviewedDocCount > 0
+                        ? `Observed accuracy (reviewed): ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                        : `${metrics.qualityV2.reviewed} verified, ${metrics.qualityV2.needsReview} need review`}
                 icon={Target}
-                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : "danger"}
+                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : (metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2) >= 80 ? "success" : (metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2) >= 60 ? "warning" : "danger"}
               />
               <MetricCard
                 title="Pending Review"
@@ -1323,14 +1327,18 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
             <div className="grid grid-cols-4 gap-4">
               <MetricCard
                 title="Quality Score v2"
-                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5
+                  ? `${(metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2)}%`
+                  : "N/A"}
                 subtitle={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5
                   ? "Use Production or Best preset"
-                  : metrics.reviewedAccuracy.reviewedDocCount > 0
-                    ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
-                    : "Operational trust score"}
+                  : metrics.qualityV2.unscored > 0 && metrics.qualityV2.scoredCount > 0
+                    ? `From ${metrics.qualityV2.scoredCount} of ${metrics.qualityV2.total} with confidence data`
+                    : metrics.reviewedAccuracy.reviewedDocCount > 0
+                      ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                      : "Operational trust score"}
                 icon={Gauge}
-                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : "danger"}
+                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : (metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2) >= 80 ? "success" : (metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2) >= 60 ? "warning" : "danger"}
               />
               <MetricCard
                 title="Human-Verified"
@@ -1544,14 +1552,18 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
               />
               <MetricCard
                 title="Quality Score v2"
-                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5
+                  ? `${(metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2)}%`
+                  : "N/A"}
                 subtitle={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5
                   ? "Use Production or Best preset"
-                  : metrics.reviewedAccuracy.reviewedDocCount > 0
-                    ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
-                    : "Operational trust score"}
+                  : metrics.qualityV2.unscored > 0 && metrics.qualityV2.scoredCount > 0
+                    ? `From ${metrics.qualityV2.scoredCount} of ${metrics.qualityV2.total} with confidence data`
+                    : metrics.reviewedAccuracy.reviewedDocCount > 0
+                      ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                      : "Operational trust score"}
                 icon={Target}
-                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : "danger"}
+                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : (metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2) >= 80 ? "success" : (metrics.qualityV2.unscored > 0 && metrics.qualityV2.qualityScoreV2ScoredOnly != null ? metrics.qualityV2.qualityScoreV2ScoredOnly : metrics.qualityV2.qualityScoreV2) >= 60 ? "warning" : "danger"}
               />
             </div>
             

@@ -123,10 +123,12 @@ export function computeDocQualityV2(doc, schemasMap) {
  *
  * @param {Array<Object>} docs - array of document objects
  * @param {Object} [schemasMap] - schemas map
- * @returns {{ qualityScoreV2: number, avgConfidenceCoverage: number, avgCriticalCompleteness: number, reviewed: number, needsReview: number, unscored: number, total: number }}
+ * @returns {{ qualityScoreV2: number, qualityScoreV2ScoredOnly: number | null, scoredCount: number, avgConfidenceCoverage: number, avgCriticalCompleteness: number, reviewed: number, needsReview: number, unscored: number, total: number }}
  */
 export function aggregateQualityV2(docs, schemasMap) {
   let sumScore = 0;
+  let sumScoreScoredOnly = 0;
+  let scoredCount = 0;
   let sumCoverage = 0;
   let sumCompleteness = 0;
   let reviewed = 0;
@@ -141,11 +143,18 @@ export function aggregateQualityV2(docs, schemasMap) {
     sumCompleteness += result.criticalCompleteness;
     if (result.isReviewed) reviewed++;
     else if (result.isNeedsReview) needsReview++;
-    if (result.isUnscored) unscored++;
+    if (result.isUnscored) {
+      unscored++;
+    } else {
+      scoredCount++;
+      sumScoreScoredOnly += result.score;
+    }
   }
 
   return {
     qualityScoreV2: total > 0 ? Math.round(sumScore / total) : 0,
+    qualityScoreV2ScoredOnly: scoredCount > 0 ? Math.round(sumScoreScoredOnly / scoredCount) : null,
+    scoredCount,
     avgConfidenceCoverage: total > 0 ? sumCoverage / total : 0,
     avgCriticalCompleteness: total > 0 ? sumCompleteness / total : 0,
     reviewed,

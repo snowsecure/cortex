@@ -385,6 +385,11 @@ function ExportSummaryPanel({ packets, formatName }) {
 
   const recentExports = useMemo(() => loadRecentExports(), []);
 
+  // When presets are mixed, show average only over documents with confidence data so the score isn't dragged down
+  const displayedScore = qualityV2.unscored > 0 && qualityV2.qualityScoreV2ScoredOnly != null
+    ? qualityV2.qualityScoreV2ScoredOnly
+    : qualityV2.qualityScoreV2;
+  const isMixedPresets = qualityV2.unscored > 0 && qualityV2.scoredCount > 0;
   const v2Score = qualityV2.qualityScoreV2;
   const qualityHint = docCount > 0
     ? (reviewedAccuracy.reviewedDocCount > 0
@@ -394,15 +399,15 @@ function ExportSummaryPanel({ packets, formatName }) {
         : "All reviewed")
     : null;
 
-  // Quality score color (for details section) — now uses v2
-  const scoreColor = v2Score >= 80
+  // Quality score color (for details section) — use displayed score so mixed presets show color for scored-only average
+  const scoreColor = displayedScore >= 80
     ? "text-green-600 dark:text-green-400"
-    : v2Score >= 60
+    : displayedScore >= 60
       ? "text-amber-600 dark:text-amber-400"
       : "text-red-600 dark:text-red-400";
-  const barColor = v2Score >= 80
+  const barColor = displayedScore >= 80
     ? "bg-green-500"
-    : v2Score >= 60
+    : displayedScore >= 60
       ? "bg-amber-400"
       : "bg-red-400";
 
@@ -462,13 +467,18 @@ function ExportSummaryPanel({ packets, formatName }) {
                 {hasMeaningfulScore ? (
                   <>
                     <div className="flex items-center gap-3">
-                      <span className={`text-xl font-bold tabular-nums ${scoreColor}`}>{v2Score}%</span>
+                      <span className={`text-xl font-bold tabular-nums ${scoreColor}`}>{displayedScore}%</span>
                       <div className="flex-1">
                         <div className="h-2 rounded-full overflow-hidden bg-gray-200 dark:bg-neutral-700">
-                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${v2Score}%` }} />
+                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(100, displayedScore)}%` }} />
                         </div>
                       </div>
                     </div>
+                    {isMixedPresets && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
+                        From {qualityV2.scoredCount} of {qualityV2.total} documents with confidence data.
+                      </p>
+                    )}
                   </>
                 ) : (
                   <>
