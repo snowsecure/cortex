@@ -1068,14 +1068,16 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
               />
               <MetricCard
                 title="Quality Score v2"
-                value={metrics.qualityV2.total > 0 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
-                subtitle={metrics.qualityV2.total > 0
-                  ? (metrics.reviewedAccuracy.reviewedDocCount > 0
-                    ? `Observed accuracy (reviewed): ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
-                    : `${metrics.qualityV2.reviewed} verified, ${metrics.qualityV2.needsReview} need review`)
-                  : "No documents processed"}
+                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                subtitle={metrics.qualityV2.total === 0
+                  ? "No documents processed"
+                  : (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5
+                    ? "Use Production or Best preset"
+                    : metrics.reviewedAccuracy.reviewedDocCount > 0
+                      ? `Observed accuracy (reviewed): ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                      : `${metrics.qualityV2.reviewed} verified, ${metrics.qualityV2.needsReview} need review`}
                 icon={Target}
-                variant={metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : metrics.qualityV2.total === 0 ? "default" : "danger"}
+                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : "danger"}
               />
               <MetricCard
                 title="Pending Review"
@@ -1321,12 +1323,14 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
             <div className="grid grid-cols-4 gap-4">
               <MetricCard
                 title="Quality Score v2"
-                value={metrics.qualityV2.total > 0 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
-                subtitle={metrics.reviewedAccuracy.reviewedDocCount > 0
-                  ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
-                  : "Operational trust score"}
+                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                subtitle={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5
+                  ? "Use Production or Best preset"
+                  : metrics.reviewedAccuracy.reviewedDocCount > 0
+                    ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                    : "Operational trust score"}
                 icon={Gauge}
-                variant={metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : metrics.qualityV2.total === 0 ? "default" : "danger"}
+                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : "danger"}
               />
               <MetricCard
                 title="Human-Verified"
@@ -1383,7 +1387,7 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
                         <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-400" />{metrics.quality.high} high-confidence</div>
                       )}
                       {metrics.quality.unscored > 0 && (
-                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-400" />{metrics.quality.unscored} awaiting scores</div>
+                        <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-400" />{metrics.quality.unscored} no confidence data</div>
                       )}
                       {metrics.quality.needsAttention > 0 && (
                         <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400" />{metrics.quality.needsAttention} needs review</div>
@@ -1540,12 +1544,14 @@ export function AdminDashboard({ packets, stats, usage, retabConfig, history = [
               />
               <MetricCard
                 title="Quality Score v2"
-                value={metrics.qualityV2.total > 0 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
-                subtitle={metrics.reviewedAccuracy.reviewedDocCount > 0
-                  ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
-                  : "Operational trust score"}
+                value={metrics.qualityV2.total > 0 && (metrics.qualityV2.unscored / metrics.qualityV2.total) < 0.5 ? `${metrics.qualityV2.qualityScoreV2}%` : "N/A"}
+                subtitle={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5
+                  ? "Use Production or Best preset"
+                  : metrics.reviewedAccuracy.reviewedDocCount > 0
+                    ? `Observed accuracy: ${Math.round((metrics.reviewedAccuracy.rates.observed_present_accuracy ?? 0) * 100)}%`
+                    : "Operational trust score"}
                 icon={Target}
-                variant={metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : metrics.qualityV2.total === 0 ? "default" : "danger"}
+                variant={metrics.qualityV2.total === 0 || (metrics.qualityV2.unscored / metrics.qualityV2.total) >= 0.5 ? "default" : metrics.qualityV2.qualityScoreV2 >= 80 ? "success" : metrics.qualityV2.qualityScoreV2 >= 60 ? "warning" : "danger"}
               />
             </div>
             

@@ -293,7 +293,7 @@ export function getConfigSummary(config = {}) {
 // Quality presets aligned with Retab best practices
 export const QUALITY_PRESETS = [
   { id: "draft", name: "Draft", model: "retab-micro", nConsensus: 1, imageDpi: 150, costOptimize: false, tooltip: "Quick preview, lowest cost. Good for simple forms." },
-  { id: "costopt", name: "Cost Opt.", model: "retab-small", nConsensus: 1, imageDpi: 192, costOptimize: true, tooltip: "Smart routing: simple docs use micro, complex docs use Small. Saves ~40-60%." },
+  { id: "costopt", name: "Cost Efficient", model: "retab-small", nConsensus: 1, imageDpi: 192, costOptimize: true, tooltip: "Smart routing: simple docs use micro, complex docs use Small. Saves ~40-60%." },
   { id: "standard", name: "Standard", model: "retab-small", nConsensus: 1, imageDpi: 192, costOptimize: false, tooltip: "Balanced accuracy and cost. Good for most documents." },
   { id: "production", name: "Production", model: "retab-small", nConsensus: 3, imageDpi: 192, costOptimize: true, tooltip: "Production-ready with consensus for complex docs. Smart routing saves on simple docs." },
   { id: "best", name: "Best", model: "retab-large", nConsensus: 4, imageDpi: 192, costOptimize: false, tooltip: "Highest accuracy. Retab recommends 4x consensus for production." },

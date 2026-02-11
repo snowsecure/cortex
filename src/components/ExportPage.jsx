@@ -52,13 +52,13 @@ const GENERIC_PRESET_IDS = [
 
 /** Section 2: Title Production Systems */
 const TPS_PRESET_IDS = [
+  "tps_stewart",
   "softpro",
   "ramquest",
   "qualia",
   "aim_plus",
   "resware",
   "titleexpress",
-  "tps_stewart",
 ];
 
 function getPresetsByIds(ids) {
@@ -76,7 +76,7 @@ function saveLastGenericFormat(presetId) {
   try { localStorage.setItem(LAST_GENERIC_FORMAT_KEY, presetId); } catch {}
 }
 function loadLastTpsFormat() {
-  try { return localStorage.getItem(LAST_TPS_FORMAT_KEY) || "softpro"; } catch { return "softpro"; }
+  try { return localStorage.getItem(LAST_TPS_FORMAT_KEY) || "tps_stewart"; } catch { return "tps_stewart"; }
 }
 function saveLastTpsFormat(presetId) {
   try { localStorage.setItem(LAST_TPS_FORMAT_KEY, presetId); } catch {}
@@ -454,40 +454,54 @@ function ExportSummaryPanel({ packets, formatName }) {
             </div>
           )}
 
-          {docCount > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Quality Score v2</h4>
-              <div className="flex items-center gap-3">
-                <span className={`text-xl font-bold tabular-nums ${scoreColor}`}>{v2Score}%</span>
-                <div className="flex-1">
-                  <div className="h-2 rounded-full overflow-hidden bg-gray-200 dark:bg-neutral-700">
-                    <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${v2Score}%` }} />
-                  </div>
+          {docCount > 0 && (() => {
+            const hasMeaningfulScore = qualityV2.total > 0 && (qualityV2.unscored / qualityV2.total) < 0.5;
+            return (
+              <div className="space-y-2">
+                <h4 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">Quality Score v2</h4>
+                {hasMeaningfulScore ? (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <span className={`text-xl font-bold tabular-nums ${scoreColor}`}>{v2Score}%</span>
+                      <div className="flex-1">
+                        <div className="h-2 rounded-full overflow-hidden bg-gray-200 dark:bg-neutral-700">
+                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${v2Score}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xl font-bold tabular-nums text-gray-300 dark:text-gray-600">N/A</span>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">
+                      Use a Production or Best preset for quality scoring.
+                    </p>
+                  </>
+                )}
+                <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                  {qualityV2.reviewed > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />{qualityV2.reviewed} human-verified</div>}
+                  {quality.high > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />{quality.high} high-confidence</div>}
+                  {qualityV2.unscored > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0" />{qualityV2.unscored} no confidence data</div>}
+                  {qualityV2.needsReview > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />{qualityV2.needsReview} need{qualityV2.needsReview === 1 ? "s" : ""} review</div>}
                 </div>
+                {reviewedAccuracy.reviewedDocCount > 0 && reviewedAccuracy.rates.observed_present_accuracy != null && (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700" title="Observed accuracy is agreement on present fields after review; not computed without review.">
+                    Observed accuracy (reviewed): {Math.round(reviewedAccuracy.rates.observed_present_accuracy * 100)}% across {reviewedAccuracy.totalEvaluatedFields} fields
+                  </p>
+                )}
+                {reviewedAccuracy.reviewedDocCount === 0 && quality.fieldAccuracy !== null && quality.scoredFields > 0 && (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
+                    {quality.highFields} of {quality.scoredFields} scored fields high-confidence or human-corrected.
+                  </p>
+                )}
+                {reviewedAccuracy.reviewedDocCount === 0 && quality.fieldAccuracy === null && quality.totalFields > 0 && (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
+                    {quality.totalFields} fields extracted — enable consensus for per-field scores.
+                  </p>
+                )}
               </div>
-              <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
-                {qualityV2.reviewed > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />{qualityV2.reviewed} human-verified</div>}
-                {quality.high > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />{quality.high} high-confidence</div>}
-                {qualityV2.unscored > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0" />{qualityV2.unscored} awaiting scores</div>}
-                {qualityV2.needsReview > 0 && <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />{qualityV2.needsReview} need{qualityV2.needsReview === 1 ? "s" : ""} review</div>}
-              </div>
-              {reviewedAccuracy.reviewedDocCount > 0 && reviewedAccuracy.rates.observed_present_accuracy != null && (
-                <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700" title="Observed accuracy is agreement on present fields after review; not computed without review.">
-                  Observed accuracy (reviewed): {Math.round(reviewedAccuracy.rates.observed_present_accuracy * 100)}% across {reviewedAccuracy.totalEvaluatedFields} fields
-                </p>
-              )}
-              {reviewedAccuracy.reviewedDocCount === 0 && quality.fieldAccuracy !== null && quality.scoredFields > 0 && (
-                <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
-                  {quality.highFields} of {quality.scoredFields} scored fields high-confidence or human-corrected.
-                </p>
-              )}
-              {reviewedAccuracy.reviewedDocCount === 0 && quality.fieldAccuracy === null && quality.totalFields > 0 && (
-                <p className="text-xs text-gray-400 dark:text-gray-500 pt-1 border-t border-gray-200 dark:border-neutral-700">
-                  {quality.totalFields} fields extracted — enable consensus for per-field scores.
-                </p>
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {recentExports.length > 0 && (
             <div className="space-y-1.5">
@@ -989,7 +1003,7 @@ export function ExportPage({ packets, stats }) {
     [selectedGenericPreset]
   );
   const currentTpsPreset = useMemo(
-    () => EXPORT_PRESETS.find((p) => p.id === selectedTpsPreset) || EXPORT_PRESETS.find((p) => p.id === "softpro"),
+    () => EXPORT_PRESETS.find((p) => p.id === selectedTpsPreset) || EXPORT_PRESETS.find((p) => p.id === "tps_stewart"),
     [selectedTpsPreset]
   );
 
@@ -1203,7 +1217,7 @@ export function ExportPage({ packets, stats }) {
           <div className="border border-gray-200 dark:border-neutral-700 rounded-xl p-5 bg-white dark:bg-neutral-900/50">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">2. Title Production Systems</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-              Export for RamQuest, Qualia, SoftPro, ResWare, TitleExpress, STEPS, and others.
+              Export for Stewart STEPS, RamQuest, Qualia, SoftPro, ResWare, TitleExpress, and others.
             </p>
             <div className="flex flex-wrap items-end gap-4">
               <div className="min-w-[200px] flex-1">

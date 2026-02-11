@@ -242,7 +242,7 @@ app.get("/api/status", (req, res) => {
       database: "connected",
       stats,
       usage,
-      version: "0.4.3",
+      version: "0.4.4",
     });
   } catch (error) {
     res.status(500).json({ error: safeErrorMessage(error) });
@@ -1487,7 +1487,7 @@ app.get("/api/debug/status", (req, res) => {
       stats,
       usage,
       activeSession: activeSession ? { id: activeSession.id, status: activeSession.status } : null,
-      version: "0.4.3",
+      version: "0.4.4",
       env: process.env.NODE_ENV || "development",
     });
   } catch (error) {

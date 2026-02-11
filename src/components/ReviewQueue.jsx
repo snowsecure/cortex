@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle, ShieldCheck, Loader2, Tag, Plus, X, Search, SearchSlash, PenLine, Undo2, Sparkles, Filter } from "lucide-react";
+import { CheckCircle, AlertTriangle, AlertCircle, ChevronDown, ChevronUp, FileText, Check, Circle, ShieldCheck, Loader2, Tag, Plus, X, Search, SearchSlash, PenLine, Undo2, Filter } from "lucide-react";
 import { Button } from "./ui/button";
 import { SailboatIcon } from "./ui/sailboat-icon";
-import { getMergedExtractionData, NOT_IN_DOCUMENT_VALUE, NOT_IN_DOCUMENT_LABEL, displayValue } from "../lib/utils";
+import { cn, getMergedExtractionData, NOT_IN_DOCUMENT_VALUE, NOT_IN_DOCUMENT_LABEL, displayValue } from "../lib/utils";
 import { getCategoryDisplayName, CRITICAL_FIELDS } from "../lib/documentCategories";
+import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
 import { schemas } from "../schemas/index";
 import { PDFPreview } from "./DocumentDetailModal";
 import * as api from "../lib/api";
@@ -55,7 +56,7 @@ function CategoryPicker({ currentCategory, onSelect }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-sm font-medium transition-colors ${
           hasSelection
             ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50"
             : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50"
@@ -90,7 +91,7 @@ function CategoryPicker({ currentCategory, onSelect }) {
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-gray-400" />
                   <input
                     type="text"
-                    className="w-full pl-6 pr-2 py-1 text-[11px] border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full pl-7 pr-2 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     placeholder="Search..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -101,14 +102,14 @@ function CategoryPicker({ currentCategory, onSelect }) {
               <div className="max-h-40 overflow-y-auto">
                 {filtered.map((cat) => (
                   <button key={cat.id} type="button" onClick={() => pick({ id: cat.id, name: cat.name, isCustom: false })}
-                    className="w-full text-left px-3 py-1 text-[11px] text-gray-700 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-700 dark:hover:text-blue-300">
+                    className="w-full text-left px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:text-blue-700 dark:hover:text-blue-300">
                     {cat.name}
                   </button>
                 ))}
-                {filtered.length === 0 && <p className="text-[11px] text-gray-400 px-3 py-2">No matches</p>}
+                {filtered.length === 0 && <p className="text-sm text-gray-400 px-3 py-2">No matches</p>}
               </div>
               <div className="border-t border-gray-100 dark:border-gray-700 px-3 py-1.5">
-                <button type="button" onClick={() => setCustomMode(true)} className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-blue-600">
+                <button type="button" onClick={() => setCustomMode(true)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600">
                   <Plus className="h-3 w-3" /> Custom name
                 </button>
               </div>
@@ -117,15 +118,15 @@ function CategoryPicker({ currentCategory, onSelect }) {
             <div className="p-2 space-y-1.5">
               <input
                 type="text" autoFocus
-                className="w-full px-2 py-1 text-[11px] border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full px-2 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 placeholder="e.g., Utility Easement..."
                 value={customName} onChange={(e) => setCustomName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && customName.trim() && pick({ id: `custom:${customName.trim().toLowerCase().replace(/\s+/g, '_')}`, name: customName.trim(), isCustom: true })}
               />
               <div className="flex gap-1.5">
-                <button type="button" onClick={() => { setCustomMode(false); setCustomName(""); }} className="text-[10px] text-gray-500 hover:text-gray-700">Cancel</button>
+                <button type="button" onClick={() => { setCustomMode(false); setCustomName(""); }} className="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
                 <button type="button" disabled={!customName.trim()} onClick={() => pick({ id: `custom:${customName.trim().toLowerCase().replace(/\s+/g, '_')}`, name: customName.trim(), isCustom: true })}
-                  className="text-[10px] text-blue-600 hover:text-blue-700 font-medium disabled:opacity-40">Apply</button>
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium disabled:opacity-40">Apply</button>
               </div>
             </div>
           )}
@@ -233,6 +234,16 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
 
   // Derive current document's edits (stable reference when no edits exist)
   const editedFields = (currentDocId && allEdits[currentDocId]) || EMPTY_EDITS;
+
+  // Is this the last unreviewed item from its packet?
+  // When false, the button shows "Accept" instead of "Seal".
+  const isLastFromPacket = useMemo(() => {
+    if (!current) return true;
+    const packetId = current.packet.id;
+    return !reviewItems.some(
+      item => item.packet.id === packetId && item.document.id !== current.document.id
+    );
+  }, [current, reviewItems]);
 
   // Clamp currentIndex when reviewItems changes (e.g., after approval/rejection)
   useEffect(() => {
@@ -499,12 +510,21 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     return set;
   }, [currentCatOverrideForSchema, current?.document?.classification?.category, current?.document?.splitType]);
 
-  // Combine all fields in priority order (moved before early return for Rules of Hooks)
-  const allFields = useMemo(() => [
-    ...categorizedFields.critical,
-    ...categorizedFields.warning,
-    ...categorizedFields.ok,
-  ], [categorizedFields]);
+  // Combine all fields in priority order (moved before early return for Rules of Hooks).
+  // Required/critical fields float to the very top so they're immediately visible.
+  const allFields = useMemo(() => {
+    const all = [
+      ...categorizedFields.critical,
+      ...categorizedFields.warning,
+      ...categorizedFields.ok,
+    ];
+    // Stable sort: required fields first, then original order
+    return all.sort((a, b) => {
+      const aReq = requiredFields.has(a.key) ? 0 : 1;
+      const bReq = requiredFields.has(b.key) ? 0 : 1;
+      return aReq - bReq;
+    });
+  }, [categorizedFields, requiredFields]);
 
   const editedCount = Object.keys(editedFields).length;
   const emptyCount = allFields.filter(f => f.isEmpty).length;
@@ -613,7 +633,8 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
   });
 
   // --- performSeal: core seal logic (used directly or after last-document confirmation) ---
-  const performSeal = useCallback(async () => {
+  // showOverlay: when false (used by "Accept" on non-last packet items), skip the sealed overlay.
+  const performSeal = useCallback(async ({ showOverlay = true } = {}) => {
     if (!current || saving || savingRef.current) return;
     if (!onApprove) {
       setSaveError("Review handler not available. Please reload the page.");
@@ -672,7 +693,9 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
       });
 
       setSealedDocIds(prev => new Set(prev).add(docId));
-      setSealedResult(result || { ok: true, editedCount: userEditedCount, documentName: catOverride?.name || "Document" });
+      if (showOverlay) {
+        setSealedResult(result || { ok: true, editedCount: userEditedCount, documentName: catOverride?.name || "Document" });
+      }
       setSaving(false);
       savingRef.current = false;
 
@@ -702,21 +725,21 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     }
   }, [current, saving, onApprove, editedFields, currentApprovedFields, categoryOverrides, reviewItems, categorizedFields]);
 
-  // "Accept AI" — fast seal when no required fields are empty
-  const handleAcceptAI = useCallback(() => {
-    if (!current || saving || savingRef.current || emptyRequiredCount > 0) return;
+  // --- handleAccept: "Accept" for non-last packet items — saves to server but suppresses overlay ---
+  const handleAccept = useCallback(() => {
+    if (!current || saving || savingRef.current) return;
     if (!onApprove) {
       setSaveError("Review handler not available. Please reload the page.");
       return;
     }
-    if (reviewItems.length === 1) {
-      setShowLastSealConfirm(true);
+    if (emptyRequiredCount > 0) {
+      setShowRequiredWarning(true);
       return;
     }
-    performSeal();
-  }, [current, saving, emptyRequiredCount, onApprove, reviewItems.length, performSeal]);
+    performSeal({ showOverlay: false });
+  }, [current, saving, onApprove, emptyRequiredCount, performSeal]);
 
-  // --- handleApprove: "Seal & Save" — warn about required fields, then show last-document confirmation or perform seal ---
+  // --- handleApprove: "Seal" — warn about required fields, then always show confirmation modal ---
   const handleApprove = useCallback(() => {
     if (!current || saving || savingRef.current) return;
     if (!onApprove) {
@@ -728,12 +751,8 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
       setShowRequiredWarning(true);
       return;
     }
-    if (reviewItems.length === 1) {
-      setShowLastSealConfirm(true);
-      return;
-    }
-    performSeal();
-  }, [current, saving, onApprove, reviewItems.length, performSeal, emptyRequiredCount]);
+    setShowLastSealConfirm(true);
+  }, [current, saving, onApprove, emptyRequiredCount]);
 
   // Summary for last-document confirmation modal (only what the user changed: category + trueEdits)
   const lastSealSummary = useMemo(() => {
@@ -781,11 +800,11 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
 
   const rawCategory = current.document?.splitType || current.document?.classification?.category || "Document";
   const currentCategoryOverride = categoryOverrides[current.document?.id] || null;
-  const displayName = currentCategoryOverride ? currentCategoryOverride.name : rawCategory;
-  const isUnknownType = UNKNOWN_CATEGORIES.has(rawCategory) && !currentCategoryOverride;
+  const displayName = currentCategoryOverride ? currentCategoryOverride.name : getCategoryDisplayName(rawCategory);
 
   // Render a single field row — always shows inline input for Tab-through editing
   const renderFieldRow = ({ key, value, likelihood, isEmpty }) => {
+    const isRequired = requiredFields.has(key);
     const isVeryLow = typeof likelihood === "number" && likelihood < LOW_THRESHOLD;
     const isLow = typeof likelihood === "number" && likelihood < REVIEW_THRESHOLD;
     const displayValue = editedFields[key] !== undefined ? editedFields[key] : (value ?? "");
@@ -794,6 +813,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     const wasEdited = editedFields[key] !== undefined;
     const isObject = typeof displayValue === "object" && displayValue !== null;
     const displayStr = isNotInDocument ? NOT_IN_DOCUMENT_LABEL : (isObject ? JSON.stringify(displayValue, null, 2) : String(displayValue));
+    const isFocused = focusedFieldKey === key;
 
     // Confidence dot color
     const dotColor = isEmpty || isVeryLow
@@ -802,28 +822,32 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
         ? "bg-amber-400 dark:bg-amber-500"
         : "bg-green-400 dark:bg-green-500";
 
-    // Left border accent
+    // Left border accent — all rows use the same width so text stays aligned.
+    // Required+empty fields get a bold red bar; others get subtler colors or transparent.
     const borderAccent = wasEdited
-      ? "border-l-2 border-l-blue-400 dark:border-l-blue-500"
-      : isEmpty || isVeryLow
-        ? "border-l-2 border-l-red-300 dark:border-l-red-600"
-        : isLow
-          ? "border-l-2 border-l-amber-300 dark:border-l-amber-600"
-          : "border-l-2 border-l-transparent";
+      ? "border-l-[10px] border-l-blue-400 dark:border-l-blue-500"
+      : (isEmpty || isVeryLow) && isRequired
+        ? "border-l-[10px] border-l-red-400 dark:border-l-red-500"
+        : isEmpty || isVeryLow
+          ? "border-l-[10px] border-l-red-200 dark:border-l-red-800"
+          : isLow
+            ? "border-l-[10px] border-l-amber-200 dark:border-l-amber-800"
+            : "border-l-[10px] border-l-transparent";
 
     const setNotInDocument = () => {
       setAllEdits(prev => ({ ...prev, [currentDocId]: { ...(prev[currentDocId] || {}), [key]: NOT_IN_DOCUMENT_VALUE } }));
     };
 
     return (
-      <div key={key} className={`flex items-start gap-1.5 px-2 py-1 ${borderAccent}`}>
+      <div key={key} className={`flex items-start gap-2 px-3 py-1.5 ${borderAccent} ${isFocused ? "bg-blue-50/50 dark:bg-blue-900/10" : ""}`}>
         {/* Confidence dot */}
-        <span className={`shrink-0 w-1.5 h-1.5 rounded-full mt-[7px] ${dotColor}`}
+        <span className={`shrink-0 w-2 h-2 rounded-full mt-[9px] ${dotColor}`}
           title={confidencePct != null ? `${confidencePct}%` : undefined} />
 
         {/* Label */}
-        <label className="text-[10px] font-medium text-gray-500 dark:text-gray-400 w-[100px] shrink-0 pt-[5px] truncate cursor-pointer"
-          title={formatFieldName(key)} htmlFor={`review-field-${key}`}>
+        <label className="text-[13px] font-medium text-gray-500 dark:text-gray-400 w-[150px] shrink-0 pt-[5px] truncate cursor-pointer"
+          title={`${formatFieldName(key)}${isRequired ? " (required)" : ""}`} htmlFor={`review-field-${key}`}>
+          {isRequired && <span className="text-red-400 dark:text-red-500 mr-0.5">*</span>}
           {formatFieldName(key)}
           {wasEdited && <span className="text-blue-500 ml-0.5">*</span>}
         </label>
@@ -834,13 +858,14 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
             <textarea
               id={`review-field-${key}`}
               title={isNotInDocument ? NOT_IN_DOCUMENT_LABEL : undefined}
-              className={`w-full px-1.5 py-0.5 text-[11px] leading-tight border rounded resize-none transition-colors
+              className={`w-full px-2 py-1 text-sm leading-tight border rounded resize-none transition-colors
                 ${wasEdited ? "border-blue-200 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10" :
                   isEmpty || isVeryLow ? "border-red-200 dark:border-red-800 bg-red-50/20 dark:bg-red-900/10" :
                   "border-gray-200 dark:border-gray-600 bg-transparent"}
                 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-400`}
               rows={2}
               value={displayStr}
+              onFocus={() => setFocusedFieldKey(key)}
               onChange={(e) => {
                 let val;
                 try { val = JSON.parse(e.target.value); } catch { val = e.target.value; }
@@ -852,34 +877,35 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
               id={`review-field-${key}`}
               type="text"
               title={isNotInDocument ? NOT_IN_DOCUMENT_LABEL : undefined}
-              className={`w-full px-1.5 py-0.5 text-[11px] border rounded transition-colors
+              className={`w-full px-2 py-1 text-sm border rounded transition-colors
                 ${wasEdited ? "border-blue-200 dark:border-blue-700 bg-blue-50/30 dark:bg-blue-900/10" :
                   isEmpty || isVeryLow ? "border-red-200 dark:border-red-800 bg-red-50/20 dark:bg-red-900/10" :
                   "border-gray-200 dark:border-gray-600 bg-transparent"}
                 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-400`}
               value={displayStr}
               placeholder={isEmpty && !isNotInDocument ? "—" : ""}
+              onFocus={() => setFocusedFieldKey(key)}
               onChange={(e) => setAllEdits(prev => ({ ...prev, [currentDocId]: { ...(prev[currentDocId] || {}), [key]: e.target.value } }))}
             />
           )}
         </div>
 
-        {/* Confidence % + Not in document — grouped so layout is consistent with or without score */}
-        <div className="flex items-center gap-1 shrink-0 pt-[5px]">
+        {/* Confidence % + Not in document */}
+        <div className="flex items-center gap-1.5 shrink-0 pt-[5px]">
           {confidencePct !== null && (
-            <span className={`text-[9px] tabular-nums w-6 text-right ${
+            <span className={`text-xs tabular-nums w-8 text-right ${
               isVeryLow ? "text-red-500" : isLow ? "text-amber-500" : "text-gray-400"
             }`}>{confidencePct}%</span>
           )}
-          {confidencePct === null && <span className="w-6" aria-hidden />}
+          {confidencePct === null && <span className="w-8" aria-hidden />}
           <button
             type="button"
             onClick={setNotInDocument}
-            className="p-0.5 rounded text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500 inline-flex items-center justify-center"
+            className="p-1 rounded text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:focus:ring-gray-500 inline-flex items-center justify-center"
             title="Not in document"
             aria-label="Mark as not present in this document"
           >
-            <SearchSlash className="h-3.5 w-3.5" />
+            <SearchSlash className="h-4 w-4" />
           </button>
         </div>
       </div>
@@ -890,7 +916,7 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
     <div className="h-full relative flex flex-col bg-gray-50 dark:bg-gray-900">
       {/* Sealed overlay — covers entire review UI */}
       {sealedResult && <SealedOverlay result={sealedResult} />}
-      {/* Last-document confirmation modal */}
+      {/* Seal confirmation modal — shown every time user clicks Seal */}
       {showLastSealConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="last-seal-modal-title">
           <div
@@ -904,9 +930,9 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
                 <ShieldCheck className="h-5 w-5" />
               </div>
               <div className="flex-1 min-w-0">
-                <h3 id="last-seal-modal-title" className="text-lg font-semibold text-gray-900 dark:text-neutral-100 mb-1">Confirm sealing — last document</h3>
+                <h3 id="last-seal-modal-title" className="text-lg font-semibold text-gray-900 dark:text-neutral-100 mb-1">Confirm sealing</h3>
                 <p className="text-sm text-gray-600 dark:text-neutral-400">
-                  This is the last document in the review queue. The following changes will be saved. You can seal and complete review now, or go back to make more edits.
+                  The following changes will be saved. You can seal now or go back to make more edits.
                 </p>
               </div>
             </div>
@@ -946,42 +972,133 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
         </div>
       )}
       {/* Fixed header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0">
-        <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Document: {displayName}</h2>
-        <Button variant="outline" size="sm" onClick={onClose}>
-          Back to Results
-        </Button>
+      <div className="flex flex-col items-center justify-center px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shrink-0">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">Document Type</span>
+        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate max-w-full">{displayName}</span>
       </div>
 
       {/* Main content using CSS Grid for rigid sizing */}
       <div 
         className="flex-1 min-h-0 grid overflow-hidden"
         style={{ 
-          gridTemplateColumns: "176px 1fr 360px", // sidebar, pdf, data panel
+          gridTemplateColumns: "220px 1fr 1fr", // sidebar, pdf, data panel (equal split)
           gridTemplateRows: "1fr"
         }}
       >
         {/* Review queue sidebar - column 1 */}
-        <div className="border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2.5 overflow-y-auto">
-          <h3 className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-1.5">Review Queue</h3>
-          <p className="text-[10px] text-gray-500 dark:text-gray-400 mb-2">{currentIndex + 1} of {reviewItems.length}</p>
-          <div className="space-y-0.5">
-            {reviewItems.map((item, i) => {
-              const docPages = item.document.pages;
-              const pageLabel = Array.isArray(docPages) && docPages.length > 0
-                ? (docPages.length === 1 ? `p${docPages[0]}` : `p${docPages[0]}-${docPages[docPages.length - 1]}`)
-                : null;
-              return (
+        <div className="border-r border-gray-200 dark:border-gray-700 bg-gray-50/30 dark:bg-gray-800/50 flex flex-col overflow-hidden">
+          <div className="px-3 pt-4 pb-3 shrink-0">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Review Queue</h3>
+              <span className="text-[10px] tabular-nums text-gray-400 dark:text-gray-500">
+                {sealedDocIds.size} sealed
+              </span>
+            </div>
+            {/* Progress bar */}
+            <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden mb-3">
+              <div
+                className="h-full bg-[#9e2339] dark:bg-[#d45a6a] rounded-full transition-all duration-300"
+                style={{ width: `${sealedDocIds.size + reviewItems.length > 0 ? (sealedDocIds.size / (sealedDocIds.size + reviewItems.length)) * 100 : 0}%` }}
+              />
+            </div>
+            {/* Filter tabs — pill style */}
+            <div className="flex gap-1 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-700/80 mb-2">
+              {[
+                { id: "all", label: "All" },
+                { id: "needs_fix", label: "Fix" },
+                { id: "ready", label: "Ready" },
+              ].map(tab => (
                 <button
-                  key={item.document.id}
+                  key={tab.id}
                   type="button"
-                  onClick={() => setCurrentIndex(i)}
-                  className={`w-full text-left px-2 py-1 rounded text-[11px] truncate ${i === currentIndex ? "bg-[#9e2339]/10 dark:bg-[#9e2339]/20 text-[#9e2339] dark:text-[#d45a6a] font-medium" : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"}`}
+                  onClick={() => setSidebarFilter(tab.id)}
+                  className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
+                    sidebarFilter === tab.id
+                      ? "bg-white dark:bg-gray-600 text-gray-900 dark:text-gray-100 shadow-sm"
+                      : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
+                  }`}
                 >
-                  #{i + 1}{pageLabel ? <span className="ml-1 opacity-60">{pageLabel}</span> : null}
+                  {tab.label}
                 </button>
+              ))}
+            </div>
+            {/* Doc type filter */}
+            {(() => {
+              const docTypes = [...new Set(itemReadiness.map(r => r.categoryId).filter(Boolean))];
+              if (docTypes.length <= 1) return null;
+              return (
+                <select
+                  value={sidebarDocTypeFilter}
+                  onChange={e => setSidebarDocTypeFilter(e.target.value)}
+                  className="w-full text-xs px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-[#9e2339] focus:border-[#9e2339] dark:focus:ring-[#d45a6a]"
+                >
+                  <option value="all">All types</option>
+                  {docTypes.map(dt => (
+                    <option key={dt} value={dt}>{getCategoryDisplayName(dt)}</option>
+                  ))}
+                </select>
               );
-            })}
+            })()}
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 pb-3">
+            <div className="space-y-1">
+              {reviewItems.map((item, i) => {
+                const readiness = itemReadiness[i];
+                if (sidebarFilter === "needs_fix" && !readiness?.hasIssues) return null;
+                if (sidebarFilter === "ready" && readiness?.hasIssues) return null;
+                if (sidebarDocTypeFilter !== "all" && readiness?.categoryId !== sidebarDocTypeFilter) return null;
+                const doc = item.document;
+                const docPages = doc.pages;
+                const pageLabel = Array.isArray(docPages) && docPages.length > 0
+                  ? (docPages.length === 1 ? `p${docPages[0]}` : `p${docPages[0]}-${docPages[docPages.length - 1]}`)
+                  : null;
+                const splitType = doc.splitType || doc.classification?.splitType;
+                const docName = splitType
+                  ? getSplitTypeDisplayName(splitType)
+                  : getCategoryDisplayName(doc.classification?.category || "unknown");
+                const isActive = i === currentIndex;
+                // Show a packet header when the packet changes (for multi-item packets)
+                const showPacketHeader = i === 0 || item.packet.id !== reviewItems[i - 1].packet.id;
+                const packetItemCount = showPacketHeader
+                  ? reviewItems.filter(r => r.packet.id === item.packet.id).length
+                  : 0;
+                return (
+                  <React.Fragment key={doc.id}>
+                    {showPacketHeader && packetItemCount > 1 && (
+                      <div className="text-[9px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide mt-2 first:mt-0 px-1 pb-0.5 truncate" title={item.packet.filename || item.packet.name}>
+                        {item.packet.filename || item.packet.name} — {packetItemCount} items
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setCurrentIndex(i)}
+                      className={cn(
+                        "w-full text-left px-2.5 py-2 rounded-lg transition-colors flex items-start gap-2",
+                        isActive
+                          ? "bg-[#9e2339]/10 dark:bg-[#9e2339]/20 ring-1 ring-[#9e2339]/20"
+                          : "hover:bg-gray-100 dark:hover:bg-gray-700"
+                      )}
+                    >
+                      <span className={`shrink-0 w-2 h-2 rounded-full mt-1.5 ${readiness?.hasIssues ? "bg-red-400" : "bg-green-400"}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className={cn(
+                          "text-sm font-medium truncate",
+                          isActive ? "text-[#9e2339] dark:text-[#d45a6a]" : "text-gray-800 dark:text-gray-200"
+                        )}>
+                          {docName}
+                        </div>
+                        <div className={cn(
+                          "text-xs mt-0.5 truncate",
+                          isActive ? "text-[#9e2339]/70 dark:text-[#d45a6a]/70" : "text-gray-400 dark:text-gray-500"
+                        )}>
+                          #{i + 1}{pageLabel ? <span className="ml-1">{pageLabel}</span> : null}
+                        </div>
+                      </div>
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </div>
           </div>
         </div>
 
@@ -1003,48 +1120,20 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
               pages={current.document.pages}
               filename={current.packet.filename || current.packet.name}
               loading={loadingPdf}
+              highlightText={highlightText}
             />
           )}
         </div>
 
         {/* Extracted data panel - column 3, fixed width by grid */}
         <div className="flex flex-col bg-white dark:bg-gray-800 overflow-hidden">
-          {/* Panel header — compact status summary */}
-          <div className="px-3 py-2.5 border-b border-gray-200 dark:border-gray-700 shrink-0">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-xs font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wide">
-                {schemaFields ? (currentCatOverrideForSchema?.name || "Extracted Data") : "Extracted Data"}
-              </h3>
-              {current.document.pages && current.document.pages.length > 0 && (
-                <span className="text-[10px] text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">
-                  pg {current.document.pages.join(", ")}
-                </span>
-              )}
-            </div>
-            {/* Status chips + category picker (always visible) */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                {allFields.length} fields
-              </span>
-              {emptyCount > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400">
-                  {emptyCount} empty
-                </span>
-              )}
-              {lowConfCount > 0 && emptyCount !== lowConfCount && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">
-                  {lowConfCount - emptyCount} low conf
-                </span>
-              )}
-              {editedCount > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
-                  {editedCount} edited
-                </span>
-              )}
-              {/* Category badge — always visible, reclassify picker for unknown types */}
-              {isUnknownType || currentCategoryOverride ? (
+          {/* Panel header — document type + progress overview */}
+          <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50/30 dark:bg-gray-800/50 shrink-0">
+            {/* Row 1: Doc type (editable) + page range */}
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="flex items-center gap-2 min-w-0">
                 <CategoryPicker
-                  currentCategory={currentCategoryOverride}
+                  currentCategory={currentCategoryOverride || { id: rawCategory, name: getCategoryDisplayName(rawCategory), isCustom: false }}
                   onSelect={(cat) => {
                     const docId = current.document.id;
                     setCategoryOverrides((prev) => {
@@ -1053,107 +1142,95 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
                     });
                   }}
                 />
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const docId = current.document.id;
-                    const catId = rawCategory;
-                    const catName = getCategoryDisplayName(catId);
-                    setCategoryOverrides(prev => ({ ...prev, [docId]: { id: catId, name: catName, isCustom: false } }));
-                  }}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                  title="Reclassify document type"
-                >
-                  <PenLine className="h-2.5 w-2.5" />
-                  <span className="truncate max-w-[100px]">{getCategoryDisplayName(rawCategory)}</span>
-                </button>
+              </div>
+              {current.document.pages && current.document.pages.length > 0 && (
+                <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500 shrink-0">
+                  {current.document.pages.length === 1
+                    ? `Page ${current.document.pages[0]}`
+                    : `Pages ${current.document.pages[0]}–${current.document.pages[current.document.pages.length - 1]}`}
+                </span>
               )}
             </div>
-            {/* Bulk actions */}
-            <div className="flex items-center gap-1.5 mt-1.5">
-              {emptyCount > 0 && (
-                <button
-                  type="button"
-                  onClick={handleMarkAllEmptyAsNID}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                >
-                  <SearchSlash className="h-3 w-3" />
-                  Mark {emptyCount} empty as N/D
-                </button>
-              )}
-              {undoSnapshot && undoSnapshot.docId === currentDocId && (
-                <button
-                  type="button"
-                  onClick={handleUndoMarkAll}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
-                >
-                  <Undo2 className="h-3 w-3" />
-                  Undo ({undoSnapshot.count})
-                </button>
-              )}
-            </div>
-          </div>
 
-          {/* Flagged fields summary — clickable chips for quick navigation */}
-          {(categorizedFields.critical.length > 0 || categorizedFields.warning.length > 0) && (
-            <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700 bg-amber-50/50 dark:bg-amber-900/10 shrink-0">
-              <p className="text-[10px] font-medium text-amber-700 dark:text-amber-300 mb-1">
-                <AlertTriangle className="h-3 w-3 inline-block mr-0.5 -mt-px" />
-                {categorizedFields.critical.length + categorizedFields.warning.length} fields need attention
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {[...categorizedFields.critical, ...categorizedFields.warning].slice(0, 8).map(f => {
-                  const pct = typeof f.likelihood === "number" ? `${Math.round(f.likelihood * 100)}%` : null;
-                  const isReq = requiredFields.has(f.key);
-                  return (
-                    <button
-                      key={f.key}
-                      type="button"
-                      onClick={() => {
-                        const el = document.getElementById(`review-field-${f.key}`);
-                        if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.focus(); }
-                      }}
-                      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] transition-colors ${
-                        f.isEmpty
-                          ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50"
-                          : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50"
-                      }`}
-                    >
-                      {isReq && <span className="text-red-500 font-bold">*</span>}
-                      {formatFieldName(f.key)}
-                      {pct && <span className="opacity-60">({pct})</span>}
-                    </button>
-                  );
-                })}
-                {(categorizedFields.critical.length + categorizedFields.warning.length) > 8 && (
-                  <span className="text-[9px] text-gray-400 dark:text-gray-500 self-center">
-                    +{categorizedFields.critical.length + categorizedFields.warning.length - 8} more
-                  </span>
+            {/* Row 2: Progress bar — filled vs empty vs edited */}
+            <div className="mb-2">
+              <div className="flex h-1.5 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700">
+                <div className="bg-green-400 dark:bg-green-500 transition-all" style={{ width: `${((allFields.length - emptyCount - editedCount) / Math.max(allFields.length, 1)) * 100}%` }} title={`${allFields.length - emptyCount - editedCount} AI-filled`} />
+                <div className="bg-blue-400 dark:bg-blue-500 transition-all" style={{ width: `${(editedCount / Math.max(allFields.length, 1)) * 100}%` }} title={`${editedCount} you edited`} />
+                <div className="bg-red-300 dark:bg-red-500/60 transition-all" style={{ width: `${(emptyCount / Math.max(allFields.length, 1)) * 100}%` }} title={`${emptyCount} empty`} />
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {allFields.length - emptyCount} of {allFields.length} filled
+                  {editedCount > 0 && <span className="text-blue-500 dark:text-blue-400 ml-1">({editedCount} edited)</span>}
+                </span>
+                {emptyCount > 0 && (
+                  <span className="text-xs text-red-500 dark:text-red-400">{emptyCount} empty</span>
                 )}
               </div>
             </div>
-          )}
+
+            {/* Row 3: Quick actions — only show when relevant */}
+            {(emptyCount > 0 || (undoSnapshot && undoSnapshot.docId === currentDocId)) && (
+              <div className="flex items-center gap-2">
+                {emptyCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleMarkAllEmptyAsNID}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                    title="Mark all empty fields as &quot;Not in document&quot; — the document simply doesn't contain this information"
+                  >
+                    <SearchSlash className="h-3.5 w-3.5" />
+                    {emptyCount} empty → &quot;Not in document&quot;
+                  </button>
+                )}
+                {undoSnapshot && undoSnapshot.docId === currentDocId && (
+                  <button
+                    type="button"
+                    onClick={handleUndoMarkAll}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors"
+                  >
+                    <Undo2 className="h-3.5 w-3.5" />
+                    Undo
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+
 
           {/* Scrollable content — flat field list */}
           <div className="flex-1 overflow-y-auto min-h-0">
-            {/* All fields — flat list, every input visible and Tab-navigable */}
+            {/* All fields — required first, then the rest, with a subtle divider */}
             <div className="py-1 space-y-0">
-              {allFields.map((field) => renderFieldRow(field))}
+              {allFields.map((field, i) => {
+                // Insert a divider after the last required field
+                const isReq = requiredFields.has(field.key);
+                const nextIsReq = i < allFields.length - 1 && requiredFields.has(allFields[i + 1].key);
+                return (
+                  <React.Fragment key={field.key}>
+                    {renderFieldRow(field)}
+                    {isReq && !nextIsReq && i < allFields.length - 1 && (
+                      <div className="mx-3 my-2 border-t-2 border-gray-300 dark:border-gray-600" />
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </div>
 
             {/* Extra fields from original schema (when reclassified) */}
             {categorizedFields.extra.length > 0 && (
               <>
-                <div className="px-3 py-1.5 border-t border-b border-gray-100 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/80">
+                <div className="px-4 py-2 border-t border-b border-gray-100 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/80">
                   <button
                     type="button"
                     onClick={() => setExpandedSections(p => ({ ...p, extra: !p.extra }))}
-                    className="flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 w-full"
+                    className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 w-full"
                   >
-                    <FileText className="h-3 w-3" />
+                    <FileText className="h-3.5 w-3.5" />
                     <span className="font-medium">Original extraction — {categorizedFields.extra.length} fields (reference)</span>
-                    {expandedSections.extra ? <ChevronUp className="h-3 w-3 ml-auto" /> : <ChevronDown className="h-3 w-3 ml-auto" />}
+                    {expandedSections.extra ? <ChevronUp className="h-3.5 w-3.5 ml-auto" /> : <ChevronDown className="h-3.5 w-3.5 ml-auto" />}
                   </button>
                 </div>
                 {expandedSections.extra && (
@@ -1166,44 +1243,49 @@ export function ReviewQueue({ packets, onApprove, onClose }) {
           </div>
 
           {/* Bottom bar — save actions */}
-          <div className="px-3 py-2.5 border-t border-gray-200 dark:border-gray-700 shrink-0 space-y-2 bg-white dark:bg-gray-800">
+          <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 shrink-0 space-y-2 bg-white dark:bg-gray-800">
             {/* Error message from failed save */}
             {saveError && (
-              <p className="text-[10px] text-red-600 dark:text-red-400 leading-tight bg-red-50 dark:bg-red-900/20 rounded px-2 py-1.5">
-                <AlertCircle className="h-3 w-3 inline-block mr-0.5 -mt-px" />
+              <p className="text-xs text-red-600 dark:text-red-400 leading-tight bg-red-50 dark:bg-red-900/20 rounded px-2.5 py-2">
+                <AlertCircle className="h-3.5 w-3.5 inline-block mr-1 -mt-px" />
                 {saveError} — your edits are still here, try again.
               </p>
             )}
             {/* Required fields warning */}
             {emptyRequiredCount > 0 && (
-              <p className="text-[10px] text-amber-600 dark:text-amber-400 leading-tight">
-                <AlertTriangle className="h-3 w-3 inline-block mr-0.5 -mt-px" />
+              <p className="text-xs text-amber-600 dark:text-amber-400 leading-tight">
+                <AlertTriangle className="h-3.5 w-3.5 inline-block mr-1 -mt-px" />
                 {emptyRequiredCount} required field{emptyRequiredCount !== 1 ? "s" : ""} still empty
               </p>
             )}
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={handleAcceptAI}
-                className="flex-1"
-                disabled={saving || emptyRequiredCount > 0}
-                title={emptyRequiredCount > 0 ? `${emptyRequiredCount} required fields are empty` : "Accept AI extraction as-is"}
-              >
-                <Sparkles className="h-4 w-4 mr-1" />
-                Accept AI
-              </Button>
-              <Button 
-                variant="success" 
-                onClick={handleApprove} 
-                className="flex-1"
-                disabled={saving}
-              >
-                {saving ? (
-                  <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Saving...</>
-                ) : (
-                  <><ShieldCheck className="h-4 w-4 mr-1" /> Seal</>
-                )}
-              </Button>
+              {isLastFromPacket ? (
+                <Button 
+                  variant="success" 
+                  onClick={handleApprove} 
+                  className="flex-1"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Saving...</>
+                  ) : (
+                    <><ShieldCheck className="h-4 w-4 mr-1" /> Seal</>
+                  )}
+                </Button>
+              ) : (
+                <Button 
+                  variant="default" 
+                  onClick={handleAccept} 
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Saving...</>
+                  ) : (
+                    <><Check className="h-4 w-4 mr-1" /> Accept</>
+                  )}
+                </Button>
+              )}
             </div>
           </div>
         </div>

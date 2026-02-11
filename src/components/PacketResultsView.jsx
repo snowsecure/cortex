@@ -23,7 +23,7 @@ import { PacketStatus } from "../hooks/useBatchQueue";
 import { getCategoryDisplayName } from "../lib/documentCategories";
 import { getSplitTypeDisplayName } from "../hooks/usePacketPipeline";
 import { schemas } from "../schemas/index";
-import { RETAB_MODELS } from "../lib/retabConfig";
+import { RETAB_MODELS, QUALITY_PRESETS, getActivePreset } from "../lib/retabConfig";
 
 /**
  * Format a timestamp into a short relative string (e.g., "2m ago", "3h ago", "Feb 7")
@@ -77,7 +77,7 @@ function getStatusVariant(status) {
 function getStatusText(status) {
   switch (status) {
     case PacketStatus.QUEUED:
-      return "Up next";
+      return "Queued";
     case PacketStatus.SPLITTING:
       return "Splitting...";
     case PacketStatus.CLASSIFYING:
@@ -315,7 +315,7 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
           </button>
           <StatusIcon status={document.status} className="h-4 w-4 shrink-0" />
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap w-fit max-w-full">
+            <div className="flex items-center gap-2 flex-wrap max-w-full overflow-hidden">
               <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">
                 {displayName}
               </span>
@@ -328,7 +328,7 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
                 </span>
               )}
               {pagesDisplay && (
-                <span className="text-xs text-gray-500 dark:text-neutral-400 shrink-0">
+                <span className="text-xs text-gray-500 dark:text-neutral-400 truncate max-w-48" title={`pages ${pagesDisplay}`}>
                   (pages {pagesDisplay})
                 </span>
               )}
@@ -342,7 +342,7 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
               <p className="text-xs text-gray-500 dark:text-neutral-400 truncate">{keyInfo}</p>
             )}
             {document.needsReview && document.reviewReasons?.length > 0 && (
-              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 truncate">
                 {document.reviewReasons[0]}
               </p>
             )}
@@ -548,8 +548,9 @@ function DocumentRow({ document, packet, onViewDocument, onRetryDocument, expand
  * Per-packet run info strip with live elapsed timer.
  * Always visible once the packet has started processing.
  */
-function PacketRunInfo({ packet, isProcessing }) {
+function PacketRunInfo({ packet, isProcessing, retabConfig }) {
   const [now, setNow] = useState(Date.now());
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   useEffect(() => {
     if (!isProcessing) return;
@@ -558,13 +559,21 @@ function PacketRunInfo({ packet, isProcessing }) {
   }, [isProcessing]);
 
   const u = packet.usage;
-  const modelInfo = u?.model ? RETAB_MODELS[u.model] : null;
-  const modelLabel = modelInfo?.name || u?.model;
-  const consensus = u?.nConsensus ?? 1;
-  const smartRouting = u?.costOptimize ?? false;
+
+  // During processing, usage isn't populated yet — fall back to retabConfig
+  const hasUsage = u?.model;
+  const modelId = hasUsage ? u.model : retabConfig?.model;
+  const modelInfo = modelId ? RETAB_MODELS[modelId] : null;
+  const modelLabel = modelInfo?.name || modelId;
+  const consensus = hasUsage ? (u.nConsensus ?? 1) : (retabConfig?.nConsensus ?? 1);
+  const smartRouting = hasUsage ? (u.costOptimize ?? false) : (retabConfig?.costOptimize ?? false);
   const pages = u?.totalPages ?? 0;
   const cost = u?.totalCost ?? 0;
   const credits = u?.totalCredits ?? 0;
+
+  // Resolve the quality preset name from config
+  const presetId = retabConfig ? getActivePreset(retabConfig) : null;
+  const preset = presetId ? QUALITY_PRESETS.find(p => p.id === presetId) : null;
 
   // Elapsed: live during processing, frozen after completion
   let elapsedLabel = null;
@@ -583,23 +592,43 @@ function PacketRunInfo({ packet, isProcessing }) {
 
   return (
     <div className="px-4 py-1.5 flex items-center gap-1.5 flex-wrap text-[11px] text-gray-400 dark:text-neutral-500">
-      {modelLabel && (
-        <span className="font-medium text-gray-500 dark:text-neutral-400">{modelLabel}</span>
+      {/* Quality preset — clickable toggle for details */}
+      {preset && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setDetailsOpen(o => !o); }}
+          className={cn(
+            "font-medium hover:text-gray-700 dark:hover:text-neutral-200 transition-colors cursor-pointer",
+            detailsOpen ? "text-gray-600 dark:text-neutral-300" : "text-gray-500 dark:text-neutral-400"
+          )}
+          title={preset.tooltip}
+        >
+          {preset.name}
+        </button>
       )}
-      {consensus > 1 && <>{dot}<span>{consensus}x consensus</span></>}
-      {smartRouting && <>{dot}<span>smart routing</span></>}
-      {pages > 0 && <>{dot}<span>{pages} pg{pages !== 1 ? "s" : ""}</span></>}
-      {u?.pageCountMismatch && (
-        <>{dot}<span className="text-amber-500 dark:text-amber-400" title={`${u.pageCountMismatch.upload ? `Upload: ${u.pageCountMismatch.upload} pages\n` : ""}${u.pageCountMismatch.api ? `API: ${u.pageCountMismatch.api} pages\n` : ""}Documents: ${u.pageCountMismatch.documents} pages`}>
-          page count mismatch
-        </span></>
-      )}
-      {cost > 0 && <>{dot}<span>${cost.toFixed(3)}</span></>}
-      {credits > 0 && <>{dot}<span className="tabular-nums">{credits.toFixed(1)} cr</span></>}
+      {/* Elapsed timer — always visible */}
       {elapsedLabel && (
         <>
-          {(modelLabel || pages > 0 || cost > 0) && dot}
-          <span className="tabular-nums">{elapsedLabel}</span>
+          {preset && dot}
+          <span className="tabular-nums font-semibold text-gray-500 dark:text-neutral-400">{elapsedLabel}</span>
+        </>
+      )}
+      {/* Details — only shown when expanded */}
+      {detailsOpen && (
+        <>
+          {modelLabel && (
+            <>{(preset || elapsedLabel) && dot}<span>{modelLabel} model</span></>
+          )}
+          {consensus > 1 && <>{dot}<span>{consensus}x consensus</span></>}
+          {smartRouting && <>{dot}<span>smart routing</span></>}
+          {pages > 0 && <>{dot}<span>{pages} pg{pages !== 1 ? "s" : ""}</span></>}
+          {u?.pageCountMismatch && (
+            <>{dot}<span className="text-amber-500 dark:text-amber-400" title={`${u.pageCountMismatch.upload ? `Upload: ${u.pageCountMismatch.upload} pages\n` : ""}${u.pageCountMismatch.api ? `API: ${u.pageCountMismatch.api} pages\n` : ""}Documents: ${u.pageCountMismatch.documents} pages`}>
+              page count mismatch
+            </span></>
+          )}
+          {cost > 0 && <>{dot}<span>${cost.toFixed(3)}</span></>}
+          {credits > 0 && <>{dot}<span className="tabular-nums">{credits.toFixed(1)} cr</span></>}
         </>
       )}
     </div>
@@ -609,7 +638,7 @@ function PacketRunInfo({ packet, isProcessing }) {
 /**
  * Single packet row with expandable documents
  */
-function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove, expanded, onToggle }) {
+function PacketRow({ packet, retabConfig, onViewDocument, onRetryDocument, onRetry, onRemove, expanded, onToggle }) {
   const [expandedDocs, setExpandedDocs] = useState(new Set());
   
   const isProcessing = [
@@ -660,11 +689,16 @@ function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove,
         onClick={onToggle}
       >
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <button className="shrink-0">
+          <button className={cn(
+            "shrink-0 rounded-full p-0.5 transition-colors",
+            isProcessing
+              ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+              : "bg-gray-100 dark:bg-neutral-700 text-gray-600 dark:text-gray-300"
+          )}>
             {expanded ? (
-              <ChevronDown className="h-5 w-5 text-gray-400 dark:text-gray-500" />
+              <ChevronDown className="h-5 w-5" />
             ) : (
-              <ChevronRight className="h-5 w-5 text-gray-400 dark:text-gray-500" />
+              <ChevronRight className="h-5 w-5" />
             )}
           </button>
           
@@ -788,7 +822,7 @@ function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove,
 
       {/* Per-packet run info — always visible once processing has started */}
       {packet.startedAt && (
-        <PacketRunInfo packet={packet} isProcessing={isProcessing} />
+        <PacketRunInfo packet={packet} isProcessing={isProcessing} retabConfig={retabConfig} />
       )}
 
       {/* Expanded documents */}
@@ -807,6 +841,73 @@ function PacketRow({ packet, onViewDocument, onRetryDocument, onRetry, onRemove,
               />
             ))}
           </div>
+          {/* Pending document slots — show remaining docs that haven't finished yet */}
+          {isProcessing && packet.progress?.totalDocs > 0 && packet.documents.length < packet.progress.totalDocs && (
+            <div className="px-4 py-2 space-y-1">
+              {Array.from({ length: packet.progress.totalDocs - packet.documents.length }, (_, i) => {
+                const docNum = packet.documents.length + i + 1;
+                const isNext = i === 0;
+                return (
+                  <div key={`pending-${i}`} className="flex items-center gap-2.5 py-1">
+                    {isNext ? (
+                      <Loader2 className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 animate-spin shrink-0" />
+                    ) : (
+                      <Clock className="h-3.5 w-3.5 text-gray-300 dark:text-neutral-600 shrink-0" />
+                    )}
+                    <span className={cn(
+                      "text-xs",
+                      isNext ? "text-blue-600 dark:text-blue-400 font-medium" : "text-gray-400 dark:text-neutral-500"
+                    )}>
+                      {isNext ? `Extracting document ${docNum}…` : `Document ${docNum}`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Expanded but no documents yet (still splitting/classifying) */}
+      {expanded && !packet.documents?.length && isProcessing && (
+        <div className="bg-gray-50 dark:bg-gray-900 px-4 py-3">
+          {packet.status === PacketStatus.SPLITTING && (
+            <div className="flex items-center gap-2.5">
+              <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin shrink-0" />
+              <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">Splitting PDF into documents…</span>
+            </div>
+          )}
+          {packet.status === PacketStatus.CLASSIFYING && (
+            <div className="flex items-center gap-2.5">
+              <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin shrink-0" />
+              <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">Classifying documents…</span>
+            </div>
+          )}
+          {(packet.status === PacketStatus.EXTRACTING || packet.status === PacketStatus.RETRYING) && packet.progress?.totalDocs > 0 && (
+            <div className="space-y-1">
+              {Array.from({ length: packet.progress.totalDocs }, (_, i) => (
+                <div key={`pending-${i}`} className="flex items-center gap-2.5 py-1">
+                  {i === 0 ? (
+                    <Loader2 className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 animate-spin shrink-0" />
+                  ) : (
+                    <Clock className="h-3.5 w-3.5 text-gray-300 dark:text-neutral-600 shrink-0" />
+                  )}
+                  <span className={cn(
+                    "text-xs",
+                    i === 0 ? "text-blue-600 dark:text-blue-400 font-medium" : "text-gray-400 dark:text-neutral-500"
+                  )}>
+                    {i === 0 ? `Extracting document 1…` : `Document ${i + 1}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {packet.status === PacketStatus.EXTRACTING && !packet.progress?.totalDocs && (
+            <div className="flex items-center gap-2.5">
+              <Loader2 className="h-3.5 w-3.5 text-blue-500 animate-spin shrink-0" />
+              <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">Starting extraction…</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -844,6 +945,7 @@ const FILTER_OPTIONS = [
 export function PacketResultsView({
   packets,
   stats,
+  retabConfig,
   onViewDocument,
   onRetryPacket,
   onRetryDocument,
@@ -883,27 +985,43 @@ export function PacketResultsView({
    * Filter packets
    */
   const filteredPackets = useMemo(() => {
-    if (filter === "all") return packets;
-    
-    return packets.filter(p => {
-      switch (filter) {
-        case "processing":
-          return [
-            PacketStatus.SPLITTING,
-            PacketStatus.CLASSIFYING,
-            PacketStatus.EXTRACTING,
-            PacketStatus.RETRYING,
-            PacketStatus.QUEUED,
-          ].includes(p.status);
-        case "completed":
-          return p.status === PacketStatus.COMPLETED;
-        case "needs_review":
-          return p.status === PacketStatus.NEEDS_REVIEW;
-        case "failed":
-          return p.status === PacketStatus.FAILED;
-        default:
-          return true;
-      }
+    let list = packets;
+    if (filter !== "all") {
+      list = packets.filter(p => {
+        switch (filter) {
+          case "processing":
+            return [
+              PacketStatus.SPLITTING,
+              PacketStatus.CLASSIFYING,
+              PacketStatus.EXTRACTING,
+              PacketStatus.RETRYING,
+              PacketStatus.QUEUED,
+            ].includes(p.status);
+          case "completed":
+            return p.status === PacketStatus.COMPLETED;
+          case "needs_review":
+            return p.status === PacketStatus.NEEDS_REVIEW;
+          case "failed":
+            return p.status === PacketStatus.FAILED;
+          default:
+            return true;
+        }
+      });
+    }
+    // Sort so the actively processing packet is always at the top
+    const activeStatuses = [
+      PacketStatus.EXTRACTING,
+      PacketStatus.CLASSIFYING,
+      PacketStatus.SPLITTING,
+      PacketStatus.RETRYING,
+    ];
+    return [...list].sort((a, b) => {
+      const aActive = activeStatuses.indexOf(a.status);
+      const bActive = activeStatuses.indexOf(b.status);
+      if (aActive !== -1 && bActive !== -1) return aActive - bActive; // both active: extracting first, then classifying, etc.
+      if (aActive !== -1) return -1; // a is active, b is not → a first
+      if (bActive !== -1) return 1;  // b is active, a is not → b first
+      return 0; // preserve order for non-active
     });
   }, [packets, filter]);
 
@@ -963,6 +1081,7 @@ export function PacketResultsView({
           <PacketRow
             key={packet.id}
             packet={packet}
+            retabConfig={retabConfig}
             expanded={expandedPackets.has(packet.id)}
             onToggle={() => togglePacket(packet.id)}
             onViewDocument={onViewDocument}

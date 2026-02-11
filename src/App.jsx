@@ -840,7 +840,7 @@ function App() {
               <div className="flex flex-col -space-y-0.5">
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-xl tracking-wide text-gray-900 dark:text-white" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
-                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.3</span>
+                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.4</span>
                 </div>
                 <span className="text-[9px] tracking-wider text-gray-400 dark:text-neutral-500" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
               </div>
@@ -1214,6 +1214,7 @@ function App() {
               <PacketResultsView
                 packets={packets}
                 stats={stats}
+                retabConfig={retabConfig}
                 onViewDocument={handleViewDocument}
                 onRetryPacket={retryPacket}
                 onRetryDocument={retryDocument}

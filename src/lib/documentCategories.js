@@ -567,7 +567,7 @@ export function getCategoryDisplayName(category) {
     trust_certification: "Trust Document",
     affidavit: "Affidavit",
     settlement_statement: "Settlement Statement",
-    lease_document: "Lease",
+    lease_document: "Lease Document",
     other_recorded: "Other Document",
     // Legacy
     judgments: "Judgment",

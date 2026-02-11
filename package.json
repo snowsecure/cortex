@@ -1,7 +1,7 @@
 {
   "name": "sail-idp",
   "private": true,
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "SAIL - Intelligent Document Processing for Stewart Title",
   "type": "module",
   "scripts": {

@@ -557,7 +557,18 @@ async function buildXLSX(packets) {
 // ============================================================================
 
 export const EXPORT_PRESETS = [
-  // --- Title Production Systems ---
+  // --- Title Production Systems (Stewart first) ---
+  {
+    id: "tps_stewart",
+    name: "Stewart STEPS",
+    category: "tps",
+    description: "Stewart Title production JSON format",
+    format: "json",
+    fileExtension: ".json",
+    icon: "zap",
+    transform: (packets) => buildTPS(packets),
+    mimeType: "application/json",
+  },
   {
     id: "softpro",
     name: "SoftPro",
@@ -692,17 +703,6 @@ export const EXPORT_PRESETS = [
     async: true,
     transform: async (packets) => buildXLSX(packets),
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  },
-  {
-    id: "tps_stewart",
-    name: "STEPS",
-    category: "generic",
-    description: "Stewart Title production JSON format",
-    format: "json",
-    fileExtension: ".json",
-    icon: "zap",
-    transform: (packets) => buildTPS(packets),
-    mimeType: "application/json",
   },
   {
     id: "summary_report",

@@ -11,8 +11,11 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  RotateCw,
   Loader2,
   PenLine,
+  Maximize,
+  Download,
 } from "lucide-react";
 import { useToast } from "./ui/toast";
 import { Button } from "./ui/button";
@@ -32,7 +35,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
  * Renders a single PDF page on a <canvas> using pdfjs-dist,
  * with optional text-search highlighting overlay.
  */
-function PdfCanvasPage({ pdfDoc, pageNumber, scale, highlightText }) {
+function PdfCanvasPage({ pdfDoc, pageNumber, scale, rotation = 0, highlightText }) {
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const renderTaskRef = useRef(null);
@@ -50,7 +53,7 @@ function PdfCanvasPage({ pdfDoc, pageNumber, scale, highlightText }) {
         const page = await pdfDoc.getPage(pageNumber);
         if (cancelled) return;
 
-        const viewport = page.getViewport({ scale });
+        const viewport = page.getViewport({ scale, rotation });
         const canvas = canvasRef.current;
         if (!canvas) return;
 
@@ -108,7 +111,7 @@ function PdfCanvasPage({ pdfDoc, pageNumber, scale, highlightText }) {
         renderTaskRef.current = null;
       }
     };
-  }, [pdfDoc, pageNumber, scale, highlightText]);
+  }, [pdfDoc, pageNumber, scale, rotation, highlightText]);
 
   return (
     <div className="relative inline-block mx-auto">
@@ -130,6 +133,7 @@ function PdfCanvasPage({ pdfDoc, pageNumber, scale, highlightText }) {
  */
 function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loading, highlightText }) {
   const [zoom, setZoom] = useState(100);
+  const [rotation, setRotation] = useState(0);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [pdfDoc, setPdfDoc] = useState(null);
   const [pdfRenderError, setPdfRenderError] = useState(null);
@@ -198,6 +202,27 @@ function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loa
     return () => { pdfDoc?.destroy?.(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const scrollContainerRef = useRef(null);
+  const [nativePageWidth, setNativePageWidth] = useState(null);
+
+  // Grab native page dimensions (at scale=1, rotation=0) whenever the doc or page changes
+  useEffect(() => {
+    if (!pdfDoc) return;
+    const pNum = pageNumbers[currentPageIndex] || pageNumbers[0] || 1;
+    pdfDoc.getPage(pNum).then((page) => {
+      const vp = page.getViewport({ scale: 1, rotation: 0 });
+      setNativePageWidth(vp.width);
+    }).catch(() => {});
+  }, [pdfDoc, pageNumbers, currentPageIndex]);
+
+  const fitToWidth = () => {
+    const container = scrollContainerRef.current;
+    if (!container || !nativePageWidth) return;
+    const availableWidth = container.clientWidth - 32; // subtract padding
+    const newZoom = Math.round((availableWidth / nativePageWidth) * 100);
+    setZoom(Math.max(50, Math.min(700, newZoom)));
+  };
+
   const scale = zoom / 100;
   const pageNum = pageNumbers[currentPageIndex] || pageNumbers[0] || 1;
   
@@ -225,79 +250,127 @@ function PDFPreview({ base64Data, blobUrl: externalBlobUrl, pages, filename, loa
   
   return (
     <div className="flex flex-col h-full bg-gray-100 dark:bg-gray-900">
-      {/* PDF Controls */}
-      <div className="flex items-center justify-between px-3 py-2 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center gap-2">
-          {pageNumbers.length > 1 && (
+      {/* PDF Toolbar */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+        {/* Left: Page navigation */}
+        <div className="flex items-center gap-1">
+          {pageNumbers.length > 1 ? (
             <>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+                className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
                 onClick={() => setCurrentPageIndex(Math.max(0, currentPageIndex - 1))}
                 disabled={currentPageIndex === 0}
+                title="Previous page"
               >
-                <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="h-5 w-5" />
               </Button>
-              <span className="text-xs text-gray-600 min-w-[80px] text-center">
-                Page {pageNumbers[currentPageIndex]}{pageNumbers.length > 1 ? ` (${currentPageIndex + 1}/${pageNumbers.length})` : ""}
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300 min-w-[100px] text-center tabular-nums">
+                Page {pageNumbers[currentPageIndex]} <span className="text-gray-400 dark:text-gray-500 font-normal">of {pageNumbers.length}</span>
               </span>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+                className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
                 onClick={() => setCurrentPageIndex(Math.min(pageNumbers.length - 1, currentPageIndex + 1))}
                 disabled={currentPageIndex === pageNumbers.length - 1}
+                title="Next page"
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-5 w-5" />
               </Button>
             </>
-          )}
-          {pageNumbers.length === 1 && (
-            <span className="text-xs text-gray-600">
+          ) : (
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 px-1">
               Page {pageNumbers[0]}
             </span>
           )}
         </div>
-        
+
+        {/* Center: Zoom controls */}
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
             onClick={() => setZoom(Math.max(50, zoom - 25))}
+            title="Zoom out"
           >
-            <ZoomOut className="h-4 w-4" />
+            <ZoomOut className="h-5 w-5" />
           </Button>
-          <span className="text-xs text-gray-600 dark:text-gray-400 w-12 text-center">{zoom}%</span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
-            onClick={() => setZoom(Math.min(700, zoom + 25))}
-          >
-            <ZoomIn className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+          <button
+            type="button"
             onClick={() => setZoom(100)}
-            title="Reset zoom to 100%"
+            className="text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 tabular-nums w-14 text-center rounded py-0.5 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title="Click to reset to 100%"
           >
-            <RotateCcw className="h-4 w-4" />
+            {zoom}%
+          </button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+            onClick={() => setZoom(Math.min(700, zoom + 25))}
+            title="Zoom in"
+          >
+            <ZoomIn className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+            onClick={fitToWidth}
+            title="Fit to width"
+          >
+            <Maximize className="h-5 w-5" />
+          </Button>
+        </div>
+
+        {/* Right: Rotate + Download */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+            onClick={() => setRotation((r) => (r + 270) % 360)}
+            title="Rotate left"
+          >
+            <RotateCcw className="h-5 w-5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+            onClick={() => setRotation((r) => (r + 90) % 360)}
+            title="Rotate right"
+          >
+            <RotateCw className="h-5 w-5" />
+          </Button>
+          <div className="w-px h-5 bg-gray-200 dark:bg-gray-600 mx-0.5" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700"
+            onClick={() => {
+              const url = externalBlobUrl || (base64Data?.startsWith("data:") ? base64Data : `data:application/pdf;base64,${base64Data}`);
+              if (url) window.open(url, "_blank");
+            }}
+            title="Open PDF in new tab (for printing or saving)"
+          >
+            <Download className="h-5 w-5" />
           </Button>
         </div>
       </div>
       
-      {/* PDF Canvas Viewer — pdfjs-dist renders on <canvas> for consistent cross-browser display */}
-      <div className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-800 p-4">
+      {/* PDF Canvas Viewer */}
+      <div ref={scrollContainerRef} className="flex-1 overflow-auto bg-gray-50 dark:bg-gray-800 p-4 flex justify-center">
         {pdfDoc && (
           <PdfCanvasPage
-            key={`${pageNum}-${zoom}`}
+            key={`${pageNum}-${zoom}-${rotation}`}
             pdfDoc={pdfDoc}
             pageNumber={pageNum}
             scale={scale}
+            rotation={rotation}
             highlightText={highlightText}
           />
         )}
