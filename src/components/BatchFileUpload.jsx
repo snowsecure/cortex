@@ -1,6 +1,7 @@
 import React, { useCallback, useState, useRef } from "react";
 import { Upload, FolderOpen, FileText, X, AlertCircle, Files } from "lucide-react";
 import { Button } from "./ui/button";
+import { SailboatIcon } from "./ui/sailboat-icon";
 import { useToast } from "./ui/toast";
 import { cn } from "../lib/utils";
 import { fileToBase64, getUsername } from "../lib/retab";
@@ -55,27 +56,39 @@ async function scanDirectoryEntry(entry, basePath = "") {
 
 /**
  * Process dropped items (files or folders)
+ *
+ * IMPORTANT: DataTransferItem references are invalidated after the first async
+ * tick, so we must collect all entries / File objects *synchronously* before
+ * doing any async work (like reading directory contents or resolving files).
  */
 async function processDroppedItems(items) {
-  const files = [];
-  
+  // ── 1. Synchronously snapshot entries & files ──────────────────────────
+  const entries = [];   // FileSystemEntry (for browsers that support it)
+  const rawFiles = [];  // plain File fallback
+
   for (const item of items) {
-    if (item.kind === "file") {
-      const entry = item.webkitGetAsEntry?.();
-      
-      if (entry) {
-        const scannedFiles = await scanDirectoryEntry(entry);
-        files.push(...scannedFiles);
-      } else {
-        // Fallback for browsers without webkitGetAsEntry
-        const file = item.getAsFile();
-        if (file && SUPPORTED_TYPES.includes(file.type) && file.size <= MAX_FILE_SIZE) {
-          files.push({ file, path: file.name });
-        }
+    if (item.kind !== "file") continue;
+
+    const entry = item.webkitGetAsEntry?.();
+    if (entry) {
+      entries.push(entry);
+    } else {
+      // Fallback for browsers without webkitGetAsEntry
+      const file = item.getAsFile();
+      if (file && SUPPORTED_TYPES.includes(file.type) && file.size <= MAX_FILE_SIZE) {
+        rawFiles.push({ file, path: file.name });
       }
     }
   }
-  
+
+  // ── 2. Now do async work with the snapshotted references ───────────────
+  const files = [...rawFiles];
+
+  for (const entry of entries) {
+    const scannedFiles = await scanDirectoryEntry(entry);
+    files.push(...scannedFiles);
+  }
+
   return files;
 }
 
@@ -271,7 +284,13 @@ export function BatchFileUpload({
     }
   }, [onFilesSelected, sessionId, dbConnected, selectedFiles, toast, cancelUpload]);
 
-  // Process initial files (e.g. dropped on dashboard) once when provided
+  // Process initial files (e.g. dropped on dashboard) once when provided.
+  // The call is deferred via setTimeout(0) so that React 18 StrictMode's
+  // simulated unmount/remount cycle completes first — otherwise the unmount
+  // cleanup aborts uploadAbortRef before the second file uploads.
+  // IMPORTANT: lastProcessedInitialRef is set INSIDE the timer callback so
+  // that if StrictMode clears the first timer, the re-fired effect can
+  // schedule a new one (the guard won't block it because the ref was never set).
   React.useEffect(() => {
     if (!initialFilesToProcess?.length || lastProcessedInitialRef.current === initialFilesToProcess) return;
     const fileItems = initialFilesToProcess
@@ -281,10 +300,14 @@ export function BatchFileUpload({
       onInitialFilesProcessed?.();
       return;
     }
-    lastProcessedInitialRef.current = initialFilesToProcess;
-    processFiles(fileItems).finally(() => {
-      onInitialFilesProcessed?.();
-    });
+    const filesToMark = initialFilesToProcess;
+    const timer = setTimeout(() => {
+      lastProcessedInitialRef.current = filesToMark;
+      processFiles(fileItems).finally(() => {
+        onInitialFilesProcessed?.();
+      });
+    }, 0);
+    return () => clearTimeout(timer);
   }, [initialFilesToProcess, processFiles, onInitialFilesProcessed]);
 
   /**
@@ -535,6 +558,62 @@ export function BatchFileUpload({
   // Show upload zone
   return (
     <div className="space-y-4">
+      {/* Upload modal — small centered overlay with sailboat */}
+      {isScanning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center anim-fade-in">
+          <div className="absolute inset-0 bg-black/30 dark:bg-black/50" />
+          <div className="relative bg-white dark:bg-neutral-800 rounded-2xl shadow-2xl px-8 py-7 max-w-xs w-full mx-4 flex flex-col items-center gap-4 anim-scale-in">
+            {/* Sailboat with gentle bob */}
+            <div className="upload-sailboat-bob">
+              <SailboatIcon className="h-10 w-10 text-[#9e2339]" />
+            </div>
+
+            {/* Status text */}
+            <div className="text-center">
+              <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                {processingProgress.total > 0
+                  ? `Uploading ${processingProgress.current} of ${processingProgress.total} file${processingProgress.total !== 1 ? "s" : ""}`
+                  : "Preparing files\u2026"}
+              </p>
+              <p className="text-xs text-gray-400 dark:text-neutral-500 mt-1">Sending to server</p>
+            </div>
+
+            {/* Progress bar */}
+            {processingProgress.total > 0 && (
+              <div className="w-full space-y-1.5">
+                {/* Per-file progress */}
+                <div className="w-full bg-gray-100 dark:bg-neutral-700 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-[#9e2339] h-full rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${Math.round(uploadProgress * 100)}%` }}
+                  />
+                </div>
+                {/* Overall batch (only for multi-file) */}
+                {processingProgress.total > 1 && (
+                  <div className="w-full bg-gray-100 dark:bg-neutral-700 rounded-full h-1 overflow-hidden">
+                    <div
+                      className="bg-gray-300 dark:bg-neutral-500 h-full rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${Math.round(((processingProgress.current - 1) / processingProgress.total) * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Cancel link */}
+            {processingProgress.total > 1 && (
+              <button
+                type="button"
+                onClick={cancelUpload}
+                className="text-xs text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Drop zone */}
       <div
         onDragEnter={handleDragEnter}
@@ -549,91 +628,52 @@ export function BatchFileUpload({
           (disabled || isProcessing || isScanning) && "opacity-50 cursor-not-allowed"
         )}
       >
-        {isScanning ? (
-          <div className="flex flex-col items-center gap-3 w-full max-w-xs">
-            <div className="animate-spin rounded-full h-10 w-10 border-2 border-[#9e2339] border-t-transparent" />
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              {processingProgress.total > 0 
-                ? `Uploading ${processingProgress.current} of ${processingProgress.total} files...`
-                : "Scanning files..."
-              }
+        <div className="flex flex-col items-center gap-4">
+          <div className="p-4 bg-gray-100 dark:bg-gray-700 rounded-full">
+            <FolderOpen className="h-8 w-8 text-gray-600 dark:text-gray-300" />
+          </div>
+          
+          {isDragActive ? (
+            <p className="text-sm text-gray-600">
+              {isDragReject ? "Invalid files" : "Drop your files or folder here..."}
             </p>
-            {/* Per-file upload progress bar */}
-            {processingProgress.total > 0 && uploadProgress > 0 && (
-              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
-                <div
-                  className="bg-[#9e2339] h-1.5 rounded-full transition-all duration-200"
-                  style={{ width: `${Math.round(uploadProgress * 100)}%` }}
-                />
-              </div>
-            )}
-            {/* Overall batch progress */}
-            {processingProgress.total > 1 && (
-              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1">
-                <div
-                  className="bg-gray-400 dark:bg-gray-500 h-1 rounded-full transition-all duration-200"
-                  style={{ width: `${Math.round(((processingProgress.current - 1) / processingProgress.total) * 100)}%` }}
-                />
-              </div>
-            )}
-            {processingProgress.total > 1 && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); cancelUpload(); }}
-                className="text-xs text-gray-500 hover:text-red-600 dark:hover:text-red-400 underline"
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-4">
-            <div className="p-4 bg-gray-100 dark:bg-gray-700 rounded-full">
-              <FolderOpen className="h-8 w-8 text-gray-600 dark:text-gray-300" />
-            </div>
-            
-            {isDragActive ? (
-              <p className="text-sm text-gray-600">
-                {isDragReject ? "Invalid files" : "Drop your files or folder here..."}
-              </p>
-            ) : (
-              <>
-                <div className="text-center">
-                  <p className="text-sm font-medium text-gray-700">
-                    Drag and drop PDF packets or folders here
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Each PDF can contain multiple documents from a single transaction
-                  </p>
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="outline"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={disabled || isProcessing}
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    Select Files
-                  </Button>
-                  <span className="text-gray-400">or</span>
-                  <Button
-                    variant="outline"
-                    onClick={() => folderInputRef.current?.click()}
-                    disabled={disabled || isProcessing}
-                  >
-                    <FolderOpen className="h-4 w-4 mr-2" />
-                    Select Folder
-                  </Button>
-                </div>
-                
-                <p className="text-xs text-gray-400">
-                  PDF files up to 75 MB each
+          ) : (
+            <>
+              <div className="text-center">
+                <p className="text-sm font-medium text-gray-700">
+                  Drag and drop PDF packets or folders here
                 </p>
-              </>
-            )}
-          </div>
-        )}
+                <p className="text-xs text-gray-500 mt-1">
+                  Each PDF can contain multiple documents from a single transaction
+                </p>
+              </div>
+              
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled || isProcessing}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Select Files
+                </Button>
+                <span className="text-gray-400">or</span>
+                <Button
+                  variant="outline"
+                  onClick={() => folderInputRef.current?.click()}
+                  disabled={disabled || isProcessing}
+                >
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                  Select Folder
+                </Button>
+              </div>
+              
+              <p className="text-xs text-gray-400">
+                PDF files up to 75 MB each
+              </p>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Error message */}

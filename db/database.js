@@ -234,6 +234,27 @@ export function initializeDatabase() {
     if (!/duplicate column name/i.test(e.message)) throw e;
   }
 
+  // Migration: add split_data column to packets (stores split results for pipeline resume)
+  try {
+    db.exec(`ALTER TABLE packets ADD COLUMN split_data TEXT`);
+  } catch (e) {
+    if (!/duplicate column name/i.test(e.message)) throw e;
+  }
+
+  // Migration: add pipeline_stage column to packets (tracks current processing stage)
+  try {
+    db.exec(`ALTER TABLE packets ADD COLUMN pipeline_stage TEXT`);
+  } catch (e) {
+    if (!/duplicate column name/i.test(e.message)) throw e;
+  }
+
+  // Migration: add processing_config column to packets (stores user config for resume)
+  try {
+    db.exec(`ALTER TABLE packets ADD COLUMN processing_config TEXT`);
+  } catch (e) {
+    if (!/duplicate column name/i.test(e.message)) throw e;
+  }
+
   console.log("Database initialized:", DB_FILE);
 }
 
@@ -268,6 +289,7 @@ const PACKET_UPDATABLE_COLUMNS = new Set([
   "status", "filename", "started_at", "completed_at", "retry_count",
   "error", "total_documents", "completed_documents", "needs_review_documents",
   "failed_documents", "total_credits", "total_cost", "temp_file_path", "created_by",
+  "split_data", "pipeline_stage", "processing_config",
 ]);
 
 export function updateSession(id, data) {
@@ -627,6 +649,45 @@ export const createDocuments = db.transaction((docs) => {
   const placeholders = ids.map(() => "?").join(",");
   return db.prepare(`SELECT * FROM documents WHERE id IN (${placeholders}) ORDER BY created_at ASC`).all(...ids).map(deserializeDocument);
 });
+
+/**
+ * Upsert a document — insert if new, update if exists.
+ * Used by server-side pipeline for incremental saves during processing.
+ */
+export function upsertDocument(doc) {
+  db.prepare(`
+    INSERT INTO documents (
+      id, packet_id, session_id, document_type, display_name, status,
+      pages, extraction_data, likelihoods, extraction_confidence,
+      needs_review, review_reasons, credits_used
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      status = excluded.status,
+      extraction_data = excluded.extraction_data,
+      likelihoods = excluded.likelihoods,
+      extraction_confidence = excluded.extraction_confidence,
+      needs_review = excluded.needs_review,
+      review_reasons = excluded.review_reasons,
+      credits_used = excluded.credits_used,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    doc.id,
+    doc.packet_id,
+    doc.session_id,
+    doc.document_type,
+    doc.display_name,
+    doc.status || "pending",
+    JSON.stringify(doc.pages || []),
+    JSON.stringify(doc.extraction_data || {}),
+    JSON.stringify(doc.likelihoods || {}),
+    doc.extraction_confidence ?? null,
+    doc.needs_review ? 1 : 0,
+    JSON.stringify(doc.review_reasons || []),
+    doc.credits_used ?? 0
+  );
+
+  return getDocument(doc.id);
+}
 
 export function getDocument(id) {
   return deserializeDocument(db.prepare(`SELECT * FROM documents WHERE id = ?`).get(id));
@@ -1167,7 +1228,7 @@ export function resetZombiePackets() {
   const zombieStatuses = ["processing", "splitting", "classifying", "extracting"];
   const placeholders = zombieStatuses.map(() => "?").join(",");
   const result = db.prepare(`
-    UPDATE packets SET status = 'queued', started_at = NULL
+    UPDATE packets SET status = 'queued', started_at = NULL, pipeline_stage = NULL
     WHERE status IN (${placeholders})
   `).run(...zombieStatuses);
 
@@ -1175,6 +1236,13 @@ export function resetZombiePackets() {
     console.log(`[DB] Reset ${result.changes} zombie packet(s) to 'queued'`);
   }
   return result.changes;
+}
+
+/**
+ * Get packets that are currently queued for processing (used by server-side queue on startup).
+ */
+export function getQueuedPackets() {
+  return db.prepare(`SELECT * FROM packets WHERE status = 'queued' ORDER BY created_at ASC`).all();
 }
 
 // ============================================================================

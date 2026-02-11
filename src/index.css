@@ -111,3 +111,20 @@ body {
 .anim-sailboat-inner {
   animation: sailboat-bob 1.2s ease-in-out infinite;
 }
+
+/* Upload modal animations */
+@keyframes upload-sailboat-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30%      { transform: translateY(-5px) rotate(-2deg); }
+  70%      { transform: translateY(5px) rotate(2deg); }
+}
+.upload-sailboat-bob {
+  animation: upload-sailboat-bob 2s ease-in-out infinite;
+}
+.anim-scale-in {
+  animation: anim-scale-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes anim-scale-in {
+  0%   { transform: scale(0.9); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}

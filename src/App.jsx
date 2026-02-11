@@ -151,9 +151,18 @@ function WelcomeDashboard({
     e.stopPropagation();
     setIsDragOver(false);
     if (!onFilesDropped) return;
-    const files = Array.from(e.dataTransfer.files || []).filter(
-      (f) => DASHBOARD_PDF_TYPES.includes(f.type) && f.size <= DASHBOARD_MAX_FILE_SIZE
-    );
+    // DataTransferItem references are invalidated after the first async tick.
+    // Collect all File objects synchronously from items so multiple drops are not lost.
+    const items = e.dataTransfer?.items;
+    if (!items?.length) return;
+    const files = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].kind !== "file") continue;
+      const file = items[i].getAsFile();
+      if (file && DASHBOARD_PDF_TYPES.includes(file.type) && file.size <= DASHBOARD_MAX_FILE_SIZE) {
+        files.push(file);
+      }
+    }
     if (files.length > 0) onFilesDropped(files);
   }, [onFilesDropped]);
 
@@ -434,59 +443,57 @@ function App() {
     hasHistory,
   } = useProcessingHistory();
 
-  // Task-based progress — each packet contributes (1 split + N extractions) as tasks.
-  // Before we know the doc count, a queued packet counts as 1 task (the split).
-  // Once split reveals N docs, it becomes (1 split + N extractions) = N+1 tasks.
+  // File-centric progress — smooth single bar based on files completed.
+  // Active file contributes partial progress so the bar never sits at 0% for long.
   const footerProgress = useMemo(() => {
-    if (!packets.length) return { percent: 0, completedTasks: 0, totalTasks: 0, label: "" };
-    let completedTasks = 0;
-    let totalTasks = 0;
+    if (!packets.length) return { percent: 0, completedFiles: 0, totalFiles: 0 };
+
+    let completedFiles = 0;
+    let activeFileProgress = 0; // 0–1 fraction of the currently-active file
 
     for (const p of packets) {
-      const knownDocs = p.progress?.totalDocs ?? p.documents?.length ?? 0;
-
-      if (p.status === "completed" || p.status === "needs_review" || p.status === "failed") {
-        // Finished: split + all extractions done
-        const docCount = Math.max(knownDocs, 1);
-        totalTasks += 1 + docCount; // split + extractions
-        completedTasks += 1 + docCount;
-      } else if (p.status === "splitting" || p.status === "classifying") {
-        // Splitting — we don't know doc count yet, just count the split task
-        totalTasks += 1;
-        // Splitting is in-progress, give partial credit
-        completedTasks += p.status === "splitting" ? 0.3 : 0.7;
+      if (["completed", "needs_review", "failed"].includes(p.status)) {
+        completedFiles++;
+      } else if (p.status === "splitting") {
+        activeFileProgress = 0.1; // just started
+      } else if (p.status === "classifying") {
+        activeFileProgress = 0.2;
       } else if (p.status === "extracting") {
-        // Split done, now extracting docs
-        const docCount = Math.max(knownDocs, 1);
-        totalTasks += 1 + docCount; // split + extractions
-        completedTasks += 1; // split is done
-        completedTasks += Math.min(p.progress?.docIndex ?? 0, docCount); // extracted docs
-      } else {
-        // Queued — count as 1 unknown task (will expand once split runs)
-        totalTasks += 1;
+        const total = p.progress?.totalDocs || 1;
+        const done = p.progress?.docIndex || 0;
+        // Extraction is ~80% of the file's work (splitting is the first ~20%)
+        activeFileProgress = 0.2 + 0.8 * (done / total);
       }
     }
 
-    const percent = totalTasks > 0 ? Math.min(100, Math.round((completedTasks / totalTasks) * 100)) : 0;
-    return {
-      percent,
-      completedTasks: Math.floor(completedTasks),
-      totalTasks,
-      label: `${Math.floor(completedTasks)} of ${totalTasks} tasks`,
-    };
+    // Smooth percentage: completed files + partial credit for the active one
+    const raw = (completedFiles + activeFileProgress) / packets.length;
+    const percent = Math.min(100, Math.round(raw * 100));
+    return { percent, completedFiles, totalFiles: packets.length };
   }, [packets]);
 
-  // Current step label for active processing (toolbar + footer)
+  // Current activity summary — files can process concurrently, so show counts
   const currentActivityLabel = useMemo(() => {
-    const p = packets.find(px => ["splitting", "classifying", "extracting"].includes(px.status));
-    if (!p) return null;
-    if (p.status === "splitting") return "Splitting PDF…";
-    if (p.status === "classifying") return "Classifying…";
-    if (p.status === "extracting" && p.progress?.totalDocs > 0) {
-      const current = Math.min((p.progress.docIndex ?? 0) + 1, p.progress.totalDocs);
-      return `Extracting document ${current} of ${p.progress.totalDocs}`;
+    const active = packets.filter(px =>
+      ["splitting", "classifying", "extracting"].includes(px.status)
+    );
+    if (active.length === 0) return null;
+
+    // Pick the most advanced file's stage as the detail hint
+    const extracting = active.find(p => p.status === "extracting");
+    let detail;
+    if (extracting && extracting.progress?.totalDocs > 0) {
+      const cur = Math.min((extracting.progress.docIndex ?? 0) + 1, extracting.progress.totalDocs);
+      detail = `extracting doc ${cur} of ${extracting.progress.totalDocs}`;
+    } else if (active.some(p => p.status === "extracting")) {
+      detail = "extracting";
+    } else if (active.some(p => p.status === "classifying")) {
+      detail = "classifying";
+    } else {
+      detail = "splitting";
     }
-    return "Extracting…";
+
+    return { activeCount: active.length, detail };
   }, [packets]);
 
   // Track if we've saved the current run to history
@@ -833,7 +840,7 @@ function App() {
               <div className="flex flex-col -space-y-0.5">
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-xl tracking-wide text-gray-900 dark:text-white" style={{ fontFamily: 'Inter, sans-serif', fontWeight: 900 }}>CORTEX</span>
-                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.3.1</span>
+                  <span className="text-[10px] text-gray-400 dark:text-neutral-500">v0.4.3</span>
                 </div>
                 <span className="text-[9px] tracking-wider text-gray-400 dark:text-neutral-500" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Structured Data, On Demand</span>
               </div>
@@ -1095,43 +1102,66 @@ function App() {
             <div className="mb-3 shrink-0">
               {/* Processing state */}
               {isProcessing && (
-                <div className="flex items-center gap-3 py-2">
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <div className="h-2 w-2 rounded-full bg-[#9e2339] animate-pulse shrink-0" />
-                    <span className="text-sm text-gray-700 dark:text-gray-200 truncate">
-                      {currentActivityLabel ?? "Processing"}
-                    </span>
+                <>
+                  <div className="flex items-center gap-3 py-2">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="h-2 w-2 rounded-full bg-[#9e2339] animate-pulse shrink-0" />
+                      <span className="text-sm text-gray-700 dark:text-gray-200 truncate">
+                        {currentActivityLabel
+                          ? `${footerProgress.completedFiles} of ${footerProgress.totalFiles} done \u00b7 ${currentActivityLabel.detail}`
+                          : `${footerProgress.completedFiles} of ${footerProgress.totalFiles} done`}
+                      </span>
+                    </div>
                     <span className="text-xs tabular-nums text-gray-400 dark:text-gray-500 shrink-0">
-                      {footerProgress.label} &middot; {footerProgress.percent}%
+                      {footerProgress.percent}%
                     </span>
+                    <Button
+                      size="sm"
+                      onClick={pause}
+                      className="h-8 px-4 gap-1.5 bg-[#9e2339] hover:bg-[#852030] text-white shrink-0"
+                    >
+                      <Square className="h-3 w-3 fill-current" />
+                      Stop
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={pause}
-                    className="h-8 px-4 gap-1.5 bg-[#9e2339] hover:bg-[#852030] text-white shrink-0"
-                  >
-                    <Square className="h-3 w-3 fill-current" />
-                    Stop
-                  </Button>
-                </div>
+                  <div className="h-2 bg-gray-100 dark:bg-neutral-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 dark:bg-emerald-400 rounded-full"
+                      style={{
+                        width: `${Math.max(2, footerProgress.percent)}%`,
+                        transition: "width 1.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                      }}
+                    />
+                  </div>
+                </>
               )}
 
               {/* Stopped state */}
               {isPaused && (
-                <div className="flex items-center gap-3 py-2">
-                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                    <div className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
-                    <span className="text-sm text-amber-600 dark:text-amber-400">Stopped</span>
+                <>
+                  <div className="flex items-center gap-3 py-2">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
+                      <span className="text-sm text-amber-600 dark:text-amber-400">
+                        Stopped &mdash; {footerProgress.completedFiles} of {footerProgress.totalFiles} file{footerProgress.totalFiles !== 1 ? "s" : ""} done
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={resume}
+                      className="h-8 px-4 gap-1.5 bg-[#9e2339] hover:bg-[#852030] text-white shrink-0"
+                    >
+                      <Play className="h-3 w-3 fill-current" />
+                      Resume
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={resume}
-                    className="h-8 px-4 gap-1.5 bg-[#9e2339] hover:bg-[#852030] text-white shrink-0"
-                  >
-                    <Play className="h-3 w-3 fill-current" />
-                    Resume
-                  </Button>
-                </div>
+                  <div className="h-2 bg-gray-100 dark:bg-neutral-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-400 dark:bg-amber-500 rounded-full"
+                      style={{ width: `${Math.max(2, footerProgress.percent)}%` }}
+                    />
+                  </div>
+                </>
               )}
 
               {/* Idle state */}
@@ -1139,23 +1169,23 @@ function App() {
                 <div className="flex items-center gap-3 py-2">
                   <div className="flex items-center gap-2.5 text-sm text-gray-500 dark:text-gray-400 flex-1 min-w-0">
                     <span className="tabular-nums">{packets.length} file{packets.length !== 1 ? "s" : ""}</span>
-                    <span className="text-gray-300 dark:text-neutral-600">·</span>
+                    <span className="text-gray-300 dark:text-neutral-600">&middot;</span>
                     <span className="tabular-nums">{stats?.total ?? 0} doc{(stats?.total ?? 0) !== 1 ? "s" : ""}</span>
                     {(stats?.completed ?? 0) > 0 && (
                       <>
-                        <span className="text-gray-300 dark:text-neutral-600">·</span>
+                        <span className="text-gray-300 dark:text-neutral-600">&middot;</span>
                         <span className="text-green-600 dark:text-green-400 tabular-nums">{stats.completed} done</span>
                       </>
                     )}
                     {(stats?.needsReview ?? 0) > 0 && (
                       <>
-                        <span className="text-gray-300 dark:text-neutral-600">·</span>
+                        <span className="text-gray-300 dark:text-neutral-600">&middot;</span>
                         <span className="text-amber-600 dark:text-amber-400 tabular-nums">{stats.needsReview} review</span>
                       </>
                     )}
                     {(stats?.failed ?? 0) > 0 && (
                       <>
-                        <span className="text-gray-300 dark:text-neutral-600">·</span>
+                        <span className="text-gray-300 dark:text-neutral-600">&middot;</span>
                         <span className="text-red-500 tabular-nums">{stats.failed} failed</span>
                       </>
                     )}
@@ -1174,19 +1204,6 @@ function App() {
                       </Button>
                     );
                   })()}
-                </div>
-              )}
-
-              {/* Progress track */}
-              {isProcessing && (
-                <div className="h-3 bg-gray-100 dark:bg-neutral-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-emerald-500 dark:bg-emerald-400 rounded-full"
-                    style={{
-                      width: `${Math.max(2, footerProgress.percent)}%`,
-                      transition: "width 1.5s cubic-bezier(0.4, 0, 0.2, 1)",
-                    }}
-                  />
                 </div>
               )}
 

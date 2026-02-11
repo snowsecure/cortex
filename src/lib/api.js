@@ -500,6 +500,63 @@ export async function isBackendAvailable() {
   }
 }
 
+// ============================================================================
+// SERVER-SIDE PROCESSING
+// ============================================================================
+
+/**
+ * Start server-side processing for a packet.
+ * @param {string} packetId - Packet ID
+ * @param {string} apiKey   - Retab API key (sent in header, never persisted server-side)
+ * @param {Object} config   - Processing configuration
+ * @returns {Promise<Object>} { status: "queued", packetId }
+ */
+export async function startProcessing(packetId, apiKey, config = {}) {
+  return apiRequest(`/api/packets/${packetId}/process`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Api-Key": apiKey },
+    body: JSON.stringify({ config }),
+  });
+}
+
+/**
+ * Cancel server-side processing for a packet.
+ */
+export async function cancelProcessing(packetId) {
+  return apiRequest(`/api/packets/${packetId}/cancel`, { method: "POST" });
+}
+
+/**
+ * Pause all server-side processing.
+ */
+export async function pauseProcessing() {
+  return apiRequest("/api/processing/pause", { method: "POST" });
+}
+
+/**
+ * Resume all server-side processing.
+ */
+export async function resumeProcessing() {
+  return apiRequest("/api/processing/resume", { method: "POST" });
+}
+
+/**
+ * Get server-side processing queue status.
+ */
+export async function getProcessingStatus() {
+  return apiRequest("/api/processing/status");
+}
+
+/**
+ * Subscribe to SSE progress for a packet.
+ * Returns an EventSource. Caller should handle events and close when done.
+ * @param {string} packetId
+ * @returns {EventSource}
+ */
+export function subscribeToProgress(packetId) {
+  return new EventSource(`${API_BASE}/api/packets/${packetId}/progress`);
+}
+
 export default {
   getHealth,
   getStatus,
@@ -534,4 +591,10 @@ export default {
   deleteExportTemplate,
   syncPacketResult,
   isBackendAvailable,
+  startProcessing,
+  cancelProcessing,
+  pauseProcessing,
+  resumeProcessing,
+  getProcessingStatus,
+  subscribeToProgress,
 };

@@ -3,7 +3,7 @@
  * Comprehensive coverage for US Title Insurance documents
  */
 
-import { schemas } from "../schemas";
+import { schemas } from "../schemas/index.js";
 
 /**
  * Subdocument types for splitting PDF packets

@@ -2,7 +2,7 @@ import { useReducer, useCallback, useRef, useEffect, useState } from "react";
 import { usePacketPipeline, PipelineStatus } from "./usePacketPipeline";
 import * as api from "../lib/api";
 import { loadSettings, DEFAULT_CONFIG as RETAB_DEFAULT_CONFIG } from "../lib/retabConfig";
-import { getUsername } from "../lib/retab";
+import { getUsername, getApiKey } from "../lib/retab";
 
 const __DEV__ = import.meta.env.DEV;
 
@@ -705,7 +705,8 @@ function batchQueueReducer(state, action) {
 
         if (interruptedStatuses.includes(status)) {
           if (hasServerFile) {
-            // File still on server — re-queue for automatic resumption
+            // File still on server — re-queue for server-side resumption.
+            // Server pipeline checks existing docs and skips already-completed ones.
             status = PacketStatus.QUEUED;
             error = null;
             resumeQueue.push(dbPkt.id);
@@ -790,7 +791,9 @@ function batchQueueReducer(state, action) {
             docIndex: documents.length,
             totalDocs: documents.length,
           },
-          documents: status === PacketStatus.QUEUED ? [] : documents, // Clear docs for re-processing
+          // Keep existing documents even for re-queued packets — server-side pipeline
+          // resumes from where it left off (skips already-completed docs)
+          documents,
           result: status === PacketStatus.COMPLETED || status === PacketStatus.NEEDS_REVIEW
             ? { documents, stats: { completed: documents.length } }
             : null,
@@ -856,7 +859,9 @@ function generateTabId() {
  */
 export function useBatchQueue() {
   const [state, dispatch] = useReducer(batchQueueReducer, initialState);
-  const { processPacket, retryDocumentExtraction } = usePacketPipeline();
+  // processPacket is no longer used (server-side pipeline handles it).
+  // retryDocumentExtraction is still used for single-doc retry.
+  const { retryDocumentExtraction } = usePacketPipeline();
   
   /**
    * Retry an async DB sync operation once before giving up.
@@ -885,6 +890,8 @@ export function useBatchQueue() {
   const runProcessingLoopRef = useRef(null); // Set once runProcessingLoop is created
   const claimedRef = useRef(new Set()); // Track in-flight packet IDs synchronously to prevent race conditions
   const abortControllerRef = useRef(null); // AbortController for cancelling in-flight API calls on pause/clear
+  const sseSourcesRef = useRef(new Map()); // Track active SSE EventSource connections per packetId
+  const resumeInFlightRef = useRef(false); // Prevent duplicate server resume calls
   const tabIdRef = useRef(generateTabId());
   const tabChannelRef = useRef(null);
   const [otherTabProcessing, setOtherTabProcessing] = useState(false);
@@ -979,12 +986,20 @@ export function useBatchQueue() {
                 interruptedStatuses.includes(p.status) && (p.hasServerFile ?? !!p.temp_file_path)
               );
               if (resumable.length > 0) {
-                if (__DEV__) console.log(`Auto-resuming ${resumable.length} interrupted packet(s)...`);
-                // Poll stateRef until the RESTORE_FROM_DB dispatch has propagated,
-                // then start the processing loop. This replaces the old fixed 500ms
-                // timeout which was fragile — if React hadn't re-rendered by then,
-                // stateRef still showed IDLE and the loop exited immediately.
+                if (__DEV__) console.log(`Found ${resumable.length} interrupted packet(s), auto-resuming...`);
+
                 const waitForStateAndResume = async () => {
+                  // Ensure the server queue is unpaused — it likely is after a restart
+                  // (pause() was called before stop), so we must unpause before the
+                  // client loop tries to submit jobs.
+                  try {
+                    await api.resumeProcessing();
+                  } catch (err) {
+                    if (__DEV__) console.warn("Could not unpause server queue on init:", err.message);
+                  }
+
+                  // Poll stateRef until the RESTORE_FROM_DB dispatch has propagated,
+                  // then start the processing loop.
                   const MAX_WAIT_MS = 5000;
                   const POLL_MS = 100;
                   let waited = 0;
@@ -1039,11 +1054,9 @@ export function useBatchQueue() {
   }, []);
 
   /**
-   * Process a specific packet from the queue.
-   * Accepts an explicit packetId to avoid the race condition where multiple
-   * concurrent calls all read the same stale queue[0] from stateRef.
-   * Uses claimedRef (a synchronous Set) to guarantee each packet is only
-   * processed once, even if stateRef hasn't caught up with dispatches yet.
+   * Process a specific packet via the server-side pipeline.
+   * Instead of running extraction locally, submits to the server and subscribes
+   * to SSE events, mapping them to the same dispatch actions the UI expects.
    */
   const processNextPacket = useCallback(async (targetPacketId) => {
     const currentState = stateRef.current;
@@ -1051,10 +1064,8 @@ export function useBatchQueue() {
     if (pausedRef.current) return;
     if (currentState.batchStatus !== BatchStatus.PROCESSING) return;
     
-    // Determine which packet to process
     let packetId = targetPacketId;
     if (!packetId) {
-      // Fallback: find first unclaimed packet in queue
       packetId = currentState.queue.find(id => !claimedRef.current.has(id));
     }
     if (!packetId) return;
@@ -1062,114 +1073,146 @@ export function useBatchQueue() {
     const packet = currentState.packets.get(packetId);
     if (!packet) return;
     
-    // Claim this packet synchronously BEFORE any await to prevent duplicates.
-    // This is the critical fix: claimedRef is a plain Set (not React state),
-    // so it updates immediately and is visible to all concurrent callers.
     if (claimedRef.current.has(packetId)) return;
     claimedRef.current.add(packetId);
     
     try {
-      // Resolve base64 from server if file was uploaded (so work continues if user left)
-      let packetWithData = packet;
-      if (!packet.base64 && packet.hasServerFile) {
-        try {
-          const base64 = await api.getPacketFileAsBase64(packet.id);
-          packetWithData = { ...packet, base64 };
-        } catch (err) {
-          dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: err.message || "File not found or expired" });
-          if (stateRef.current.dbConnected && stateRef.current.sessionId) {
-            try {
-              await syncWithRetry(
-                () => api.updatePacket(packetId, { status: "failed", error: err.message }),
-                "syncFileNotFoundPacket"
-              );
-            } catch (_) {
-              // Already logged by syncWithRetry
-            }
-          }
-          return;
-        }
+      // Don't pre-set status to SPLITTING — the server will emit "started" or
+      // "status" SSE events when actual work begins. Pre-setting causes all
+      // queued packets to show "Splitting..." even when they're waiting behind
+      // the split semaphore.
+
+      // Submit to server for processing
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: "API key not configured" });
+        return;
       }
-      
-      // Mark as starting
-      dispatch({ 
-        type: ActionTypes.UPDATE_PACKET_STATUS, 
-        packetId, 
-        status: PipelineStatus.SPLITTING,
-      });
-      
-      // Sync processing status to DB so admin/monitoring dashboards show accurate state
-      if (stateRef.current.dbConnected) {
-        api.updatePacket(packetId, {
-          status: "processing",
-          started_at: new Date().toISOString(),
-        }).catch(() => {}); // Best-effort, don't block processing
-      }
-      
-      // Get abort signal for this run (allows pause to cancel in-flight work)
-      const signal = abortControllerRef.current?.signal || null;
-      
+
       try {
-        const result = await processPacket(packetWithData, {
-          onStatusChange: (id, status, progress) => {
-            dispatch({ type: ActionTypes.UPDATE_PACKET_STATUS, packetId: id, status, progress });
-          },
-          onDocumentsDetected: (id, documents) => {
-            dispatch({ type: ActionTypes.SET_PENDING_DOCUMENTS, packetId: id, documents });
-          },
-          onDocumentProcessed: (id, document) => {
-            dispatch({ type: ActionTypes.PACKET_DOCUMENT_PROCESSED, packetId: id, document });
-          },
-          retabConfig: stateRef.current.retabConfig,
-          signal,
-        });
-        
-        dispatch({ type: ActionTypes.PACKET_COMPLETED, packetId, result });
-        
-        // Sync to database if connected (with retry).
-        // DB sync failures don't fail the packet (extraction succeeded) but
-        // we surface them so the user knows data may not be fully persisted.
-        if (stateRef.current.dbConnected && stateRef.current.sessionId) {
-          try {
-            await syncWithRetry(
-              () => api.syncPacketResult(stateRef.current.sessionId, packetId, result),
-              "syncPacketResult"
-            );
-          } catch (syncErr) {
-            console.error(`[WARN] Packet ${packetId} processed OK but DB sync failed: ${syncErr.message}. Data is in browser only until next successful sync.`);
-          }
-        }
-      } catch (error) {
-        // Aborted operations are intentionally cancelled (pause/clear) — re-queue
-        // the packet so it can be picked up again on resume, instead of leaving
-        // it orphaned in the processing set.
-        if (error.message === "Processing aborted" || error.name === "AbortError") {
-          if (__DEV__) console.log(`Packet ${packetId} processing was aborted, re-queuing for resume`);
-          dispatch({ type: ActionTypes.PACKET_REQUEUE, packetId });
-          return;
-        }
-        dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: error.message });
-        // Persist failed packet to DB so debug/errors and logs show it (with retry)
-        if (stateRef.current.dbConnected && stateRef.current.sessionId) {
-          try {
-            await syncWithRetry(
-              () => api.updatePacket(packetId, {
-                status: "failed",
-                error: error.message,
-                completed_at: new Date().toISOString(),
-              }),
-              "syncFailedPacket"
-            );
-          } catch (syncErr) {
-            console.error(`[WARN] Failed packet ${packetId} DB sync also failed: ${syncErr.message}`);
-          }
+        await api.startProcessing(packetId, apiKey, stateRef.current.retabConfig || {});
+      } catch (startErr) {
+        // If server rejects (e.g., already processing), that's fine — subscribe to progress
+        if (startErr.message?.includes("already being processed")) {
+          if (__DEV__) console.log(`Packet ${packetId} already processing on server, subscribing to progress`);
+        } else {
+          throw startErr;
         }
       }
+
+      // Subscribe to SSE progress — returns a Promise that resolves when processing completes
+      await new Promise((resolve, reject) => {
+        const eventSource = api.subscribeToProgress(packetId);
+        
+        // Track this EventSource so we can close it on pause/cancel
+        if (!sseSourcesRef.current) sseSourcesRef.current = new Map();
+        sseSourcesRef.current.set(packetId, eventSource);
+
+        eventSource.addEventListener("state", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            // Catch-up: if server already has documents, restore them
+            if (data.documents?.length > 0) {
+              dispatch({ type: ActionTypes.SET_PENDING_DOCUMENTS, packetId, documents: data.documents });
+            }
+            if (data.pipelineStage) {
+              dispatch({ type: ActionTypes.UPDATE_PACKET_STATUS, packetId, status: data.pipelineStage });
+            }
+          } catch (_) {}
+        });
+
+        eventSource.addEventListener("started", () => {
+          // Server picked up the job — don't set SPLITTING yet.
+          // The pipeline emits a "status" event with stage=splitting only
+          // after acquiring the split semaphore (i.e., when it's actually splitting).
+        });
+
+        eventSource.addEventListener("status", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            dispatch({ type: ActionTypes.UPDATE_PACKET_STATUS, packetId, status: data.stage, progress: data.progress });
+          } catch (_) {}
+        });
+
+        eventSource.addEventListener("documents_detected", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            dispatch({ type: ActionTypes.SET_PENDING_DOCUMENTS, packetId, documents: data.documents });
+          } catch (_) {}
+        });
+
+        eventSource.addEventListener("document_processed", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            dispatch({ type: ActionTypes.PACKET_DOCUMENT_PROCESSED, packetId, document: data.document });
+          } catch (_) {}
+        });
+
+        eventSource.addEventListener("progress", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            dispatch({ type: ActionTypes.UPDATE_PACKET_STATUS, packetId, status: PipelineStatus.EXTRACTING, progress: data });
+          } catch (_) {}
+        });
+
+        eventSource.addEventListener("completed", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            dispatch({ type: ActionTypes.PACKET_COMPLETED, packetId, result: data.result });
+          } catch (_) {}
+        });
+
+        eventSource.addEventListener("error", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: data.error });
+          } catch (_) {}
+        });
+
+        eventSource.addEventListener("paused", () => {
+          dispatch({ type: ActionTypes.PACKET_REQUEUE, packetId });
+        });
+
+        eventSource.addEventListener("cancelled", () => {
+          dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: "Cancelled" });
+        });
+
+        // "done" signals that the SSE stream is complete
+        eventSource.addEventListener("done", () => {
+          eventSource.close();
+          sseSourcesRef.current?.delete(packetId);
+          resolve();
+        });
+
+        // EventSource error (network issue, server down)
+        eventSource.onerror = () => {
+          // EventSource auto-reconnects, but if it fails permanently, clean up
+          if (eventSource.readyState === EventSource.CLOSED) {
+            sseSourcesRef.current?.delete(packetId);
+            // Check DB for final state instead of assuming failure
+            api.getPacket(packetId).then(pkt => {
+              if (pkt && (pkt.status === "completed" || pkt.status === "needs_review")) {
+                dispatch({ type: ActionTypes.PACKET_COMPLETED, packetId, result: { documents: [] } });
+              } else if (pkt && pkt.status === "failed") {
+                dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: pkt.error || "Processing failed" });
+              }
+              // If still processing, the SSE just disconnected — server continues
+              resolve();
+            }).catch(() => resolve());
+          }
+        };
+      });
+    } catch (error) {
+      if (error.message === "Processing aborted" || error.name === "AbortError") {
+        if (__DEV__) console.log(`Packet ${packetId} processing was aborted, re-queuing for resume`);
+        dispatch({ type: ActionTypes.PACKET_REQUEUE, packetId });
+        return;
+      }
+      dispatch({ type: ActionTypes.PACKET_FAILED, packetId, error: error.message });
     } finally {
-      // Always unclaim when done, regardless of success/failure/abort
       claimedRef.current.delete(packetId);
     }
-  }, [processPacket, syncWithRetry]);
+  }, [syncWithRetry]);
 
   /**
    * Main processing loop.
@@ -1260,7 +1303,26 @@ export function useBatchQueue() {
   }, []);
 
   /**
-   * Start batch processing
+   * Ensure the server-side queue is unpaused (idempotent, deduplicated).
+   * Called by both start() and resume() — the server treats resume as a no-op
+   * if already running, so this is safe to call unconditionally.
+   */
+  const ensureServerUnpaused = useCallback(() => {
+    if (resumeInFlightRef.current) return; // Already in flight
+    resumeInFlightRef.current = true;
+    api.resumeProcessing()
+      .catch((err) => {
+        if (__DEV__) console.warn("Failed to unpause server queue:", err.message);
+      })
+      .finally(() => {
+        resumeInFlightRef.current = false;
+      });
+  }, []);
+
+  /**
+   * Start batch processing.
+   * Always tells the server to unpause first — the backend may still be paused
+   * from a previous stop/restart cycle, even though the frontend is ready.
    */
   const start = useCallback(() => {
     if (otherTabProcessing) {
@@ -1268,33 +1330,44 @@ export function useBatchQueue() {
       return;
     }
     pausedRef.current = false;
-    // Reset in case a previous run crashed and left isProcessingRef stuck
     isProcessingRef.current = false;
-    // Create a fresh AbortController for this processing run
     abortControllerRef.current = new AbortController();
+    ensureServerUnpaused();
     dispatch({ type: ActionTypes.START_PROCESSING });
-    // Eagerly update stateRef so runProcessingLoop sees PROCESSING immediately,
-    // even before React re-renders and propagates the reducer state.
     stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PROCESSING };
     broadcastProcessingState("PROCESSING_STARTED");
-    // Start loop directly — stateRef is already in sync, no setTimeout needed.
     runProcessingLoop();
-  }, [runProcessingLoop, otherTabProcessing, broadcastProcessingState]);
+  }, [runProcessingLoop, otherTabProcessing, broadcastProcessingState, ensureServerUnpaused]);
 
   /**
    * Pause batch processing.
-   * Aborts in-flight API calls so processing actually stops instead of
-   * silently continuing in the background.
+   * Cancels in-flight packets on the server, closes SSE, and requeues them in the UI.
    */
   const pause = useCallback(() => {
     pausedRef.current = true;
-    // Signal all in-flight fetch calls to abort
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    // Cancel each in-flight packet on the server so jobs actually stop
+    const processingIds = Array.from(stateRef.current.processing ?? []);
+    for (const packetId of processingIds) {
+      api.cancelProcessing(packetId).catch((err) => {
+        if (__DEV__) console.warn("Failed to cancel packet", packetId, err.message);
+      });
+      dispatch({ type: ActionTypes.PACKET_REQUEUE, packetId });
+    }
+    // Close all SSE connections so client promises resolve
+    if (sseSourcesRef.current) {
+      for (const [, es] of sseSourcesRef.current) {
+        try { es.close(); } catch (_) {}
+      }
+      sseSourcesRef.current.clear();
+    }
+    api.pauseProcessing().catch((err) => {
+      if (__DEV__) console.warn("Failed to pause server processing:", err.message);
+    });
     dispatch({ type: ActionTypes.PAUSE_PROCESSING });
-    // Eagerly update stateRef so the processing loop sees PAUSED immediately
     stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PAUSED };
     broadcastProcessingState("PROCESSING_STOPPED");
   }, [broadcastProcessingState]);
@@ -1309,13 +1382,13 @@ export function useBatchQueue() {
     }
     pausedRef.current = false;
     isProcessingRef.current = false;
-    // Create a fresh AbortController for the resumed run
     abortControllerRef.current = new AbortController();
+    ensureServerUnpaused();
     dispatch({ type: ActionTypes.RESUME_PROCESSING });
     stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PROCESSING };
     broadcastProcessingState("PROCESSING_STARTED");
     runProcessingLoop();
-  }, [runProcessingLoop, otherTabProcessing, broadcastProcessingState]);
+  }, [runProcessingLoop, otherTabProcessing, broadcastProcessingState, ensureServerUnpaused]);
 
   /**
    * Add packets to the queue.
@@ -1352,23 +1425,13 @@ export function useBatchQueue() {
       }
     }
 
-    // Auto-resume: if the processing loop already completed (or was paused)
-    // and we're adding new files, automatically restart the loop so the user
-    // doesn't have to navigate back to the Upload page to hit "Start".
+    // With server-side processing, don't auto-resume when adding new files.
+    // The user should configure presets and explicitly click "Start".
+    // Just reset status to IDLE so the Upload page stays active.
     const currentStatus = stateRef.current.batchStatus;
-    if (
-      currentStatus === BatchStatus.COMPLETED ||
-      currentStatus === BatchStatus.PAUSED
-    ) {
-      if (__DEV__) console.log("[addPackets] Auto-resuming processing loop for newly added files");
-      pausedRef.current = false;
-      isProcessingRef.current = false;
-      abortControllerRef.current = new AbortController();
-      dispatch({ type: ActionTypes.RESUME_PROCESSING });
-      stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PROCESSING };
-      broadcastProcessingState("PROCESSING_STARTED");
-      // Small delay to let the reducer update before the loop reads state
-      setTimeout(() => runProcessingLoop(), 100);
+    if (currentStatus === BatchStatus.COMPLETED || currentStatus === BatchStatus.PAUSED) {
+      dispatch({ type: ActionTypes.PAUSE_PROCESSING });
+      stateRef.current = { ...stateRef.current, batchStatus: BatchStatus.PAUSED };
     }
   }, [runProcessingLoop, broadcastProcessingState]);
 

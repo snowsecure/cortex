@@ -15,6 +15,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import * as db from "./db/database.js";
 import logger, { requestLogger } from "./lib/logger.js";
+import * as processingQueue from "./lib/processingQueue.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -241,7 +242,7 @@ app.get("/api/status", (req, res) => {
       database: "connected",
       stats,
       usage,
-      version: "0.4.2.5",
+      version: "0.4.3",
     });
   } catch (error) {
     res.status(500).json({ error: safeErrorMessage(error) });
@@ -505,17 +506,25 @@ app.post("/api/packets/:id/complete", (req, res) => {
 // Delete packet (also cleans up the server-side temp file)
 app.delete("/api/packets/:id", (req, res) => {
   try {
-    // Look up the packet first to get the temp file path before deleting the record
-    const packet = db.getPacket(req.params.id);
-    const success = db.deletePacket(req.params.id);
+    const packetId = req.params.id;
+    const packet = db.getPacket(packetId);
+    if (!packet) {
+      return res.status(404).json({ error: "Packet not found" });
+    }
+    // Cancel any in-flight or queued processing so the job doesn't touch the packet after delete
+    processingQueue.cancel(packetId);
+    const success = db.deletePacket(packetId);
     if (!success) {
       return res.status(404).json({ error: "Packet not found" });
     }
-    // Clean up temp file if it exists
-    if (packet?.temp_file_path) {
-      fs.unlink(packet.temp_file_path, (err) => {
+    // Clean up temp file if it exists (resolve path so relative paths work)
+    if (packet.temp_file_path) {
+      const absolutePath = path.isAbsolute(packet.temp_file_path)
+        ? packet.temp_file_path
+        : path.resolve(process.cwd(), packet.temp_file_path);
+      fs.unlink(absolutePath, (err) => {
         if (err && err.code !== "ENOENT") {
-          console.warn(`Failed to delete temp file ${packet.temp_file_path}:`, err.message);
+          console.warn(`Failed to delete temp file ${absolutePath}:`, err.message);
         }
       });
     }
@@ -774,6 +783,196 @@ app.delete("/api/history", (req, res) => {
   } catch (error) {
     res.status(500).json({ error: safeErrorMessage(error) });
   }
+});
+
+// ============================================================================
+// SERVER-SIDE PROCESSING (pipeline queue + SSE progress)
+// ============================================================================
+
+/**
+ * POST /api/packets/:id/process — Start server-side processing for a packet.
+ * Requires Api-Key header. Returns 202 immediately; processing runs in background.
+ */
+app.post("/api/packets/:id/process", (req, res) => {
+  try {
+    const apiKey = req.headers["api-key"];
+    if (!apiKey) return res.status(401).json({ error: "Api-Key header required" });
+
+    const packet = db.getPacket(req.params.id);
+    if (!packet) return res.status(404).json({ error: "Packet not found" });
+
+    // Already processing?
+    if (processingQueue.isProcessing(packet.id)) {
+      return res.status(409).json({ error: "Packet is already being processed", status: "processing" });
+    }
+
+    const config = req.body?.config || {};
+    processingQueue.enqueue(packet.id, apiKey, config);
+
+    res.status(202).json({ status: "queued", packetId: packet.id });
+  } catch (error) {
+    res.status(500).json({ error: safeErrorMessage(error) });
+  }
+});
+
+/**
+ * GET /api/packets/:id/progress — SSE stream for processing progress.
+ * On connect, sends current state from DB, then live events as processing proceeds.
+ */
+app.get("/api/packets/:id/progress", (req, res) => {
+  const packetId = req.params.id;
+  const packet = db.getPacket(packetId);
+  if (!packet) return res.status(404).json({ error: "Packet not found" });
+
+  // SSE headers
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no", // Disable nginx buffering
+  });
+
+  // Send current state immediately (catch-up for reconnections)
+  const docs = db.getDocumentsByPacket(packetId);
+  const currentState = {
+    packetId,
+    status: packet.status,
+    pipelineStage: packet.pipeline_stage,
+    totalDocuments: packet.total_documents || 0,
+    completedDocuments: docs.filter(d => d.status === "completed" || d.status === "needs_review").length,
+    documents: docs,
+  };
+  res.write(`event: state\ndata: ${JSON.stringify(currentState)}\n\n`);
+
+  // If already done, close immediately
+  if (["completed", "needs_review", "failed"].includes(packet.status) && !processingQueue.isProcessing(packetId)) {
+    res.write(`event: done\ndata: ${JSON.stringify({ packetId })}\n\n`);
+    res.end();
+    return;
+  }
+
+  // Subscribe to live events
+  const emitter = processingQueue.getOrCreateEmitter(packetId);
+
+  const onStatus = (data) => res.write(`event: status\ndata: ${JSON.stringify(data)}\n\n`);
+  const onDocumentsDetected = (data) => res.write(`event: documents_detected\ndata: ${JSON.stringify(data)}\n\n`);
+  const onDocumentProcessed = (data) => res.write(`event: document_processed\ndata: ${JSON.stringify(data)}\n\n`);
+  const onProgress = (data) => res.write(`event: progress\ndata: ${JSON.stringify(data)}\n\n`);
+  const onCompleted = (data) => {
+    res.write(`event: completed\ndata: ${JSON.stringify(data)}\n\n`);
+    res.write(`event: done\ndata: ${JSON.stringify({ packetId })}\n\n`);
+    cleanup();
+    res.end();
+  };
+  const onError = (data) => {
+    res.write(`event: error\ndata: ${JSON.stringify(data)}\n\n`);
+    res.write(`event: done\ndata: ${JSON.stringify({ packetId })}\n\n`);
+    cleanup();
+    res.end();
+  };
+  const onCancelled = (data) => {
+    res.write(`event: cancelled\ndata: ${JSON.stringify(data)}\n\n`);
+    cleanup();
+    res.end();
+  };
+  const onPaused = (data) => {
+    res.write(`event: paused\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  const onStarted = (data) => {
+    res.write(`event: started\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  emitter.on("status", onStatus);
+  emitter.on("documents_detected", onDocumentsDetected);
+  emitter.on("document_processed", onDocumentProcessed);
+  emitter.on("progress", onProgress);
+  emitter.on("completed", onCompleted);
+  emitter.on("error", onError);
+  emitter.on("cancelled", onCancelled);
+  emitter.on("paused", onPaused);
+  emitter.on("started", onStarted);
+
+  function cleanup() {
+    emitter.off("status", onStatus);
+    emitter.off("documents_detected", onDocumentsDetected);
+    emitter.off("document_processed", onDocumentProcessed);
+    emitter.off("progress", onProgress);
+    emitter.off("completed", onCompleted);
+    emitter.off("error", onError);
+    emitter.off("cancelled", onCancelled);
+    emitter.off("paused", onPaused);
+    emitter.off("started", onStarted);
+  }
+
+  // Client disconnect
+  req.on("close", () => {
+    cleanup();
+    clearInterval(keepAlive);
+  });
+
+  // Keep-alive ping every 30s
+  const keepAlive = setInterval(() => {
+    try { res.write(`:ping\n\n`); } catch (_) { clearInterval(keepAlive); }
+  }, 30000);
+
+  // Race condition guard: the packet may have finished between the initial
+  // status check and event subscription. Re-check now that listeners are
+  // attached. If already done, close immediately.
+  const recheckPacket = db.getPacket(packetId);
+  if (recheckPacket && ["completed", "needs_review", "failed"].includes(recheckPacket.status) && !processingQueue.isProcessing(packetId)) {
+    res.write(`event: done\ndata: ${JSON.stringify({ packetId })}\n\n`);
+    cleanup();
+    clearInterval(keepAlive);
+    res.end();
+    return;
+  }
+
+  // Safety timeout: if no events arrive in 5 minutes, close the connection
+  // to prevent zombie SSE connections from accumulating.
+  const safetyTimeout = setTimeout(() => {
+    if (!processingQueue.isProcessing(packetId)) {
+      res.write(`event: done\ndata: ${JSON.stringify({ packetId, reason: "timeout" })}\n\n`);
+      cleanup();
+      clearInterval(keepAlive);
+      res.end();
+    }
+  }, 5 * 60 * 1000);
+  req.on("close", () => clearTimeout(safetyTimeout));
+});
+
+/**
+ * POST /api/packets/:id/cancel — Cancel processing for a packet.
+ */
+app.post("/api/packets/:id/cancel", (req, res) => {
+  try {
+    processingQueue.cancel(req.params.id);
+    res.json({ status: "cancelled", packetId: req.params.id });
+  } catch (error) {
+    res.status(500).json({ error: safeErrorMessage(error) });
+  }
+});
+
+/**
+ * POST /api/processing/pause — Pause all processing.
+ */
+app.post("/api/processing/pause", (req, res) => {
+  processingQueue.pause();
+  res.json({ status: "paused" });
+});
+
+/**
+ * POST /api/processing/resume — Resume all processing.
+ */
+app.post("/api/processing/resume", (req, res) => {
+  processingQueue.resume();
+  res.json({ status: "resumed" });
+});
+
+/**
+ * GET /api/processing/status — Current queue state.
+ */
+app.get("/api/processing/status", (req, res) => {
+  res.json(processingQueue.getStatus());
 });
 
 // ============================================================================
@@ -1288,7 +1487,7 @@ app.get("/api/debug/status", (req, res) => {
       stats,
       usage,
       activeSession: activeSession ? { id: activeSession.id, status: activeSession.status } : null,
-      version: "0.4.2.5",
+      version: "0.4.3",
       env: process.env.NODE_ENV || "development",
     });
   } catch (error) {
@@ -1410,6 +1609,7 @@ const server = app.listen(PORT, () => {
   // --- Startup tasks ---
   db.checkIntegrity();
   db.resetZombiePackets();
+  processingQueue.initializeQueue();
   db.createBackup().catch(err => logger.warn({ err }, "Startup backup failed"));
 
   // Schedule daily backup (every 24h)
